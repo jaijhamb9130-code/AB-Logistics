@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__plugin_context-mode_context-mode__ctx_batch_execute",
+      "mcp__plugin_context-mode_context-mode__ctx_execute",
+      "Read(//c/Users/jaijh/OneDrive/Desktop/ABS/assam.pj/frontend/src/pages/orders/**)",
+      "mcp__plugin_context-mode_context-mode__ctx_execute_file",
+      "mcp__plugin_context-mode_context-mode__ctx_search",
+      "Read(//c/Users/jaijh/.claude/get-shit-done/templates/**)",
+      "Skill(gsd-plan-phase)",
+      "Skill(gsd-plan-phase:*)"
+    ]
+  }
+}
