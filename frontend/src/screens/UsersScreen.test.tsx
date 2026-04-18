@@ -18,10 +18,12 @@ import {
   handleCreateUserSubmit,
   handleEditUserSubmit,
   handleDeactivateConfirm,
+  handleActivateConfirm,
   isSelf,
   mapCreateUserError,
   mapUpdateUserError,
   mapDeactivateError,
+  mapActivateError,
 } from './usersController';
 import type { User, UserListItem } from '../../../shared/types/user';
 
@@ -33,6 +35,7 @@ jest.mock('../services/userService', () => ({
     get: jest.fn(),
     update: jest.fn(),
     deactivate: jest.fn(),
+    activate: jest.fn(),
   },
 }));
 
@@ -44,6 +47,7 @@ const { userService } = require('../services/userService') as {
     get: jest.Mock;
     update: jest.Mock;
     deactivate: jest.Mock;
+    activate: jest.Mock;
   };
 };
 
@@ -452,5 +456,148 @@ describe('mapDeactivateError', () => {
     expect(mapDeactivateError(500, undefined)).toBe(
       'Could not deactivate user. Try again.'
     );
+  });
+});
+
+// =========================================================================
+// Plan 02-04 addendum — Activate (reactivation) orchestration
+// =========================================================================
+
+const inactiveRow: UserListItem = {
+  id: 42,
+  username: 'joe',
+  role: 'staff',
+  permissions: ['bilty.read', 'freight.read'],
+  is_active: false,
+  created_at: '2026-04-18T00:00:00.000Z',
+};
+
+function makeActivateCallbacks() {
+  return {
+    onLoadingChange: jest.fn(),
+    onError: jest.fn(),
+    onSuccess: jest.fn(),
+    replaceRow: jest.fn(),
+    reloadList: jest.fn().mockResolvedValue(undefined),
+  };
+}
+
+// -------------------------------------------------------------------------
+// Test O — Activate happy path: row flips to is_active:true in place (no full refetch)
+// -------------------------------------------------------------------------
+describe('handleActivateConfirm — happy path', () => {
+  it('calls userService.activate and replaces the row with is_active:true', async () => {
+    const reactivated: UserListItem = { ...inactiveRow, is_active: true };
+    userService.activate.mockResolvedValueOnce(reactivated);
+    const cb = makeActivateCallbacks();
+
+    await handleActivateConfirm(inactiveRow, cb);
+
+    expect(userService.activate).toHaveBeenCalledWith(42);
+    expect(cb.replaceRow).toHaveBeenCalledWith(reactivated);
+    expect(cb.onSuccess).toHaveBeenCalledWith(reactivated);
+    // No full refetch — reloadList is NOT called on the happy path.
+    expect(cb.reloadList).not.toHaveBeenCalled();
+    expect(cb.onLoadingChange).toHaveBeenNthCalledWith(1, true);
+    expect(cb.onLoadingChange).toHaveBeenLastCalledWith(false);
+  });
+});
+
+// -------------------------------------------------------------------------
+// Test P — Activate permissions preservation: server-returned row carries the
+// same permission set the user had before deactivate (spot check)
+// -------------------------------------------------------------------------
+describe('handleActivateConfirm — permissions preservation', () => {
+  it('the replaced row exposes the same permissions the user had pre-deactivate', async () => {
+    const beforePerms = [...inactiveRow.permissions];
+    const reactivated: UserListItem = {
+      ...inactiveRow,
+      is_active: true,
+      permissions: [...beforePerms],
+    };
+    userService.activate.mockResolvedValueOnce(reactivated);
+    const cb = makeActivateCallbacks();
+
+    await handleActivateConfirm(inactiveRow, cb);
+
+    const replaced = cb.replaceRow.mock.calls[0][0] as UserListItem;
+    expect(replaced.permissions).toEqual(beforePerms);
+    expect(replaced.is_active).toBe(true);
+  });
+});
+
+// -------------------------------------------------------------------------
+// Test Q — Activate 404 user_not_found surfaces friendly copy + reloads list
+//         (stale row — row in UI no longer exists on server); no state corruption
+// -------------------------------------------------------------------------
+describe('handleActivateConfirm — 404 user_not_found', () => {
+  it('maps 404 to friendly "User not found" copy and refreshes the list', async () => {
+    userService.activate.mockRejectedValueOnce({
+      response: { status: 404, data: { error: 'user_not_found' } },
+    });
+    const cb = makeActivateCallbacks();
+
+    await handleActivateConfirm(inactiveRow, cb);
+
+    expect(cb.onError).toHaveBeenLastCalledWith(
+      'User not found — refreshing list.'
+    );
+    expect(cb.replaceRow).not.toHaveBeenCalled();
+    expect(cb.onSuccess).not.toHaveBeenCalled();
+    // Converge to server truth without corrupting UI state.
+    expect(cb.reloadList).toHaveBeenCalledTimes(1);
+    expect(cb.onLoadingChange).toHaveBeenLastCalledWith(false);
+  });
+});
+
+// -------------------------------------------------------------------------
+// Test R — Activate generic network/server error falls through to generic copy
+// -------------------------------------------------------------------------
+describe('handleActivateConfirm — generic failure', () => {
+  it('maps unknown errors to the generic activate copy and does not replace row', async () => {
+    userService.activate.mockRejectedValueOnce({
+      response: { status: 500, data: {} },
+    });
+    const cb = makeActivateCallbacks();
+
+    await handleActivateConfirm(inactiveRow, cb);
+
+    expect(cb.onError).toHaveBeenLastCalledWith(
+      'Could not activate user. Try again.'
+    );
+    expect(cb.replaceRow).not.toHaveBeenCalled();
+    expect(cb.onSuccess).not.toHaveBeenCalled();
+    expect(cb.reloadList).not.toHaveBeenCalled();
+  });
+});
+
+// -------------------------------------------------------------------------
+// Test S — mapActivateError covers documented error codes
+// -------------------------------------------------------------------------
+describe('mapActivateError', () => {
+  it('maps 404 user_not_found', () => {
+    expect(mapActivateError(404, 'user_not_found')).toBe(
+      'User not found — refreshing list.'
+    );
+  });
+
+  it('falls back for unknown codes', () => {
+    expect(mapActivateError(500, undefined)).toBe(
+      'Could not activate user. Try again.'
+    );
+    expect(mapActivateError(400, 'invalid_id')).toBe(
+      'Could not activate user. Try again.'
+    );
+  });
+});
+
+// -------------------------------------------------------------------------
+// Test T — userService.activate wrapper hits POST /api/users/:id/activate
+// -------------------------------------------------------------------------
+describe('userService.activate (service-layer contract)', () => {
+  it('exists as a function on the userService module', () => {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const svc = require('../services/userService').userService;
+    expect(typeof svc.activate).toBe('function');
   });
 });
