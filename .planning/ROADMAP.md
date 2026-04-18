@@ -8,10 +8,10 @@ Six phases take AB Logistics from an empty repo to a fully operational cross-pla
 
 - [ ] **Phase 1: Foundation** - Expo setup, navigation, auth backend + login screen
 - [ ] **Phase 2: User Management** - Admin user CRUD and RBAC screens
-- [ ] **Phase 3: Bilty Module** - Full bilty entry form, backend API, DB schema
-- [ ] **Phase 4: Freight Memo** - Auto-generation from bilty, read-only ledger, print format
-- [ ] **Phase 5: Orders & Vehicles** - Order management, vehicle/fleet management, assignment
-- [ ] **Phase 6: Reports & Dashboard** - Role-based dashboard, summary stats, history views
+- [x] **Phase 3: Bilty Module** - Full bilty entry form, backend API, DB schema
+- [x] **Phase 4: Freight Memo** - Auto-generation from bilty, read-only ledger, print format
+- [x] **Phase 5: Orders & Vehicles** - Order management, vehicle/fleet management, assignment
+- [x] **Phase 6: Reports & Dashboard** - Role-based dashboard, summary stats, history views
 
 ## Phase Details
 
@@ -52,7 +52,9 @@ Six phases take AB Logistics from an empty repo to a fully operational cross-pla
   2. User can add, edit, and delete rows in the items, advance details, and fuel details tables within a single form
   3. Saving a bilty validates required fields (consignor, truck_no, at least one item) and persists all three sub-tables to the backend
   4. User can view a list of all bilties and open a single bilty detail view
-**Plans**: TBD
+**Plans**: 1 speed-run pass (see .planning/phases/03-bilty/03-SUMMARY.md)
+  - [x] Backend: schema + biltyModel + biltyController + routes + 12 tests
+  - [x] Frontend: shared types + biltyService + BiltyScreen/Form/Detail + BiltyStack + 14 tests
 **UI hint**: yes
 
 ### Phase 4: Freight Memo
@@ -64,7 +66,9 @@ Six phases take AB Logistics from an empty repo to a fully operational cross-pla
   2. freight_total equals SUM(qty x rate); net_payable equals freight_total minus advance and fuel totals
   3. The memo UI is fully read-only — no edit controls are shown or accessible
   4. Memo renders in a printable A4 ledger format with debit/credit columns and company header
-**Plans**: TBD
+**Plans**: 1 speed-run pass (see .planning/phases/04-freight/04-SUMMARY.md)
+  - [x] Backend: freight_memo schema + freightModel + freightController + routes + 13 tests
+  - [x] Frontend: shared/freight types + freightService + FreightMemoScreen/DetailScreen + FreightStack + Generate button on BiltyDetail + 9 tests
 **UI hint**: yes
 
 ### Phase 5: Orders & Vehicles
@@ -76,7 +80,9 @@ Six phases take AB Logistics from an empty repo to a fully operational cross-pla
   2. Order list shows all orders with current status; status can be updated through pending → in-progress → completed
   3. Admin/staff can add a vehicle (number, type, owner) and view the vehicle list
   4. A vehicle can be assigned to an order
-**Plans**: TBD
+**Plans**: 1 speed-run pass (see .planning/phases/05-orders-vehicles/05-SUMMARY.md)
+  - [x] Backend: vehicles + orders schema + vehicleModel + orderModel + controllers + routes + 23 tests
+  - [x] Frontend: shared vehicle/order types + vehicleService + orderService + validators + VehiclesScreen + OrdersScreen + OrderDetailScreen + OrdersStack + VehiclesStack + AppTabs wiring + 15 tests
 **UI hint**: yes
 
 ### Phase 6: Reports & Dashboard
@@ -87,7 +93,9 @@ Six phases take AB Logistics from an empty repo to a fully operational cross-pla
   1. Dashboard displays summary stats (total bilties, orders, vehicles) sourced live from the backend
   2. Admin sees all stats; staff sees only stats permitted by their role
   3. User can access a report view showing bilty and order history
-**Plans**: TBD
+**Plans**: 1 speed-run pass (see .planning/phases/06-dashboard/06-SUMMARY.md)
+  - [x] Backend: reportsController + routes + 8 tests (permission-gated summary + history)
+  - [x] Frontend: shared report types + reportService + DashboardScreen (5-card grid) + ReportsScreen (tabbed history) + AppTabs wiring + 6 tests
 **UI hint**: yes
 
 ## Progress
@@ -98,8 +106,8 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Foundation | 0/TBD | Not started | - |
-| 2. User Management | 1/3 | In Progress|  |
-| 3. Bilty Module | 0/TBD | Not started | - |
-| 4. Freight Memo | 0/TBD | Not started | - |
-| 5. Orders & Vehicles | 0/TBD | Not started | - |
-| 6. Reports & Dashboard | 0/TBD | Not started | - |
+| 2. User Management | 3/3 | Complete | 2026-04-18 |
+| 3. Bilty Module | 1/1 | Complete | 2026-04-18 |
+| 4. Freight Memo | 1/1 | Complete | 2026-04-18 |
+| 5. Orders & Vehicles | 1/1 | Complete | 2026-04-18 |
+| 6. Reports & Dashboard | 1/1 | Complete | 2026-04-18 |

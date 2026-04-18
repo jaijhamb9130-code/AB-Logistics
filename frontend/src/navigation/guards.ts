@@ -15,6 +15,14 @@ import type { TabName } from './types';
 /**
  * Tabs that only admins are allowed to see.
  * Staff users must NEVER have these rendered.
+ *
+ * Phase 3 note: the Bilty tab is visible to all authenticated users. Backend
+ * still enforces bilty.read / bilty.edit per endpoint — the client-side gate
+ * is pure UX. Users without bilty.read will see the tab but API calls 403.
+ *
+ * Phase 6 note: the Reports tab is visible to all authenticated users; the
+ * ReportsScreen itself renders only permitted tabs (bilty/order) based on
+ * the backend's per-user permission payload.
  */
 const ADMIN_ONLY_TABS: TabName[] = ['Users'];
 

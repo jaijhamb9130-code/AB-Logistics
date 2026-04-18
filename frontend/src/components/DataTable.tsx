@@ -24,7 +24,7 @@ import {
   View,
   type ViewStyle,
 } from 'react-native';
-import { colors, radius, spacing, typography } from '../constants/theme';
+import { colors, radius, spacing, text, typography } from '../constants/theme';
 
 export type ColumnAlign = 'left' | 'right' | 'center';
 
@@ -57,15 +57,17 @@ export function DataTable<T>({
   testID,
 }: Props<T>) {
   // ------- Header row -------
+  const lastIndex = columns.length - 1;
   const header = (
     <View style={[styles.row, styles.headerRow]}>
-      {columns.map((col) => (
+      {columns.map((col, i) => (
         <View
           key={col.key}
           style={[
             styles.cell,
             col.width ? { width: col.width, flexGrow: 0 } : { flex: 1 },
             alignStyle(col.align),
+            i < lastIndex && styles.cellDivider,
           ]}
         >
           <Text
@@ -91,7 +93,7 @@ export function DataTable<T>({
         style={[styles.row, alt && styles.altRow]}
         accessibilityRole={onRowPress ? 'button' : undefined}
       >
-        {columns.map((col) => {
+        {columns.map((col, i) => {
           const rendered = col.render(item);
           return (
             <View
@@ -100,6 +102,7 @@ export function DataTable<T>({
                 styles.cell,
                 col.width ? { width: col.width, flexGrow: 0 } : { flex: 1 },
                 alignStyle(col.align),
+                i < lastIndex && styles.cellDivider,
               ]}
             >
               {typeof rendered === 'string' || typeof rendered === 'number' ? (
@@ -186,8 +189,13 @@ const styles = StyleSheet.create({
     backgroundColor: colors.card,
     borderWidth: 1,
     borderColor: colors.border,
-    borderRadius: radius.md,
+    borderRadius: radius.lg,
     overflow: 'hidden',
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
   },
   scroll: {
     flex: 1,
@@ -195,33 +203,45 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
     backgroundColor: colors.card,
+    minHeight: 52,
   },
   headerRow: {
-    backgroundColor: colors.background,
+    backgroundColor: '#F8FAFC',
+    borderBottomWidth: 2,
+    borderBottomColor: colors.border,
+    paddingVertical: spacing.md,
+    minHeight: 48,
   },
   altRow: {
-    backgroundColor: colors.background,
+    backgroundColor: '#FAFBFC',
   },
   cell: {
-    paddingHorizontal: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
     justifyContent: 'center',
+    alignSelf: 'stretch',
+  },
+  cellDivider: {
+    borderRightWidth: 1,
+    borderRightColor: colors.border,
   },
   headerText: {
-    fontSize: 12,
-    color: colors.textMuted,
-    fontFamily: typography.uiBold,
+    ...text.label,
+    fontSize: 13,
+    color: colors.textLabel,
     textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    letterSpacing: 0.6,
+    fontWeight: '700',
   },
   cellText: {
-    fontSize: 13,
-    color: colors.text,
-    fontFamily: typography.ui,
+    ...text.value,
+    fontSize: 15,
+    lineHeight: 22,
   },
   mono: {
     fontFamily: typography.mono,
@@ -238,8 +258,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   emptyText: {
-    color: colors.textMuted,
+    ...text.meta,
     fontSize: 13,
-    fontFamily: typography.ui,
   },
 });

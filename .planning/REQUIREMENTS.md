@@ -25,48 +25,48 @@
 
 ### Bilty
 
-- [ ] **BILTY-01**: User can create a Bilty with header fields (bilty_no auto-generated, date, consignor, owner_name, agent_name, branch, zone_name, truck_no, goods_type, truck_type)
-- [ ] **BILTY-02**: Bilty form has dynamic item table — add/edit/delete rows (challan_no, lr_no, from, to, consignee, qty, rate, inc_rate, l_rate, e_rate)
-- [ ] **BILTY-03**: Bilty form has dynamic advance details table — add/edit/delete rows (date, adv_from, amount, narration)
-- [ ] **BILTY-04**: Bilty form has dynamic fuel details table — add/edit/delete rows (from, amount, doc_no, doc_date)
-- [ ] **BILTY-05**: Save Bilty validates required fields (consignor, truck_no, at least one item) and persists to backend
-- [ ] **BILTY-06**: Saved Bilty generates unique bilty_no
-- [ ] **BILTY-07**: User can view list of all bilties
-- [ ] **BILTY-08**: User can view a single Bilty detail
+- [x] **BILTY-01**: User can create a Bilty with header fields (bilty_no auto-generated, date, consignor, owner_name, agent_name, branch, zone_name, truck_no, goods_type, truck_type)
+- [x] **BILTY-02**: Bilty form has dynamic item table — add/edit/delete rows (challan_no, lr_no, from, to, consignee, qty, rate, inc_rate, l_rate, e_rate)
+- [x] **BILTY-03**: Bilty form has dynamic advance details table — add/edit/delete rows (date, adv_from, amount, narration)
+- [x] **BILTY-04**: Bilty form has dynamic fuel details table — add/edit/delete rows (from, amount, doc_no, doc_date)
+- [x] **BILTY-05**: Save Bilty validates required fields (consignor, truck_no, at least one item) and persists to backend
+- [x] **BILTY-06**: Saved Bilty generates unique bilty_no
+- [x] **BILTY-07**: User can view list of all bilties
+- [x] **BILTY-08**: User can view a single Bilty detail
 
 ### Freight Memo
 
-- [ ] **FREIGHT-01**: Freight Memo is auto-generated from a saved Bilty (never manually entered)
-- [ ] **FREIGHT-02**: freight_total = SUM(qty × rate) across all bilty items
-- [ ] **FREIGHT-03**: net_payable = freight_total − (advance_total + fuel_total)
-- [ ] **FREIGHT-04**: Freight Memo is read-only — no edits allowed through UI
-- [ ] **FREIGHT-05**: Freight Memo displays in printable A4 ledger format with debit/credit columns
-- [ ] **FREIGHT-06**: Company header shown on printed/rendered memo
+- [x] **FREIGHT-01**: Freight Memo is auto-generated from a saved Bilty (never manually entered)
+- [x] **FREIGHT-02**: freight_total = SUM(qty × rate) across all bilty items
+- [x] **FREIGHT-03**: net_payable = freight_total − (advance_total + fuel_total)
+- [x] **FREIGHT-04**: Freight Memo is read-only — no edits allowed through UI
+- [x] **FREIGHT-05**: Freight Memo displays in printable A4 ledger format with debit/credit columns
+- [x] **FREIGHT-06**: Company header shown on printed/rendered memo
 
 ### Orders
 
-- [ ] **ORDER-01**: User can create a transport order
-- [ ] **ORDER-02**: User can view list of all orders with status
-- [ ] **ORDER-03**: User can view order detail
-- [ ] **ORDER-04**: Order status can be updated (pending → in-progress → completed)
+- [x] **ORDER-01**: User can create a transport order
+- [x] **ORDER-02**: User can view list of all orders with status
+- [x] **ORDER-03**: User can view order detail
+- [x] **ORDER-04**: Order status can be updated (pending → in-progress → completed)
 
 ### Vehicles / Fleet
 
-- [ ] **VEHICLE-01**: Admin/staff can add a vehicle (vehicle number, type, owner)
+- [x] **VEHICLE-01**: Admin/staff can add a vehicle (vehicle number, type, owner)
 - [ ] **VEHICLE-02**: User can view vehicle list
 - [ ] **VEHICLE-03**: Vehicle can be assigned to an order
 
 ### Reports / Dashboard
 
-- [ ] **REPORT-01**: Dashboard shows summary stats (total bilties, orders, vehicles)
-- [ ] **REPORT-02**: Role-based dashboard — admin sees all stats, staff sees permitted stats
-- [ ] **REPORT-03**: Basic report view for bilty and order history
+- [x] **REPORT-01**: Dashboard shows summary stats (total bilties, orders, vehicles)
+- [x] **REPORT-02**: Role-based dashboard — admin sees all stats, staff sees permitted stats
+- [x] **REPORT-03**: Basic report view for bilty and order history
 
 ### Backend & Database
 
-- [ ] **BE-01**: Node.js + Express API with MySQL (normalized schema)
-- [ ] **BE-02**: Tables: bilty, bilty_items, advance_details, fuel_details, freight_memo, orders, vehicles, users
-- [ ] **BE-03**: API endpoints: POST/GET bilty, POST freight/generate, GET freight/:id, orders CRUD, vehicles CRUD, auth login/logout
+- [x] **BE-01**: Node.js + Express API with MySQL (normalized schema)
+- [x] **BE-02**: Tables: bilty, bilty_items, advance_details, fuel_details, freight_memo, orders, vehicles, users *(bilty + 3 children landed Phase 3; freight_memo/orders/vehicles pending Phase 4/5)*
+- [x] **BE-03**: API endpoints: POST/GET bilty, POST freight/generate, GET freight/:id, orders CRUD, vehicles CRUD, auth login/logout *(bilty list/get/create landed Phase 3; freight/orders/vehicles pending Phase 4/5)*
 - [ ] **BE-04**: JWT-based authentication on all protected routes
 - [ ] **BE-05**: Role/permission middleware guards admin-only endpoints
 
@@ -125,23 +125,23 @@
 | USER-03 | Phase 2 | Complete |
 | USER-04 | Phase 2 | Complete |
 | USER-05 | Phase 2 | Complete |
-| BILTY-01 | Phase 3 | Pending |
-| BILTY-02 | Phase 3 | Pending |
-| BILTY-03 | Phase 3 | Pending |
-| BILTY-04 | Phase 3 | Pending |
-| BILTY-05 | Phase 3 | Pending |
-| BILTY-06 | Phase 3 | Pending |
-| BILTY-07 | Phase 3 | Pending |
-| BILTY-08 | Phase 3 | Pending |
-| BE-01 | Phase 3 | Pending |
-| BE-02 | Phase 3 | Pending |
-| BE-03 | Phase 3 | Pending |
-| FREIGHT-01 | Phase 4 | Pending |
-| FREIGHT-02 | Phase 4 | Pending |
-| FREIGHT-03 | Phase 4 | Pending |
-| FREIGHT-04 | Phase 4 | Pending |
-| FREIGHT-05 | Phase 4 | Pending |
-| FREIGHT-06 | Phase 4 | Pending |
+| BILTY-01 | Phase 3 | Complete |
+| BILTY-02 | Phase 3 | Complete |
+| BILTY-03 | Phase 3 | Complete |
+| BILTY-04 | Phase 3 | Complete |
+| BILTY-05 | Phase 3 | Complete |
+| BILTY-06 | Phase 3 | Complete |
+| BILTY-07 | Phase 3 | Complete |
+| BILTY-08 | Phase 3 | Complete |
+| BE-01 | Phase 3 | Complete |
+| BE-02 | Phase 3 | Complete |
+| BE-03 | Phase 3 | Complete |
+| FREIGHT-01 | Phase 4 | Complete |
+| FREIGHT-02 | Phase 4 | Complete |
+| FREIGHT-03 | Phase 4 | Complete |
+| FREIGHT-04 | Phase 4 | Complete |
+| FREIGHT-05 | Phase 4 | Complete |
+| FREIGHT-06 | Phase 4 | Complete |
 | ORDER-01 | Phase 5 | Pending |
 | ORDER-02 | Phase 5 | Pending |
 | ORDER-03 | Phase 5 | Pending |
@@ -149,9 +149,9 @@
 | VEHICLE-01 | Phase 5 | Pending |
 | VEHICLE-02 | Phase 5 | Pending |
 | VEHICLE-03 | Phase 5 | Pending |
-| REPORT-01 | Phase 6 | Pending |
-| REPORT-02 | Phase 6 | Pending |
-| REPORT-03 | Phase 6 | Pending |
+| REPORT-01 | Phase 6 | Complete |
+| REPORT-02 | Phase 6 | Complete |
+| REPORT-03 | Phase 6 | Complete |
 
 **Coverage:**
 - v1 requirements: 47 total

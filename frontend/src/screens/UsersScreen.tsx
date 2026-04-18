@@ -39,7 +39,7 @@ import {
   PERMISSION_LABELS,
   ROLE_OPTIONS,
 } from '../constants/roles';
-import { colors, radius, spacing, typography } from '../constants/theme';
+import { colors, radius, spacing, text, typography } from '../constants/theme';
 import { userService } from '../services/userService';
 import {
   type CreateUserErrors,
@@ -580,9 +580,9 @@ const styles = StyleSheet.create({
     marginBottom: spacing.lg,
   },
   title: {
+    ...text.heading,
     fontSize: 22,
-    color: colors.text,
-    fontFamily: typography.uiBold,
+    lineHeight: 28,
   },
   headerBtn: {
     minWidth: 140,
@@ -600,9 +600,8 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
   },
   errorBannerText: {
+    ...text.label,
     color: colors.danger,
-    fontFamily: typography.ui,
-    fontSize: 13,
   },
   badge: {
     paddingHorizontal: spacing.sm,
@@ -617,8 +616,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(239,68,68,0.12)',
   },
   badgeText: {
-    fontSize: 12,
-    fontFamily: typography.uiBold,
+    ...text.pill,
   },
   formScroll: {
     maxHeight: 500,
@@ -635,15 +633,12 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
   },
   formErrorText: {
+    ...text.label,
     color: colors.danger,
-    fontFamily: typography.ui,
-    fontSize: 13,
   },
   fieldLabel: {
-    fontSize: 13,
-    color: colors.textMuted,
+    ...text.label,
     marginBottom: spacing.xs,
-    fontFamily: typography.ui,
   },
   roleRow: {
     flexDirection: 'row',
@@ -661,7 +656,7 @@ const styles = StyleSheet.create({
     marginRight: spacing.sm,
   },
   roleOptionSelected: {
-    borderColor: colors.primary,
+    borderColor: colors.brandRed,
   },
   radio: {
     width: 14,
@@ -672,22 +667,20 @@ const styles = StyleSheet.create({
     marginRight: spacing.sm,
   },
   radioSelected: {
-    borderColor: colors.primary,
-    backgroundColor: colors.primary,
+    borderColor: colors.brandRed,
+    backgroundColor: colors.brandRed,
   },
   roleLabel: {
-    fontSize: 14,
+    ...text.value,
     color: colors.text,
-    fontFamily: typography.ui,
   },
   roleLabelSelected: {
-    color: colors.primary,
-    fontFamily: typography.uiBold,
+    ...text.valueStrong,
+    color: colors.brandRed,
   },
   fieldError: {
-    fontSize: 12,
+    ...text.meta,
     color: colors.danger,
-    fontFamily: typography.ui,
     marginTop: spacing.xs,
     marginBottom: spacing.sm,
   },
@@ -704,9 +697,9 @@ const styles = StyleSheet.create({
     marginRight: spacing.sm,
   },
   cancelBtnText: {
+    ...text.action,
     color: colors.textMuted,
     fontSize: 14,
-    fontFamily: typography.uiBold,
   },
   submitWrap: {
     minWidth: 160,
@@ -718,40 +711,38 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   editAction: {
+    ...text.action,
     color: colors.primary,
-    fontFamily: typography.uiBold,
-    fontSize: 13,
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.xs,
   },
   deactivateAction: {
+    ...text.action,
     color: colors.danger,
-    fontFamily: typography.uiBold,
-    fontSize: 13,
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.xs,
+    minWidth: 88,
+    textAlign: 'right',
   },
   activateAction: {
+    ...text.action,
     color: colors.success,
-    fontFamily: typography.uiBold,
-    fontSize: 13,
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.xs,
+    minWidth: 88,
+    textAlign: 'right',
   },
   actionDisabled: {
     color: colors.textMuted,
     opacity: 0.5,
   },
   readonlyLabel: {
-    fontSize: 12,
-    color: colors.textMuted,
-    fontFamily: typography.ui,
+    ...text.label,
     marginTop: spacing.sm,
   },
   readonlyValue: {
+    ...text.valueStrong,
     fontSize: 16,
-    color: colors.text,
-    fontFamily: typography.uiBold,
     marginBottom: spacing.md,
   },
 });

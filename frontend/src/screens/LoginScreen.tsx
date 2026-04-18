@@ -13,21 +13,14 @@
  *   - Success: NO navigation.navigate() call. AuthContext flips isAuthenticated →
  *     AppNavigator swaps from AuthNavigator to AppTabs automatically (D-19, AUTH-07).
  *
- * Colors: all sourced from constants/theme.ts. The two `rgba(...)` literals are functional
- * transparencies (gradient stop + 10%-alpha error background) and contain no `#` hex
- * literal — they satisfy the "zero hex literals outside theme.ts" rule for this file.
- *
- * NOTE on the gradient stop `'#1E4FB8'`: CONTEXT did not lock a gradient pair, so this
- * darker-primary shade is Claude's discretion. It IS a `#` hex literal — flagged here as
- * a single, deliberate, file-local exception for the gradient's far color. If stricter
- * compliance is required, promote this to `colors.primaryDark` in theme.ts in a future
- * polish pass.
+ * Colors: all sourced from constants/theme.ts (brand palette — red/yellow tones + black).
  */
 
 import React, { useState } from 'react';
 import {
   View,
   Text,
+  Image,
   StyleSheet,
   KeyboardAvoidingView,
   Platform,
@@ -40,7 +33,7 @@ import {
   ButtonPrimary,
 } from '../components';
 import { useAuth } from '../context/AuthContext';
-import { colors, spacing, typography, radius } from '../constants/theme';
+import { colors, spacing, typography, radius, text } from '../constants/theme';
 import { validateLogin, LoginErrors } from '../utils/validation';
 
 export function LoginScreen() {
@@ -85,17 +78,27 @@ export function LoginScreen() {
 
   return (
     <LinearGradient
-      colors={[colors.primary, '#1E4FB8']}
-      start={{ x: 0, y: 0 }}
-      end={{ x: 1, y: 1 }}
+      colors={['#0B1120', '#0F172A', '#1C0A09']}
+      locations={[0, 0.5, 1]}
+      start={{ x: 0.1, y: 0 }}
+      end={{ x: 0.9, y: 1 }}
       style={styles.bg}
     >
       <KeyboardAvoidingView
         style={styles.center}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
+        <View style={styles.logoWrap}>
+          <Image
+            source={require('../../assets/abs-logo.png')}
+            style={styles.logo}
+            resizeMode="contain"
+            accessibilityLabel="ABS logo"
+          />
+        </View>
         <GlassCard style={styles.card}>
           <Text style={styles.title}>AB Logistics</Text>
+          <View style={styles.accentUnderline} />
           <Text style={styles.subtitle}>Sign in to continue</Text>
 
           {serverError ? (
@@ -146,32 +149,51 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: spacing.lg,
   },
+  logoWrap: {
+    alignItems: 'center',
+    marginBottom: spacing.lg,
+    width: '100%',
+    maxWidth: CARD_MAX_WIDTH,
+  },
+  logo: {
+    width: 180,
+    height: 96,
+  },
   card: {
     width: '100%',
     maxWidth: CARD_MAX_WIDTH,
   },
   title: {
-    fontSize: 24,
-    fontFamily: typography.uiBold,
-    color: colors.text,
-    marginBottom: spacing.xs,
+    ...text.heading,
+    fontSize: 26,
+    lineHeight: 32,
+    marginBottom: spacing.sm,
     textAlign: 'center',
   },
+  accentUnderline: {
+    alignSelf: 'center',
+    width: 48,
+    height: 3,
+    borderRadius: 2,
+    backgroundColor: colors.brandYellow,
+    marginBottom: spacing.md,
+  },
   subtitle: {
-    fontSize: 14,
-    fontFamily: typography.ui,
+    ...text.value,
     color: colors.textMuted,
     marginBottom: spacing.lg,
     textAlign: 'center',
   },
   serverError: {
-    // Danger color at ~10% alpha — functional transparency, not a theme color.
-    backgroundColor: 'rgba(239,68,68,0.1)',
+    backgroundColor: colors.brandRedTone,
+    borderWidth: 1,
+    borderColor: colors.brandRedBorder,
     color: colors.danger,
     padding: spacing.md,
     borderRadius: radius.md,
     marginBottom: spacing.md,
-    fontFamily: typography.ui,
+    fontFamily: typography.uiMedium,
+    fontWeight: '500',
     fontSize: 13,
     textAlign: 'center',
   },

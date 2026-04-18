@@ -19,11 +19,33 @@ import {
 } from 'react-native';
 import { colors, radius, spacing, typography } from '../constants/theme';
 
+export type FieldType = 'text' | 'integer' | 'decimal' | 'email' | 'phone';
+
 interface Props extends Omit<TextInputProps, 'style'> {
   label: string;
   error?: string | null;
   rightSlot?: React.ReactNode;
   testID?: string;
+  fieldType?: FieldType;
+}
+
+const KEYBOARD_TYPE: Record<FieldType, TextInputProps['keyboardType']> = {
+  text:    'default',
+  integer: 'number-pad',
+  decimal: 'decimal-pad',
+  email:   'email-address',
+  phone:   'phone-pad',
+};
+
+function filterValue(raw: string, fieldType: FieldType): string {
+  if (fieldType === 'integer') return raw.replace(/[^0-9]/g, '');
+  if (fieldType === 'decimal') {
+    const cleaned = raw.replace(/[^0-9.]/g, '');
+    const parts = cleaned.split('.');
+    return parts.length > 2 ? `${parts[0]}.${parts.slice(1).join('')}` : cleaned;
+  }
+  if (fieldType === 'phone') return raw.replace(/[^0-9+\-() ]/g, '');
+  return raw;
 }
 
 export function InputField({
@@ -33,6 +55,7 @@ export function InputField({
   value,
   onChangeText,
   testID,
+  fieldType = 'text',
   ...rest
 }: Props) {
   const [focused, setFocused] = useState(false);
@@ -42,6 +65,11 @@ export function InputField({
       ? colors.primary
       : colors.border;
 
+  const handleChange = (raw: string) => {
+    if (!onChangeText) return;
+    onChangeText(filterValue(raw, fieldType));
+  };
+
   return (
     <View style={styles.wrap}>
       <Text style={styles.label}>{label}</Text>
@@ -49,10 +77,11 @@ export function InputField({
         <TextInput
           style={styles.input}
           value={value}
-          onChangeText={onChangeText}
+          onChangeText={handleChange}
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
           placeholderTextColor={colors.textMuted}
+          keyboardType={KEYBOARD_TYPE[fieldType]}
           testID={testID}
           {...rest}
         />

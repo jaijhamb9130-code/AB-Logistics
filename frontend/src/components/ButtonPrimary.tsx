@@ -45,16 +45,18 @@ export function ButtonPrimary({
 
 const styles = StyleSheet.create({
   btn: {
-    backgroundColor: colors.primary,
-    paddingVertical: spacing.md,
+    backgroundColor: colors.brandRed,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.lg,
     borderRadius: radius.md,
     alignItems: 'center',
     justifyContent: 'center',
-    minHeight: 48,
+    minHeight: 36,
   },
   label: {
-    color: colors.card,
-    fontSize: 15,
+    color: '#FFFFFF',
+    fontSize: 13,
     fontFamily: typography.uiBold,
+    letterSpacing: 0.3,
   },
 });
