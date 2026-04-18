@@ -1,0 +1,16 @@
+{
+  "name": "ab-logistics",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Cross-platform logistics management app (Expo + React Native Web frontend, Node.js + Express + MySQL backend)",
+  "workspaces": [
+    "frontend",
+    "backend",
+    "shared"
+  ],
+  "scripts": {
+    "dev:frontend": "npm --prefix frontend run web",
+    "dev:backend": "npm --prefix backend run dev",
+    "seed:admin": "npm --prefix backend run seed:admin"
+  }
+}

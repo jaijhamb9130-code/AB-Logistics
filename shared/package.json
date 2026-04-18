@@ -1,0 +1,8 @@
+{
+  "name": "@ablog/shared",
+  "version": "0.1.0",
+  "private": true,
+  "main": "types/index.ts",
+  "types": "types/index.ts",
+  "description": "Shared TypeScript interfaces for AB Logistics frontend + backend"
+}
