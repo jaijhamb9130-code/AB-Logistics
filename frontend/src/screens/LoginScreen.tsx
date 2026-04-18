@@ -78,10 +78,10 @@ export function LoginScreen() {
 
   return (
     <LinearGradient
-      colors={['#0B1120', '#0F172A', '#1C0A09']}
+      colors={['#FFFFFF', '#F5F7FA', '#FFFFFF']}
       locations={[0, 0.5, 1]}
-      start={{ x: 0.1, y: 0 }}
-      end={{ x: 0.9, y: 1 }}
+      start={{ x: 0, y: 0 }}
+      end={{ x: 1, y: 1 }}
       style={styles.bg}
     >
       <KeyboardAvoidingView
