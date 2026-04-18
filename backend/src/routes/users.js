@@ -14,5 +14,6 @@ router.get('/:id', ctrl.get);
 router.post('/', ctrl.create);
 router.patch('/:id', ctrl.update);
 router.post('/:id/deactivate', ctrl.deactivate);
+router.post('/:id/activate', ctrl.activate);
 
 module.exports = router;

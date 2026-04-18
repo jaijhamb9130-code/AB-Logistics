@@ -212,6 +212,29 @@ exports.update = async (req, res, next) => {
   }
 };
 
+// POST /api/users/:id/activate
+// Reactivates a previously deactivated user. setActive only flips the
+// is_active flag — the permissions column is NOT touched, so the user
+// regains access with their prior permission set intact.
+//
+// No self-lockout guard is needed: an inactive admin cannot be authenticated
+// (authMiddleware rejects inactive accounts), so req.user can never be the
+// target of an activate call from their own token.
+exports.activate = async (req, res, next) => {
+  try {
+    const id = parseId(req.params.id);
+    if (id === null) return res.status(400).json({ error: 'invalid_id' });
+
+    const ok = await userModel.setActive(id, true);
+    if (!ok) return res.status(404).json({ error: 'user_not_found' });
+
+    const row = await userModel.findById(id);
+    return res.status(200).json(sanitizeUser(row));
+  } catch (err) {
+    return next(err);
+  }
+};
+
 // POST /api/users/:id/deactivate
 exports.deactivate = async (req, res, next) => {
   try {
