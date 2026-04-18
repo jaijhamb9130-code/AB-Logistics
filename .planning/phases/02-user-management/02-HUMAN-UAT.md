@@ -37,12 +37,16 @@ result: pending
 expected: UsersScreen loads, list renders, Modal + PermissionPicker + ConfirmDialog all open and function on Expo web, iOS, and Android.
 result: pending
 
+### 7. Smoke — Activate flow restores access
+expected: An Inactive row shows a green "Activate" button (in place of the red Deactivate). Clicking opens a non-destructive ConfirmDialog (primary-coloured confirm, NOT red). On confirm, the row Status badge flips to Active in place (no full refetch). The reactivated user can log in immediately and all prior permissions are intact (spot check one permission-gated tab appears as before).
+result: pending
+
 ## Summary
 
-total: 6
+total: 7
 passed: 0
 issues: 0
-pending: 6
+pending: 7
 skipped: 0
 blocked: 0
 
