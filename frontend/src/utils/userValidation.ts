@@ -9,7 +9,7 @@
  * localized/consistent user-visible messages.
  */
 
-import type { Permission, Role } from '../../../shared/types/user';
+import type { Permission, Role, UpdateUserRequest } from '../../../shared/types/user';
 
 // Same pattern as backend/src/constants/permissions.js username regex.
 const USERNAME_RE = /^[a-zA-Z0-9_.\-]{3,64}$/;
@@ -72,6 +72,54 @@ export function validateCreateUser(input: CreateUserInput): CreateUserErrors {
 
   const perms = validatePermissions(input.permissions as Permission[]);
   if (perms) errs.permissions = perms;
+
+  return errs;
+}
+
+// ---------------------------------------------------------------------------
+// Edit-form validator (plan 02-03 / Task 1).
+// ---------------------------------------------------------------------------
+
+export interface UpdateUserErrors {
+  username?: FieldError;
+  password?: FieldError;
+  role?: FieldError;
+  permissions?: FieldError;
+}
+
+/**
+ * Edit-form validator. Any field may be omitted (means "no change").
+ *
+ * Key UX contract (T-02-15 / T-02-16):
+ *  - `password: ''`   → treated as "no change" (NOT an error). The screen's
+ *    submit path must also OMIT the `password` key from the PATCH body in
+ *    this case, so the backend never receives a zero-length password.
+ *  - `permissions: []` → error `'required'` (cannot clear to empty; wildcard
+ *    or ≥1 specific permission is required to match server validation).
+ */
+export function validateUpdateUser(input: UpdateUserRequest): UpdateUserErrors {
+  const errs: UpdateUserErrors = {};
+
+  if (input.username !== undefined) {
+    const u = validateUsername(input.username);
+    if (u) errs.username = u;
+  }
+
+  // Empty string password is "no change" — skip validation entirely.
+  if (input.password !== undefined && input.password !== '') {
+    const p = validatePassword(input.password);
+    if (p) errs.password = p;
+  }
+
+  if (input.role !== undefined) {
+    const r = validateRole(input.role as string);
+    if (r) errs.role = r;
+  }
+
+  if (input.permissions !== undefined) {
+    const perms = validatePermissions(input.permissions as Permission[]);
+    if (perms) errs.permissions = perms;
+  }
 
   return errs;
 }
