@@ -4,15 +4,19 @@
     "strict": true,
     "baseUrl": ".",
     "paths": {
-      "@shared/*": ["../shared/*"],
-      "@ablog/shared": ["../shared/types/index.ts"],
-      "@ablog/shared/*": ["../shared/*"]
+      "@shared/*": [
+        "../shared/*"
+      ],
+      "@ablog/shared": [
+        "../shared/types/index.ts"
+      ],
+      "@ablog/shared/*": [
+        "../shared/*"
+      ]
     }
   },
   "include": [
     "**/*.ts",
-    "**/*.tsx",
-    ".expo/types/**/*.ts",
-    "expo-env.d.ts"
+    "**/*.tsx"
   ]
 }

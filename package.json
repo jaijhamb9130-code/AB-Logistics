@@ -12,5 +12,8 @@
     "dev:frontend": "npm --prefix frontend run web",
     "dev:backend": "npm --prefix backend run dev",
     "seed:admin": "npm --prefix backend run seed:admin"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3"
   }
 }

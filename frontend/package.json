@@ -25,16 +25,23 @@
       "jsx"
     ],
     "transform": {
-      "^.+\\.(ts|tsx)$": "ts-jest"
+      "^.+\\.(ts|tsx)$": [
+        "ts-jest",
+        {
+          "tsconfig": "tsconfig.jest.json"
+        }
+      ]
     }
   },
   "dependencies": {
     "@ablog/shared": "*",
+    "@expo/metro-runtime": "~3.2.3",
     "@react-navigation/bottom-tabs": "^6.6.1",
     "@react-navigation/native": "^6.1.18",
+    "@react-navigation/native-stack": "^6.11.0",
     "@react-navigation/stack": "^6.4.1",
     "axios": "^1.7.7",
-    "expo": "~51.0.28",
+    "expo": "^55.0.15",
     "expo-blur": "~13.0.2",
     "expo-linear-gradient": "~13.0.2",
     "expo-secure-store": "~13.0.2",

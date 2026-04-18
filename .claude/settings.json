@@ -3,12 +3,21 @@
     "allow": [
       "mcp__plugin_context-mode_context-mode__ctx_batch_execute",
       "mcp__plugin_context-mode_context-mode__ctx_execute",
-      "Read(//c/Users/jaijh/OneDrive/Desktop/ABS/assam.pj/frontend/src/pages/orders/**)",
+      "Read(//c/Users/jaijh/OneDrive/Desktop/AB LOGISTICS/**)",
       "mcp__plugin_context-mode_context-mode__ctx_execute_file",
       "mcp__plugin_context-mode_context-mode__ctx_search",
       "Read(//c/Users/jaijh/.claude/get-shit-done/templates/**)",
       "Skill(gsd-plan-phase)",
-      "Skill(gsd-plan-phase:*)"
+      "Skill(gsd-plan-phase:*)",
+      "Bash(npx jest *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git remote *)",
+      "Bash(git push *)",
+      "Bash(npm install *)",
+      "Bash(npx expo *)",
+      "Bash(netstat -ano)",
+      "Bash(taskkill //F //PID 27196)"
     ]
   }
 }

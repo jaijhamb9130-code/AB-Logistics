@@ -13,7 +13,7 @@ const env = require('../src/config/env');
   const sqlPath = path.join(__dirname, '..', 'src', 'db', 'schema.sql');
   const sql = fs.readFileSync(sqlPath, 'utf8');
   const statements = sql
-    .split(/;\s*\n/)
+    .split(/;\s*(\n|$)/)
     .map((s) => s.trim())
     .filter((s) => s.length > 0 && !s.startsWith('--'));
 
