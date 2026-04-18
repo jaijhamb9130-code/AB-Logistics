@@ -17,11 +17,11 @@
 
 ### User Management
 
-- [ ] **USER-01**: Admin can create new users with username, password, role, and permissions
-- [ ] **USER-02**: Admin can view list of all users
-- [ ] **USER-03**: Admin can edit user roles and permissions
-- [ ] **USER-04**: Admin can deactivate/delete users
-- [ ] **USER-05**: Role options: Admin, Staff (with permission array)
+- [x] **USER-01**: Admin can create new users with username, password, role, and permissions
+- [x] **USER-02**: Admin can view list of all users
+- [x] **USER-03**: Admin can edit user roles and permissions
+- [x] **USER-04**: Admin can deactivate/delete users
+- [x] **USER-05**: Role options: Admin, Staff (with permission array)
 
 ### Bilty
 
@@ -120,11 +120,11 @@
 | CROSS-03 | Phase 1 | Pending |
 | CROSS-04 | Phase 1 | Pending |
 | CROSS-05 | Phase 1 | Pending |
-| USER-01 | Phase 2 | Pending |
-| USER-02 | Phase 2 | Pending |
-| USER-03 | Phase 2 | Pending |
-| USER-04 | Phase 2 | Pending |
-| USER-05 | Phase 2 | Pending |
+| USER-01 | Phase 2 | Complete |
+| USER-02 | Phase 2 | Complete |
+| USER-03 | Phase 2 | Complete |
+| USER-04 | Phase 2 | Complete |
+| USER-05 | Phase 2 | Complete |
 | BILTY-01 | Phase 3 | Pending |
 | BILTY-02 | Phase 3 | Pending |
 | BILTY-03 | Phase 3 | Pending |

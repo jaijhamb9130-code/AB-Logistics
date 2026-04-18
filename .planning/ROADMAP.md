@@ -37,7 +37,10 @@ Six phases take AB Logistics from an empty repo to a fully operational cross-pla
   2. Admin can view a list of all users
   3. Admin can edit an existing user's role and permissions
   4. Admin can deactivate or delete a user
-**Plans**: TBD
+**Plans**: 3 plans
+  - [x] 02-01-PLAN.md — Backend: user CRUD endpoints, canonical permissions, model extensions, self-lockout guard
+  - [ ] 02-02-PLAN.md — Frontend: userService + DataTable/Modal/PermissionPicker primitives + Users list + New User modal
+  - [ ] 02-03-PLAN.md — Frontend: Edit user modal + Deactivate flow + ConfirmDialog + client self-lockout guard
 **UI hint**: yes
 
 ### Phase 3: Bilty Module
@@ -95,7 +98,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Foundation | 0/TBD | Not started | - |
-| 2. User Management | 0/TBD | Not started | - |
+| 2. User Management | 1/3 | In Progress|  |
 | 3. Bilty Module | 0/TBD | Not started | - |
 | 4. Freight Memo | 0/TBD | Not started | - |
 | 5. Orders & Vehicles | 0/TBD | Not started | - |
