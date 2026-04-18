@@ -11,3 +11,17 @@ CREATE TABLE IF NOT EXISTS users (
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_users_username (username)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Phase 2: track last-modified timestamp for audit/cache.
+-- Idempotent: only adds the column if missing. Works on MySQL 8+.
+SET @col := (
+  SELECT COUNT(*) FROM information_schema.columns
+   WHERE table_schema = DATABASE()
+     AND table_name   = 'users'
+     AND column_name  = 'updated_at'
+);
+SET @sql := IF(@col = 0,
+  'ALTER TABLE users ADD COLUMN updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP',
+  'SELECT 1'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
