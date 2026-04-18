@@ -40,7 +40,7 @@ Six phases take AB Logistics from an empty repo to a fully operational cross-pla
 **Plans**: 3 plans
   - [x] 02-01-PLAN.md — Backend: user CRUD endpoints, canonical permissions, model extensions, self-lockout guard
   - [x] 02-02-PLAN.md — Frontend: userService + DataTable/Modal/PermissionPicker primitives + Users list + New User modal
-  - [ ] 02-03-PLAN.md — Frontend: Edit user modal + Deactivate flow + ConfirmDialog + client self-lockout guard
+  - [x] 02-03-PLAN.md — Frontend: Edit user modal + Deactivate flow + ConfirmDialog + client self-lockout guard
 **UI hint**: yes
 
 ### Phase 3: Bilty Module
