@@ -402,6 +402,88 @@ describe('users — POST /api/users/:id/deactivate', () => {
   });
 });
 
+describe('users — POST /api/users/:id/activate', () => {
+  test('200 flips is_active to 1 and returns sanitized row with preserved permissions', async () => {
+    const { token } = adminAuth();
+    userModel.setActive.mockResolvedValueOnce(true);
+    userModel.findById.mockResolvedValueOnce(
+      sanitizedRow({
+        id: 5,
+        username: 'target',
+        role: 'staff',
+        permissions: ['bilty.read', 'freight.read'],
+        is_active: 1,
+      })
+    );
+
+    const res = await request(app)
+      .post('/api/users/5/activate')
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.is_active).toBe(true);
+    // Permissions preserved through deactivate → activate round trip.
+    expect(res.body.permissions).toEqual(['bilty.read', 'freight.read']);
+    assertNoPasswordHash(res.body);
+    expect(userModel.setActive).toHaveBeenCalledWith(5, true);
+  });
+
+  test('200 idempotent when user is already active (no-op)', async () => {
+    const { token } = adminAuth();
+    // setActive still returns affectedRows > 0 since UPDATE runs unconditionally.
+    userModel.setActive.mockResolvedValueOnce(true);
+    userModel.findById.mockResolvedValueOnce(
+      sanitizedRow({ id: 5, username: 'target', role: 'staff', permissions: ['bilty.read'], is_active: 1 })
+    );
+
+    const res = await request(app)
+      .post('/api/users/5/activate')
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.is_active).toBe(true);
+    expect(userModel.setActive).toHaveBeenCalledWith(5, true);
+  });
+
+  test('404 user_not_found when setActive affects no rows', async () => {
+    const { token } = adminAuth();
+    userModel.setActive.mockResolvedValueOnce(false);
+
+    const res = await request(app)
+      .post('/api/users/999/activate')
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(res.status).toBe(404);
+    expect(res.body).toEqual({ error: 'user_not_found' });
+  });
+
+  test('400 invalid_id on non-numeric :id', async () => {
+    const { token } = adminAuth();
+    const res = await request(app)
+      .post('/api/users/abc/activate')
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: 'invalid_id' });
+  });
+
+  test('403 forbidden with staff token', async () => {
+    const { token } = staffAuth();
+    const res = await request(app)
+      .post('/api/users/5/activate')
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(res.status).toBe(403);
+    expect(res.body).toEqual({ error: 'forbidden' });
+    expect(userModel.setActive).not.toHaveBeenCalled();
+  });
+
+  test('401 missing_token with no Bearer', async () => {
+    const res = await request(app).post('/api/users/5/activate');
+    expect(res.status).toBe(401);
+  });
+});
+
 describe('users — self-lockout (USER-05, T-02-04)', () => {
   test('409 self_lockout_forbidden when admin deactivates own id; setActive NOT called', async () => {
     // Admin id 1 tries to deactivate id 1.
