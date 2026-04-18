@@ -12,6 +12,7 @@ import {
   validateRole,
   validatePermissions,
   validateCreateUser,
+  validateUpdateUser,
 } from './userValidation';
 
 describe('validateUsername', () => {
@@ -131,5 +132,57 @@ describe('validateCreateUser', () => {
       role: 'invalid_value',
       permissions: 'required',
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// validateUpdateUser — plan 02-03 / Task 1
+// Partial-patch validator with "empty password = no change" UX contract.
+// ---------------------------------------------------------------------------
+describe('validateUpdateUser', () => {
+  it('returns {} for empty patch (no fields supplied)', () => {
+    expect(validateUpdateUser({})).toEqual({});
+  });
+
+  it('treats empty-string password as "no change" — NOT an error', () => {
+    expect(validateUpdateUser({ password: '' })).toEqual({});
+  });
+
+  it('flags "too_short" when password is supplied and <8 chars', () => {
+    expect(validateUpdateUser({ password: 'short' })).toEqual({
+      password: 'too_short',
+    });
+  });
+
+  it('accepts an 8+ char password', () => {
+    expect(validateUpdateUser({ password: 'longenough' })).toEqual({});
+  });
+
+  it('flags "invalid_value" for an unknown role', () => {
+    expect(validateUpdateUser({ role: 'hacker' as any })).toEqual({
+      role: 'invalid_value',
+    });
+  });
+
+  it('flags "required" when permissions is cleared to []', () => {
+    expect(validateUpdateUser({ permissions: [] })).toEqual({
+      permissions: 'required',
+    });
+  });
+
+  it('flags "too_short" when username is supplied and <3 chars', () => {
+    expect(validateUpdateUser({ username: 'ab' })).toEqual({
+      username: 'too_short',
+    });
+  });
+
+  it('returns {} for a fully valid patch', () => {
+    expect(
+      validateUpdateUser({
+        username: 'ok.user',
+        role: 'staff',
+        permissions: ['bilty.read'],
+      })
+    ).toEqual({});
   });
 });
