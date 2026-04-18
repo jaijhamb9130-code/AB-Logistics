@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 02-01-PLAN.md (users CRUD backend + 26 new tests, 54/54 green). Ready for 02-02.
-last_updated: "2026-04-18T08:03:03.397Z"
+stopped_at: Completed 02-02-PLAN.md (frontend user list + create, 31/31 tests green). Ready for 02-03.
+last_updated: "2026-04-18T08:19:50.495Z"
 last_activity: 2026-04-18
 progress:
   total_phases: 6
   completed_phases: 0
   total_plans: 7
-  completed_plans: 4
-  percent: 57
+  completed_plans: 5
+  percent: 71
 ---
 
 # Project State
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-04-18)
 ## Current Position
 
 Phase: 02 (user-management) — EXECUTING
-Plan: 2 of 3
+Plan: 3 of 3
 Status: Ready to execute
 Last activity: 2026-04-18
 
@@ -53,6 +53,7 @@ Progress: [█░░░░░░░░░] 10%
 
 *Updated after each plan completion*
 | Phase 02-user-management P01 | ~15m | 2 tasks | 8 files |
+| Phase 02 P02 | ~18m | 2 tasks | 10 files |
 
 ## Accumulated Context
 
@@ -70,6 +71,9 @@ Recent decisions affecting current work:
 - [Phase 02-user-management]: sanitizeUser replicated in usersController (not shared util) — scope-tight; future refactor noted
 - [Phase 02-user-management]: Self-lockout guarded BEFORE DB write; setActive never called for self-targeting requests
 - [Phase 02-user-management]: Canonical permission vocabulary lives in constants/permissions.js — backend validates, shared/types mirrors
+- [Phase 02]: Plan 02-02: Extracted usersController.ts from UsersScreen for ts-jest testability — business logic lives outside the RN renderer
+- [Phase 02]: Plan 02-02: Server error codes mapped to user copy at screen boundary (not in userService) — transport stays pure, reusable by plan 02-03
+- [Phase 02]: Plan 02-02: PermissionPicker treats '*' as exclusive mode — selecting wildcard clears per-permission array; contract locked for plan 02-03 edit flow
 
 ### Pending Todos
 
@@ -81,6 +85,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-18T08:02:55.074Z
-Stopped at: Completed 02-01-PLAN.md (users CRUD backend + 26 new tests, 54/54 green). Ready for 02-02.
+Last session: 2026-04-18T08:19:37.825Z
+Stopped at: Completed 02-02-PLAN.md (frontend user list + create, 31/31 tests green). Ready for 02-03.
 Resume file: None
