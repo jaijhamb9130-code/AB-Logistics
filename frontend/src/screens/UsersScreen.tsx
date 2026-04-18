@@ -19,6 +19,7 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import {
+  Alert,
   Pressable,
   StyleSheet,
   Text,
@@ -26,12 +27,14 @@ import {
   ScrollView,
 } from 'react-native';
 import { ButtonPrimary } from '../components/ButtonPrimary';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import { DataTable, type Column } from '../components/DataTable';
 import { InputField } from '../components/InputField';
 import { Loader } from '../components/Loader';
 import { Modal } from '../components/Modal';
 import { PasswordField } from '../components/PasswordField';
 import { PermissionPicker } from '../components/PermissionPicker';
+import { useAuth } from '../context/AuthContext';
 import {
   PERMISSION_LABELS,
   ROLE_OPTIONS,
@@ -40,6 +43,7 @@ import { colors, radius, spacing, typography } from '../constants/theme';
 import { userService } from '../services/userService';
 import {
   type CreateUserErrors,
+  type UpdateUserErrors,
 } from '../utils/userValidation';
 import type {
   Permission,
@@ -48,7 +52,11 @@ import type {
 } from '../../../shared/types/user';
 import {
   handleCreateUserSubmit,
+  handleDeactivateConfirm,
+  handleEditUserSubmit,
+  isSelf,
   type CreateUserForm,
+  type EditUserForm,
 } from './usersController';
 
 const EMPTY_FORM: CreateUserForm = {
@@ -67,16 +75,33 @@ const FIELD_ERROR_COPY: Record<string, string> = {
 };
 
 export function UsersScreen() {
+  const { user: currentUser } = useAuth();
+
   // ---- List state (null = first-load in flight) ----
   const [rows, setRows] = useState<UserListItem[] | null>(null);
   const [listError, setListError] = useState<string | null>(null);
 
-  // ---- Modal + form state ----
+  // ---- Create modal + form state ----
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState<CreateUserForm>(EMPTY_FORM);
   const [errs, setErrs] = useState<CreateUserErrors>({});
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+
+  // ---- Edit modal state (plan 02-03) ----
+  const [editTarget, setEditTarget] = useState<UserListItem | null>(null);
+  const [editForm, setEditForm] = useState<EditUserForm>({
+    password: '',
+    role: 'staff',
+    permissions: [],
+  });
+  const [editErrs, setEditErrs] = useState<UpdateUserErrors>({});
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+
+  // ---- Deactivate confirm state (plan 02-03) ----
+  const [deactivateTarget, setDeactivateTarget] = useState<UserListItem | null>(null);
+  const [deactivating, setDeactivating] = useState(false);
 
   // ---- Load / refresh ----
   const load = useCallback(async () => {
@@ -122,6 +147,65 @@ export function UsersScreen() {
     });
   }, [form, load, closeModal]);
 
+  // ---- Edit modal open/close (plan 02-03) ----
+  const openEdit = useCallback((r: UserListItem) => {
+    setEditTarget(r);
+    setEditForm({
+      password: '',
+      role: r.role,
+      permissions: [...r.permissions],
+    });
+    setEditErrs({});
+    setEditError(null);
+  }, []);
+
+  const closeEdit = useCallback(() => {
+    setEditTarget(null);
+    setEditErrs({});
+    setEditError(null);
+  }, []);
+
+  const replaceRow = useCallback((updated: UserListItem) => {
+    setRows((prev) => (prev ? prev.map((u) => (u.id === updated.id ? updated : u)) : prev));
+  }, []);
+
+  const onEditSave = useCallback(() => {
+    if (!editTarget) return;
+    handleEditUserSubmit(editTarget, editForm, {
+      onValidationError: setEditErrs,
+      onFormError: setEditError,
+      onSubmittingChange: setEditSaving,
+      onSuccess: () => {
+        closeEdit();
+      },
+      replaceRow,
+    });
+  }, [editTarget, editForm, closeEdit, replaceRow]);
+
+  // ---- Deactivate flow (plan 02-03) ----
+  const openDeactivate = useCallback((r: UserListItem) => {
+    // Client-side self-lockout guard (T-02-14). The Deactivate pressable is
+    // also rendered disabled, so this is defence-in-depth.
+    if (isSelf(currentUser, r)) return;
+    setDeactivateTarget(r);
+  }, [currentUser]);
+
+  const onDeactivateConfirm = useCallback(() => {
+    if (!deactivateTarget) return;
+    handleDeactivateConfirm(deactivateTarget, {
+      onLoadingChange: setDeactivating,
+      onError: (copy) => {
+        Alert.alert('Action blocked', copy);
+        setDeactivateTarget(null);
+      },
+      onSuccess: () => {
+        setDeactivateTarget(null);
+      },
+      replaceRow,
+      reloadList: load,
+    });
+  }, [deactivateTarget, replaceRow, load]);
+
   // ---- Columns (exact keys + order per plan) ----
   const columns: Column<UserListItem>[] = [
     { key: 'id', label: 'ID', width: 60, align: 'right', render: (r) => r.id },
@@ -153,6 +237,48 @@ export function UsersScreen() {
       ),
     },
     { key: 'created_at', label: 'Created', width: 200, render: (r) => formatDate(r.created_at) },
+    {
+      key: 'actions',
+      label: '',
+      width: 180,
+      align: 'right',
+      render: (r) => {
+        const self = isSelf(currentUser, r);
+        return (
+          <View style={styles.rowActions}>
+            <Pressable
+              onPress={() => openEdit(r)}
+              accessibilityRole="button"
+              accessibilityLabel={`Edit ${r.username}`}
+              testID={`edit-${r.id}`}
+            >
+              <Text style={styles.editAction}>Edit</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => openDeactivate(r)}
+              disabled={self}
+              accessibilityRole="button"
+              accessibilityLabel={
+                self
+                  ? 'You cannot deactivate your own account'
+                  : `Deactivate ${r.username}`
+              }
+              accessibilityState={{ disabled: self }}
+              testID={`deactivate-${r.id}`}
+            >
+              <Text
+                style={[
+                  styles.deactivateAction,
+                  self && styles.actionDisabled,
+                ]}
+              >
+                Deactivate
+              </Text>
+            </Pressable>
+          </View>
+        );
+      },
+    },
   ];
 
   // ---- Render ----
@@ -184,6 +310,108 @@ export function UsersScreen() {
           />
         </View>
       )}
+
+      {/* ----- Edit User Modal (plan 02-03) ----- */}
+      <Modal
+        visible={!!editTarget}
+        onClose={closeEdit}
+        title={editTarget ? `Edit ${editTarget.username}` : ''}
+        testID="edit-user-modal"
+      >
+        {editTarget ? (
+          <ScrollView style={styles.formScroll} contentContainerStyle={styles.formContent}>
+            {editError ? (
+              <View style={styles.formError}>
+                <Text style={styles.formErrorText}>{editError}</Text>
+              </View>
+            ) : null}
+
+            <Text style={styles.readonlyLabel}>Username</Text>
+            <Text style={styles.readonlyValue}>{editTarget.username}</Text>
+
+            <Text style={styles.fieldLabel}>Role</Text>
+            <View style={styles.roleRow}>
+              {ROLE_OPTIONS.map((opt) => {
+                const selected = editForm.role === opt.value;
+                return (
+                  <Pressable
+                    key={opt.value}
+                    onPress={() => setEditForm((f) => ({ ...f, role: opt.value as Role }))}
+                    style={[styles.roleOption, selected && styles.roleOptionSelected]}
+                    accessibilityRole="radio"
+                    accessibilityState={{ selected }}
+                    testID={`edit-role-${opt.value}`}
+                  >
+                    <View style={[styles.radio, selected && styles.radioSelected]} />
+                    <Text style={[styles.roleLabel, selected && styles.roleLabelSelected]}>
+                      {opt.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+            {editErrs.role ? (
+              <Text style={styles.fieldError}>{FIELD_ERROR_COPY[editErrs.role]}</Text>
+            ) : null}
+
+            <Text style={[styles.fieldLabel, { marginTop: spacing.md }]}>Permissions</Text>
+            <PermissionPicker
+              value={editForm.permissions}
+              onChange={(perms: Permission[]) =>
+                setEditForm((f) => ({ ...f, permissions: perms }))
+              }
+              testID="edit-permission-picker"
+            />
+            {editErrs.permissions ? (
+              <Text style={styles.fieldError}>Select at least one permission.</Text>
+            ) : null}
+
+            <PasswordField
+              label="Reset password (optional)"
+              value={editForm.password}
+              onChangeText={(v) => setEditForm((f) => ({ ...f, password: v }))}
+              error={editErrs.password ? 'Password must be at least 8 characters.' : null}
+              testID="edit-password-input"
+            />
+
+            <View style={styles.actions}>
+              <Pressable
+                onPress={closeEdit}
+                style={styles.cancelBtn}
+                accessibilityRole="button"
+                testID="edit-cancel-btn"
+              >
+                <Text style={styles.cancelBtnText}>Cancel</Text>
+              </Pressable>
+              <View style={styles.submitWrap}>
+                <ButtonPrimary
+                  title="Save changes"
+                  onPress={onEditSave}
+                  loading={editSaving}
+                  testID="edit-submit-btn"
+                />
+              </View>
+            </View>
+          </ScrollView>
+        ) : null}
+      </Modal>
+
+      {/* ----- Deactivate Confirm Dialog (plan 02-03) ----- */}
+      <ConfirmDialog
+        visible={!!deactivateTarget}
+        title="Deactivate user"
+        message={
+          deactivateTarget
+            ? `Deactivate ${deactivateTarget.username}? They will lose access immediately.`
+            : ''
+        }
+        confirmLabel="Deactivate"
+        danger
+        loading={deactivating}
+        onCancel={() => setDeactivateTarget(null)}
+        onConfirm={onDeactivateConfirm}
+        testID="deactivate-confirm"
+      />
 
       {/* ----- New User Modal ----- */}
       <Modal visible={modalOpen} onClose={closeModal} title="New User">
@@ -425,5 +653,41 @@ const styles = StyleSheet.create({
   },
   submitWrap: {
     minWidth: 160,
+  },
+  rowActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  editAction: {
+    color: colors.primary,
+    fontFamily: typography.uiBold,
+    fontSize: 13,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+  },
+  deactivateAction: {
+    color: colors.danger,
+    fontFamily: typography.uiBold,
+    fontSize: 13,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+  },
+  actionDisabled: {
+    color: colors.textMuted,
+    opacity: 0.5,
+  },
+  readonlyLabel: {
+    fontSize: 12,
+    color: colors.textMuted,
+    fontFamily: typography.ui,
+    marginTop: spacing.sm,
+  },
+  readonlyValue: {
+    fontSize: 16,
+    color: colors.text,
+    fontFamily: typography.uiBold,
+    marginBottom: spacing.md,
   },
 });
