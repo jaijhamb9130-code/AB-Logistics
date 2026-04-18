@@ -12,21 +12,14 @@ const env = require('../src/config/env');
 (async () => {
   const sqlPath = path.join(__dirname, '..', 'src', 'db', 'schema.sql');
   const sql = fs.readFileSync(sqlPath, 'utf8');
-  const statements = sql
-    .split(/;\s*(\n|$)/)
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0 && !s.startsWith('--'));
 
-  // multipleStatements lets us send the whole file at once if needed;
-  // we still iterate to give better error reporting.
+  // Send the file as one multi-statement query. Splitting on ';' corrupts
+  // PREPARE/EXECUTE blocks that depend on session-scoped @-variables.
   const conn = await mysql.createConnection({ uri: env.DATABASE_URL, multipleStatements: true });
   try {
-    for (const stmt of statements) {
-      // eslint-disable-next-line no-await-in-loop
-      await conn.query(stmt);
-    }
+    await conn.query(sql);
     // eslint-disable-next-line no-console
-    console.log('[init-db] OK —', statements.length, 'statement(s) applied.');
+    console.log('[init-db] OK — schema applied.');
   } finally {
     await conn.end();
   }
