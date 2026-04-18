@@ -42,4 +42,12 @@ export const userService = {
     const { data } = await http.post<UserListItem>(`/api/users/${id}/deactivate`);
     return data;
   },
+
+  // Plan 02-04 addendum (reactivation). Backend: POST /api/users/:id/activate.
+  // setActive only flips is_active — permissions column is untouched, so the
+  // returned row carries the user's prior permission set intact.
+  async activate(id: number): Promise<UserListItem> {
+    const { data } = await http.post<UserListItem>(`/api/users/${id}/activate`);
+    return data;
+  },
 };

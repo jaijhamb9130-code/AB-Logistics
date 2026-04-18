@@ -40,7 +40,19 @@ interface Props {
   message: string;
   confirmLabel?: string;
   cancelLabel?: string;
+  /**
+   * Legacy boolean flag — when true tints the confirm button colors.danger.
+   * Kept for plan 02-03 callers. New callers should prefer `variant`.
+   */
   danger?: boolean;
+  /**
+   * Variant selector (plan 02-04 addendum):
+   *  - 'danger'   → destructive flows (red confirm) — same as danger=true
+   *  - 'default'  → non-destructive confirms (primary color confirm)
+   * When omitted, falls back to the `danger` boolean (false → 'default').
+   * `variant` takes precedence over `danger` when both are supplied.
+   */
+  variant?: 'danger' | 'default';
   loading?: boolean;
   testID?: string;
 }
@@ -54,10 +66,15 @@ export function ConfirmDialog({
   confirmLabel = 'Confirm',
   cancelLabel = 'Cancel',
   danger = false,
+  variant,
   loading = false,
   testID,
 }: Props) {
-  const confirmBg = danger ? colors.danger : colors.primary;
+  // variant takes precedence when supplied; otherwise fall back to `danger`.
+  const effectiveVariant: 'danger' | 'default' =
+    variant ?? (danger ? 'danger' : 'default');
+  const confirmBg =
+    effectiveVariant === 'danger' ? colors.danger : colors.primary;
   const isDisabled = loading;
 
   return (

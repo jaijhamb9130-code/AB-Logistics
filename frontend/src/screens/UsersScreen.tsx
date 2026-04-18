@@ -51,6 +51,7 @@ import type {
   UserListItem,
 } from '../../../shared/types/user';
 import {
+  handleActivateConfirm,
   handleCreateUserSubmit,
   handleDeactivateConfirm,
   handleEditUserSubmit,
@@ -102,6 +103,10 @@ export function UsersScreen() {
   // ---- Deactivate confirm state (plan 02-03) ----
   const [deactivateTarget, setDeactivateTarget] = useState<UserListItem | null>(null);
   const [deactivating, setDeactivating] = useState(false);
+
+  // ---- Activate confirm state (plan 02-04 addendum) ----
+  const [activateTarget, setActivateTarget] = useState<UserListItem | null>(null);
+  const [activating, setActivating] = useState(false);
 
   // ---- Load / refresh ----
   const load = useCallback(async () => {
@@ -206,6 +211,30 @@ export function UsersScreen() {
     });
   }, [deactivateTarget, replaceRow, load]);
 
+  // ---- Activate flow (plan 02-04 addendum) ----
+  // No self-lockout guard: inactive users cannot sign in, so req.user can
+  // never be the target of activate (backend + client agree — see
+  // handleActivateConfirm comment).
+  const openActivate = useCallback((r: UserListItem) => {
+    setActivateTarget(r);
+  }, []);
+
+  const onActivateConfirm = useCallback(() => {
+    if (!activateTarget) return;
+    handleActivateConfirm(activateTarget, {
+      onLoadingChange: setActivating,
+      onError: (copy) => {
+        Alert.alert('User not found', copy);
+        setActivateTarget(null);
+      },
+      onSuccess: () => {
+        setActivateTarget(null);
+      },
+      replaceRow,
+      reloadList: load,
+    });
+  }, [activateTarget, replaceRow, load]);
+
   // ---- Columns (exact keys + order per plan) ----
   const columns: Column<UserListItem>[] = [
     { key: 'id', label: 'ID', width: 60, align: 'right', render: (r) => r.id },
@@ -254,27 +283,38 @@ export function UsersScreen() {
             >
               <Text style={styles.editAction}>Edit</Text>
             </Pressable>
-            <Pressable
-              onPress={() => openDeactivate(r)}
-              disabled={self}
-              accessibilityRole="button"
-              accessibilityLabel={
-                self
-                  ? 'You cannot deactivate your own account'
-                  : `Deactivate ${r.username}`
-              }
-              accessibilityState={{ disabled: self }}
-              testID={`deactivate-${r.id}`}
-            >
-              <Text
-                style={[
-                  styles.deactivateAction,
-                  self && styles.actionDisabled,
-                ]}
+            {r.is_active ? (
+              <Pressable
+                onPress={() => openDeactivate(r)}
+                disabled={self}
+                accessibilityRole="button"
+                accessibilityLabel={
+                  self
+                    ? 'You cannot deactivate your own account'
+                    : `Deactivate ${r.username}`
+                }
+                accessibilityState={{ disabled: self }}
+                testID={`deactivate-${r.id}`}
               >
-                Deactivate
-              </Text>
-            </Pressable>
+                <Text
+                  style={[
+                    styles.deactivateAction,
+                    self && styles.actionDisabled,
+                  ]}
+                >
+                  Deactivate
+                </Text>
+              </Pressable>
+            ) : (
+              <Pressable
+                onPress={() => openActivate(r)}
+                accessibilityRole="button"
+                accessibilityLabel={`Activate ${r.username}`}
+                testID={`activate-${r.id}`}
+              >
+                <Text style={styles.activateAction}>Activate</Text>
+              </Pressable>
+            )}
           </View>
         );
       },
@@ -411,6 +451,23 @@ export function UsersScreen() {
         onCancel={() => setDeactivateTarget(null)}
         onConfirm={onDeactivateConfirm}
         testID="deactivate-confirm"
+      />
+
+      {/* ----- Activate Confirm Dialog (plan 02-04 addendum) ----- */}
+      <ConfirmDialog
+        visible={!!activateTarget}
+        title="Activate user"
+        message={
+          activateTarget
+            ? `Activate ${activateTarget.username}? They will regain access with their prior permissions.`
+            : ''
+        }
+        confirmLabel="Activate"
+        variant="default"
+        loading={activating}
+        onCancel={() => setActivateTarget(null)}
+        onConfirm={onActivateConfirm}
+        testID="activate-confirm"
       />
 
       {/* ----- New User Modal ----- */}
@@ -669,6 +726,13 @@ const styles = StyleSheet.create({
   },
   deactivateAction: {
     color: colors.danger,
+    fontFamily: typography.uiBold,
+    fontSize: 13,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+  },
+  activateAction: {
+    color: colors.success,
     fontFamily: typography.uiBold,
     fontSize: 13,
     paddingHorizontal: spacing.sm,

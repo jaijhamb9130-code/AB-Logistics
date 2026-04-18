@@ -301,3 +301,71 @@ export function mapDeactivateError(
       return 'Could not deactivate user. Try again.';
   }
 }
+
+// =========================================================================
+// Plan 02-04 addendum — Activate (reactivation) orchestration
+// =========================================================================
+
+export interface ActivateCallbacks {
+  onLoadingChange: (loading: boolean) => void;
+  onError: (copy: string) => void;
+  onSuccess: (row: UserListItem) => void;
+  replaceRow: (row: UserListItem) => void;
+  reloadList: () => Promise<void>;
+}
+
+/**
+ * Activate-confirm orchestrator. Mirrors handleDeactivateConfirm with ONE
+ * intentional divergence: there is NO self-lockout guard. An inactive admin
+ * cannot authenticate (authMiddleware rejects inactive accounts), so
+ * req.user can never be the target of an activate call from their own
+ * token — the backend omits the check too (see usersController.activate).
+ *
+ * Permissions preservation invariant: userModel.setActive only flips the
+ * is_active flag; the permissions column is untouched. The sanitized row
+ * returned by the server carries the user's prior permission set intact,
+ * and replaceRow swaps it into the table in place (no full refetch).
+ */
+export async function handleActivateConfirm(
+  target: UserListItem,
+  cb: ActivateCallbacks
+): Promise<void> {
+  cb.onLoadingChange(true);
+  try {
+    const updated = await userService.activate(target.id);
+    cb.replaceRow(updated);
+    cb.onSuccess(updated);
+  } catch (e: unknown) {
+    const err = e as { response?: { status?: number; data?: { error?: string } } };
+    const status = err?.response?.status;
+    const code = err?.response?.data?.error;
+    cb.onError(mapActivateError(status, code));
+    if (code === 'user_not_found') {
+      // Stale row — the UI is showing a user the server no longer has.
+      // Refresh list so state converges to server truth without corruption.
+      try {
+        await cb.reloadList();
+      } catch {
+        /* ignore — onError already fired */
+      }
+    }
+  } finally {
+    cb.onLoadingChange(false);
+  }
+}
+
+/**
+ * Error-code → user-copy mapping for POST /api/users/:id/activate.
+ * 404 uses friendly "User not found" copy per plan 02-04 addendum.
+ */
+export function mapActivateError(
+  status: number | undefined,
+  code: string | undefined
+): string {
+  switch (code) {
+    case 'user_not_found':
+      return 'User not found — refreshing list.';
+    default:
+      return 'Could not activate user. Try again.';
+  }
+}
