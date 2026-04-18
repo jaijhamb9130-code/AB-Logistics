@@ -6,6 +6,7 @@ const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const env = require('./config/env');
 const authRouter = require('./routes/auth');
+const usersRouter = require('./routes/users');
 
 const app = express();
 
@@ -27,6 +28,9 @@ app.get('/api/health', (_req, res) => {
 
 // Auth (BE-04, BE-05)
 app.use('/api/auth', authRouter);
+
+// Users (Phase 02 — admin-only; guard applied at router level, T-02-01)
+app.use('/api/users', usersRouter);
 
 // 404
 app.use((_req, res) => {
