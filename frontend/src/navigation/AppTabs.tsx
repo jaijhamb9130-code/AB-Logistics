@@ -1,103 +1,75 @@
-/**
- * Authenticated bottom-tab navigator (AUTH-06, D-18).
- *
- * Tab visibility is gated by `canAccessTab(user)`:
- *  - Dashboard : all roles
- *  - Users     : admin only (hidden from staff)
- *
- * This is the UI gate; the backend's roleMiddleware is the real enforcement.
- */
-
+import React from 'react';
+import { View } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { Ionicons } from '@expo/vector-icons';
 import { DashboardScreen } from '../screens/DashboardScreen';
 import { UsersScreen } from '../screens/UsersScreen';
 import { BiltyStack } from './BiltyStack';
 import { FreightStack } from './FreightStack';
 import { OrdersStack } from './OrdersStack';
 import { VehiclesStack } from './VehiclesStack';
+import { CustomersStack } from './CustomersStack';
 import { ReportsScreen } from '../screens/ReportsScreen';
 import { useAuth } from '../context/AuthContext';
 import { canAccessTab } from './guards';
 import { colors } from '../constants/theme';
+import { TopNavBar, TOP_NAV_HEIGHT } from '../components/TopNavBar';
 import type { AppTabsParamList } from './types';
 
-const TAB_ICONS: Record<string, { focused: string; unfocused: string }> = {
-  Dashboard:  { focused: 'home',            unfocused: 'home-outline' },
-  Bilty:      { focused: 'document-text',   unfocused: 'document-text-outline' },
-  Freight:    { focused: 'cube',            unfocused: 'cube-outline' },
-  Orders:     { focused: 'list',            unfocused: 'list-outline' },
-  Vehicles:   { focused: 'car',             unfocused: 'car-outline' },
-  Reports:    { focused: 'bar-chart',       unfocused: 'bar-chart-outline' },
-  Users:      { focused: 'people',          unfocused: 'people-outline' },
-};
-
 const Tab = createBottomTabNavigator<AppTabsParamList>();
+
+// Wraps a screen so its content always starts below the fixed top nav bar.
+// Defined outside AppTabs to keep component identity stable across renders.
+function withPad(Screen: React.ComponentType<any>): React.ComponentType<any> {
+  return function PaddedScreen(props: any) {
+    return (
+      <View style={{ flex: 1, paddingTop: TOP_NAV_HEIGHT, backgroundColor: colors.background }}>
+        <Screen {...props} />
+      </View>
+    );
+  };
+}
+
+const PaddedDashboard = withPad(DashboardScreen);
+const PaddedBiltyStack = withPad(BiltyStack);
+const PaddedFreightStack = withPad(FreightStack);
+const PaddedOrdersStack = withPad(OrdersStack);
+const PaddedVehiclesStack = withPad(VehiclesStack);
+const PaddedCustomersStack = withPad(CustomersStack);
+const PaddedReports = withPad(ReportsScreen);
+const PaddedUsers = withPad(UsersScreen);
 
 export function AppTabs() {
   const { user } = useAuth();
 
   return (
     <Tab.Navigator
-      screenOptions={({ route }) => ({
-        tabBarIcon: ({ focused, color, size }) => {
-          const icons = TAB_ICONS[route.name] ?? { focused: 'ellipse', unfocused: 'ellipse-outline' };
-          return (
-            <Ionicons
-              name={(focused ? icons.focused : icons.unfocused) as any}
-              size={size}
-              color={color}
-            />
-          );
-        },
-        tabBarActiveTintColor: colors.brandYellow,
-        tabBarInactiveTintColor: colors.brandRed,
-        tabBarStyle: {
-          backgroundColor: colors.card,
-          borderTopColor: colors.border,
-          shadowColor: colors.brandYellow,
-          shadowOpacity: 0.35,
-          shadowRadius: 10,
-          elevation: 10,
-        },
-        headerStyle: { backgroundColor: colors.card },
-        headerTintColor: colors.text,
-      })}
+      tabBar={(props) => <TopNavBar {...props} />}
+      screenOptions={{
+        headerShown: false,
+        sceneContainerStyle: { backgroundColor: colors.background },
+      }}
     >
-      <Tab.Screen name="Dashboard" component={DashboardScreen} />
+      <Tab.Screen name="Dashboard" component={PaddedDashboard} />
       {canAccessTab('Bilty', user) && (
-        <Tab.Screen
-          name="Bilty"
-          component={BiltyStack}
-          options={{ headerShown: false }}
-        />
+        <Tab.Screen name="Bilty" component={PaddedBiltyStack} />
       )}
       {canAccessTab('Freight', user) && (
-        <Tab.Screen
-          name="Freight"
-          component={FreightStack}
-          options={{ headerShown: false }}
-        />
+        <Tab.Screen name="Freight" component={PaddedFreightStack} />
       )}
       {canAccessTab('Orders', user) && (
-        <Tab.Screen
-          name="Orders"
-          component={OrdersStack}
-          options={{ headerShown: false }}
-        />
+        <Tab.Screen name="Orders" component={PaddedOrdersStack} />
       )}
       {canAccessTab('Vehicles', user) && (
-        <Tab.Screen
-          name="Vehicles"
-          component={VehiclesStack}
-          options={{ headerShown: false }}
-        />
+        <Tab.Screen name="Vehicles" component={PaddedVehiclesStack} />
+      )}
+      {canAccessTab('Customers', user) && (
+        <Tab.Screen name="Customers" component={PaddedCustomersStack} />
       )}
       {canAccessTab('Reports', user) && (
-        <Tab.Screen name="Reports" component={ReportsScreen} />
+        <Tab.Screen name="Reports" component={PaddedReports} />
       )}
       {canAccessTab('Users', user) && (
-        <Tab.Screen name="Users" component={UsersScreen} />
+        <Tab.Screen name="Users" component={PaddedUsers} />
       )}
     </Tab.Navigator>
   );

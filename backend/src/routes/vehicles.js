@@ -17,5 +17,6 @@ router.get('/:id', requirePermission('vehicle.read'), ctrl.get);
 router.post('/', requirePermission('vehicle.edit'), ctrl.create);
 router.patch('/:id', requirePermission('vehicle.edit'), ctrl.update);
 router.post('/:id/deactivate', requirePermission('vehicle.edit'), ctrl.deactivate);
+router.post('/:id/activate', requirePermission('vehicle.edit'), ctrl.activate);
 
 module.exports = router;

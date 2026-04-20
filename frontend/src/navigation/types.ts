@@ -7,13 +7,16 @@ export type AuthStackParamList = {
   Login: undefined;
 };
 
+export type ReportsSection = 'bilty' | 'order';
+
 export type AppTabsParamList = {
   Dashboard: undefined;
   Bilty: undefined;
   Freight: undefined;
   Orders: undefined;
   Vehicles: undefined;
-  Reports: undefined;
+  Customers: undefined;
+  Reports: { section?: ReportsSection } | undefined;
   Users: undefined;
 };
 
@@ -26,7 +29,7 @@ export type TabName = keyof AppTabsParamList;
  */
 export type BiltyStackParamList = {
   BiltyList: undefined;
-  BiltyForm: undefined;
+  BiltyForm: { id?: number } | undefined;
   BiltyDetail: { id: number };
 };
 
@@ -54,4 +57,12 @@ export type OrdersStackParamList = {
  */
 export type VehiclesStackParamList = {
   VehicleList: undefined;
+};
+
+/**
+ * Customers stack (Phase 6) — nested inside the Customers tab.
+ * Single list screen; create happens in a modal popup.
+ */
+export type CustomersStackParamList = {
+  CustomerList: undefined;
 };

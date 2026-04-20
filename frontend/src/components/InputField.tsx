@@ -16,6 +16,7 @@ import {
   TextInput,
   StyleSheet,
   TextInputProps,
+  Platform,
 } from 'react-native';
 import { colors, radius, spacing, typography } from '../constants/theme';
 
@@ -24,6 +25,7 @@ export type FieldType = 'text' | 'integer' | 'decimal' | 'email' | 'phone';
 interface Props extends Omit<TextInputProps, 'style'> {
   label: string;
   error?: string | null;
+  hint?: string;
   rightSlot?: React.ReactNode;
   testID?: string;
   fieldType?: FieldType;
@@ -44,13 +46,14 @@ function filterValue(raw: string, fieldType: FieldType): string {
     const parts = cleaned.split('.');
     return parts.length > 2 ? `${parts[0]}.${parts.slice(1).join('')}` : cleaned;
   }
-  if (fieldType === 'phone') return raw.replace(/[^0-9+\-() ]/g, '');
+  if (fieldType === 'phone') return raw.replace(/\D/g, '').slice(0, 10);
   return raw;
 }
 
 export function InputField({
   label,
   error,
+  hint,
   rightSlot,
   value,
   onChangeText,
@@ -62,8 +65,12 @@ export function InputField({
   const borderColor = error
     ? colors.danger
     : focused
-      ? colors.primary
-      : colors.border;
+      ? colors.brandRed
+      : '#CBD5E1';
+
+  const glowColor = error
+    ? 'rgba(239, 68, 68, 0.15)'
+    : 'rgba(247, 72, 61, 0.15)';
 
   const handleChange = (raw: string) => {
     if (!onChangeText) return;
@@ -73,20 +80,26 @@ export function InputField({
   return (
     <View style={styles.wrap}>
       <Text style={styles.label}>{label}</Text>
-      <View style={[styles.row, { borderColor }]}>
+      <View style={[
+        styles.row,
+        { borderColor },
+        focused && Platform.OS === 'web' && ({ boxShadow: `0 0 0 3px ${glowColor}` } as any),
+      ]}>
         <TextInput
-          style={styles.input}
+          style={[styles.input, Platform.OS === 'web' && ({ outline: 'none', border: 'none' } as any)]}
           value={value}
           onChangeText={handleChange}
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
           placeholderTextColor={colors.textMuted}
           keyboardType={KEYBOARD_TYPE[fieldType]}
+          maxLength={fieldType === 'phone' ? 10 : undefined}
           testID={testID}
           {...rest}
         />
         {rightSlot}
       </View>
+      {hint && !error ? <Text style={styles.hint}>{hint}</Text> : null}
       {error ? <Text style={styles.error}>{error}</Text> : null}
     </View>
   );
@@ -94,32 +107,39 @@ export function InputField({
 
 const styles = StyleSheet.create({
   wrap: {
-    marginBottom: spacing.md,
+    marginBottom: spacing.sm,
   },
   label: {
-    fontSize: 13,
-    color: colors.textMuted,
-    marginBottom: spacing.xs,
-    fontFamily: typography.ui,
+    fontSize: 12,
+    color: colors.textLabel,
+    marginBottom: 3,
+    fontFamily: typography.uiBold,
+    letterSpacing: 0.2,
   },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
-    borderWidth: 1,
     borderRadius: radius.md,
+    borderWidth: 1,
     backgroundColor: colors.card,
     paddingHorizontal: spacing.md,
   },
   input: {
     flex: 1,
-    paddingVertical: spacing.md,
-    fontSize: 15,
+    paddingVertical: spacing.sm,
+    fontSize: 14,
     color: colors.text,
+    fontFamily: typography.ui,
+  },
+  hint: {
+    marginTop: 3,
+    fontSize: 11,
+    color: colors.textMuted,
     fontFamily: typography.ui,
   },
   error: {
     marginTop: spacing.xs,
-    fontSize: 12,
+    fontSize: 13,
     color: colors.danger,
     fontFamily: typography.ui,
   },

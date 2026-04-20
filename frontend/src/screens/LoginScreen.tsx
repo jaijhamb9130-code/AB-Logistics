@@ -194,7 +194,8 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
     fontFamily: typography.uiMedium,
     fontWeight: '500',
-    fontSize: 13,
+    fontSize: 14,
+    lineHeight: 20,
     textAlign: 'center',
   },
   spacer: {

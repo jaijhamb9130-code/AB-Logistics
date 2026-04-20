@@ -41,7 +41,7 @@ export const typography = {
 } as const;
 
 const isWeb = Platform.OS === 'web';
-const bump = (mobile: number, webBump = 2) => (isWeb ? mobile + webBump : mobile);
+const bump = (mobile: number, webBump = 3) => (isWeb ? mobile + webBump : mobile);
 
 /**
  * Typography presets — use these via `...text.heading` / `...text.label`
@@ -52,19 +52,19 @@ const bump = (mobile: number, webBump = 2) => (isWeb ? mobile + webBump : mobile
 export const text = {
   heading: {
     fontFamily: typography.uiHeavy,
-    fontSize: bump(18),
+    fontSize: bump(20),
     fontWeight: '700',
     letterSpacing: 0.3,
     color: colors.text,
-    lineHeight: bump(18) * 1.35,
+    lineHeight: bump(20) * 1.3,
   },
   subheading: {
     fontFamily: typography.uiBold,
-    fontSize: bump(15),
+    fontSize: bump(16),
     fontWeight: '600',
     letterSpacing: 0.2,
     color: colors.text,
-    lineHeight: bump(15) * 1.4,
+    lineHeight: bump(16) * 1.4,
   },
   label: {
     fontFamily: typography.uiBold,
@@ -75,41 +75,41 @@ export const text = {
   },
   value: {
     fontFamily: typography.uiMedium,
-    fontSize: bump(14),
+    fontSize: bump(15),
     fontWeight: '500',
     color: colors.textStrong,
-    lineHeight: bump(14) * 1.45,
+    lineHeight: bump(15) * 1.45,
   },
   valueStrong: {
     fontFamily: typography.uiBold,
-    fontSize: bump(15),
+    fontSize: bump(16),
     fontWeight: '600',
     color: colors.textStrong,
-    lineHeight: bump(15) * 1.4,
+    lineHeight: bump(16) * 1.4,
   },
   meta: {
     fontFamily: typography.uiMedium,
-    fontSize: bump(12, 1),
+    fontSize: bump(13, 2),
     fontWeight: '500',
     color: colors.textMuted,
-    lineHeight: bump(12, 1) * 1.4,
+    lineHeight: bump(13, 2) * 1.4,
   },
   pill: {
     fontFamily: typography.uiBold,
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '600',
     letterSpacing: 0.2,
-    lineHeight: 16,
+    lineHeight: 18,
   },
   action: {
     fontFamily: typography.uiBold,
-    fontSize: bump(13, 1),
+    fontSize: bump(14, 2),
     fontWeight: '600',
     letterSpacing: 0.2,
   },
   numeric: {
     fontFamily: typography.mono,
-    fontSize: bump(14),
+    fontSize: bump(15),
     fontWeight: '500',
     color: colors.textStrong,
   },

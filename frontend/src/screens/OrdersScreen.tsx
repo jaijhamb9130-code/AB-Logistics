@@ -11,9 +11,9 @@
  *   completed   → green (success)
  */
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  Pressable, ScrollView, StyleSheet, Text, View,
+  Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View,
 } from 'react-native';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -23,20 +23,25 @@ import { InputField } from '../components/InputField';
 import { Loader } from '../components/Loader';
 import { Modal } from '../components/Modal';
 import { colors, radius, spacing, text, typography } from '../constants/theme';
+import { getTodayISO } from '../utils/dateUtils';
 import { orderService } from '../services/orderService';
+import { customerService } from '../services/customerService';
 import { validateOrder, type OrderErrors } from '../utils/orderValidation';
 import type { OrderListItem, OrderStatus } from '../../../shared/types/order';
+import type { CustomerSearchResult } from '../../../shared/types/customer';
 import type { OrdersStackParamList } from '../navigation/types';
 
 type Nav = NativeStackNavigationProp<OrdersStackParamList, 'OrderList'>;
 
 const EMPTY_FORM = {
-  order_date: '',
+  order_date: getTodayISO(),
   customer_name: '',
+  customer_id: null as number | null,
   from_loc: '',
   to_loc: '',
   goods_desc: '',
 };
+
 
 const STATUS_LABELS: Record<OrderStatus, string> = {
   pending: 'Pending',
@@ -94,6 +99,7 @@ export function OrdersScreen() {
       await orderService.create({
         order_date: form.order_date || null,
         customer_name: form.customer_name.trim(),
+        customer_id: form.customer_id ?? undefined,
         from_loc: form.from_loc || null,
         to_loc: form.to_loc || null,
         goods_desc: form.goods_desc || null,
@@ -180,20 +186,25 @@ export function OrdersScreen() {
             </View>
           ) : null}
 
-          <InputField
-            label="Customer"
-            value={form.customer_name}
-            onChangeText={(v) => setForm((f) => ({ ...f, customer_name: v }))}
-            error={errs.customer_name ? 'Required' : null}
-            testID="customer-input"
-          />
-          <InputField
-            label="Order Date (YYYY-MM-DD, optional)"
-            value={form.order_date}
-            onChangeText={(v) => setForm((f) => ({ ...f, order_date: v }))}
-            placeholder="2026-04-18"
-            testID="order-date-input"
-          />
+          <View style={styles.formRow}>
+            <View style={styles.formRowCustomer}>
+              <CustomerAutocomplete
+                value={form.customer_name}
+                error={errs.customer_name ? 'Required' : null}
+                onSelect={(name, id) => setForm((f) => ({ ...f, customer_name: name, customer_id: id }))}
+                onChange={(v) => setForm((f) => ({ ...f, customer_name: v, customer_id: null }))}
+              />
+            </View>
+            <View style={styles.formRowDate}>
+              <InputField
+                label="Date"
+                value={form.order_date}
+                onChangeText={(v) => setForm((f) => ({ ...f, order_date: v }))}
+                placeholder="YYYY-MM-DD"
+                testID="order-date-input"
+              />
+            </View>
+          </View>
           <InputField
             label="From (optional)"
             value={form.from_loc}
@@ -232,6 +243,139 @@ export function OrdersScreen() {
   );
 }
 
+function CustomerAutocomplete({
+  value,
+  error,
+  onSelect,
+  onChange,
+}: {
+  value: string;
+  error?: string | null;
+  onSelect: (name: string, id: number) => void;
+  onChange: (v: string) => void;
+}) {
+  const [results, setResults] = useState<CustomerSearchResult[]>([]);
+  const [open, setOpen] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleChange = (v: string) => {
+    onChange(v);
+    if (debounce.current) clearTimeout(debounce.current);
+    if (v.trim().length < 1) { setResults([]); setOpen(false); return; }
+    debounce.current = setTimeout(async () => {
+      try {
+        const res = await customerService.search(v.trim());
+        setResults(res);
+        setOpen(res.length > 0);
+      } catch {
+        setResults([]); setOpen(false);
+      }
+    }, 220);
+  };
+
+  const pick = (r: CustomerSearchResult) => {
+    onSelect(r.name, r.id);
+    setOpen(false);
+    setResults([]);
+  };
+
+  const borderColor = error ? colors.danger : focused ? colors.brandRed : '#E2E8F0';
+
+  return (
+    <View style={[acStyles.wrap, open && acStyles.wrapOpen]}>
+      <Text style={acStyles.label}>Customer *</Text>
+      <View style={[
+        acStyles.inputRow,
+        { borderColor, borderWidth: focused ? 2 : 1.5 },
+        focused && Platform.OS === 'web' && ({ boxShadow: '0 0 0 3px rgba(247, 72, 61, 0.15)' } as any),
+      ]}>
+        <TextInput
+          value={value}
+          onChangeText={handleChange}
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
+          placeholder="Type to search customers…"
+          placeholderTextColor={colors.textMuted}
+          style={[acStyles.input, Platform.OS === 'web' && ({ outline: 'none' } as any)]}
+          testID="customer-input"
+        />
+      </View>
+      {error ? <Text style={acStyles.errorText}>{error}</Text> : null}
+      {open && (
+        <View style={acStyles.dropdown}>
+          <ScrollView
+            keyboardShouldPersistTaps="handled"
+            nestedScrollEnabled
+            showsVerticalScrollIndicator
+          >
+            {results.map((r) => (
+              <Pressable
+                key={r.id}
+                onPress={() => pick(r)}
+                style={({ pressed }) => [acStyles.dropRow, pressed && acStyles.dropRowPressed]}
+              >
+                <Text style={acStyles.dropName} numberOfLines={1}>{r.name}</Text>
+                {r.city ? <Text style={acStyles.dropSub}>{r.city}</Text> : null}
+              </Pressable>
+            ))}
+          </ScrollView>
+        </View>
+      )}
+    </View>
+  );
+}
+
+const acStyles = StyleSheet.create({
+  wrap: { marginBottom: spacing.sm, zIndex: 10 },
+  wrapOpen: { zIndex: 999 },
+  label: {
+    fontSize: 12, color: colors.textLabel, marginBottom: 3,
+    fontFamily: typography.uiBold, letterSpacing: 0.2,
+  },
+  inputRow: {
+    borderRadius: radius.md,
+    backgroundColor: colors.card,
+    paddingHorizontal: spacing.md,
+  },
+  input: {
+    flex: 1,
+    paddingVertical: spacing.sm,
+    fontSize: 14,
+    color: colors.text,
+    fontFamily: typography.ui,
+  },
+  errorText: {
+    marginTop: spacing.xs, fontSize: 13,
+    color: colors.danger, fontFamily: typography.ui,
+  },
+  dropdown: {
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: radius.md,
+    maxHeight: 180,
+    marginTop: 2,
+    shadowColor: '#000',
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 8,
+  },
+  dropRow: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  dropRowPressed: { backgroundColor: '#F8FAFC' },
+  dropName: { color: colors.text, fontFamily: typography.uiBold, fontSize: 14, flex: 1 },
+  dropSub: { color: colors.textMuted, fontFamily: typography.ui, fontSize: 12 },
+});
+
 function formatDate(iso: string | null): string {
   if (!iso) return '—';
   try {
@@ -249,7 +393,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center',
     justifyContent: 'space-between', marginBottom: spacing.lg,
   },
-  title: { ...text.heading, fontSize: 22, lineHeight: 28 },
+  title: { ...text.heading, fontSize: 24, lineHeight: 32 },
   headerBtn: { minWidth: 140 },
   tableWrap: { flex: 1, minHeight: 200 },
   errorBanner: {
@@ -269,6 +413,9 @@ const styles = StyleSheet.create({
     color: colors.primary,
     paddingHorizontal: spacing.sm, paddingVertical: spacing.xs,
   },
+  formRow: { flexDirection: 'row', gap: spacing.sm },
+  formRowCustomer: { flex: 1 },
+  formRowDate: { width: 130 },
   formScroll: { maxHeight: 500 },
   formContent: { paddingBottom: spacing.sm },
   formError: {
@@ -278,11 +425,11 @@ const styles = StyleSheet.create({
   formErrorText: { ...text.label, color: colors.danger },
   actions: {
     flexDirection: 'row', alignItems: 'center',
-    justifyContent: 'flex-end', marginTop: spacing.lg, gap: spacing.md,
+    justifyContent: 'flex-end', marginTop: spacing.sm, gap: spacing.sm,
   },
   cancelBtn: {
-    paddingVertical: spacing.md, paddingHorizontal: spacing.lg, marginRight: spacing.sm,
+    paddingVertical: spacing.sm, paddingHorizontal: spacing.md,
   },
   cancelBtnText: { ...text.action, color: colors.textMuted, fontSize: 14 },
-  submitWrap: { minWidth: 160 },
+  submitWrap: { minWidth: 130 },
 });

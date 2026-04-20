@@ -27,4 +27,9 @@ export const biltyService = {
     const { data } = await http.post<CreateBiltyResponse>('/api/bilty', body);
     return data;
   },
+
+  async update(id: number, body: CreateBiltyRequest): Promise<BiltyDetail> {
+    const { data } = await http.patch<BiltyDetail>(`/api/bilty/${id}`, body);
+    return data;
+  },
 };

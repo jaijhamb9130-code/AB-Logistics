@@ -28,7 +28,9 @@ export function BiltyStack() {
       <Stack.Screen
         name="BiltyForm"
         component={BiltyFormScreen}
-        options={{ title: 'New Bilty' }}
+        options={({ route }) => ({
+          title: route.params?.id ? 'Edit Bilty' : 'New Bilty',
+        })}
       />
       <Stack.Screen
         name="BiltyDetail"

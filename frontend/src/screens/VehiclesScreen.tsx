@@ -48,6 +48,10 @@ export function VehiclesScreen() {
   const [deactivateTarget, setDeactivateTarget] = useState<Vehicle | null>(null);
   const [deactivating, setDeactivating] = useState(false);
 
+  // Activate confirm
+  const [activateTarget, setActivateTarget] = useState<Vehicle | null>(null);
+  const [activating, setActivating] = useState(false);
+
   const load = useCallback(async () => {
     setListError(null);
     try {
@@ -143,6 +147,23 @@ export function VehiclesScreen() {
     }
   }, [deactivateTarget, load]);
 
+  const openActivate = useCallback((v: Vehicle) => setActivateTarget(v), []);
+
+  const onActivateConfirm = useCallback(async () => {
+    if (!activateTarget) return;
+    setActivating(true);
+    try {
+      await vehicleService.activate(activateTarget.id);
+      await load();
+      setActivateTarget(null);
+    } catch {
+      Alert.alert('Action failed', 'Could not activate vehicle.');
+      setActivateTarget(null);
+    } finally {
+      setActivating(false);
+    }
+  }, [activateTarget, load]);
+
   const columns: Column<Vehicle>[] = [
     { key: 'vehicle_no', label: 'Vehicle No', width: 180, render: (r) => r.vehicle_no },
     { key: 'vehicle_type', label: 'Type', width: 140, render: (r) => r.vehicle_type || '—' },
@@ -168,7 +189,11 @@ export function VehiclesScreen() {
             <Pressable onPress={() => openDeactivate(r)} accessibilityRole="button" testID={`deactivate-vehicle-${r.id}`}>
               <Text style={styles.deactivateAction}>Deactivate</Text>
             </Pressable>
-          ) : null}
+          ) : (
+            <Pressable onPress={() => openActivate(r)} accessibilityRole="button" testID={`activate-vehicle-${r.id}`}>
+              <Text style={styles.activateAction}>Activate</Text>
+            </Pressable>
+          )}
         </View>
       ),
     },
@@ -268,6 +293,18 @@ export function VehiclesScreen() {
         onConfirm={onDeactivateConfirm}
         testID="deactivate-vehicle-confirm"
       />
+
+      <ConfirmDialog
+        visible={!!activateTarget}
+        title="Activate vehicle"
+        message={activateTarget ? `Activate ${activateTarget.vehicle_no}? It will appear again for new assignments.` : ''}
+        confirmLabel="Activate"
+        variant="default"
+        loading={activating}
+        onCancel={() => setActivateTarget(null)}
+        onConfirm={onActivateConfirm}
+        testID="activate-vehicle-confirm"
+      />
     </View>
   );
 }
@@ -278,7 +315,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center',
     justifyContent: 'space-between', marginBottom: spacing.lg,
   },
-  title: { ...text.heading, fontSize: 22, lineHeight: 28 },
+  title: { ...text.heading, fontSize: 24, lineHeight: 32 },
   headerBtn: { minWidth: 160 },
   tableWrap: { flex: 1, minHeight: 200 },
   errorBanner: {
@@ -307,6 +344,11 @@ const styles = StyleSheet.create({
     color: colors.danger,
     paddingHorizontal: spacing.sm, paddingVertical: spacing.xs,
   },
+  activateAction: {
+    ...text.action,
+    color: colors.success,
+    paddingHorizontal: spacing.sm, paddingVertical: spacing.xs,
+  },
   formScroll: { maxHeight: 500 },
   formContent: { paddingBottom: spacing.sm },
   formError: {
@@ -316,11 +358,11 @@ const styles = StyleSheet.create({
   formErrorText: { ...text.label, color: colors.danger },
   actions: {
     flexDirection: 'row', alignItems: 'center',
-    justifyContent: 'flex-end', marginTop: spacing.lg, gap: spacing.md,
+    justifyContent: 'flex-end', marginTop: spacing.sm, gap: spacing.sm,
   },
   cancelBtn: {
-    paddingVertical: spacing.md, paddingHorizontal: spacing.lg, marginRight: spacing.sm,
+    paddingVertical: spacing.sm, paddingHorizontal: spacing.md,
   },
   cancelBtnText: { ...text.action, color: colors.textMuted, fontSize: 14 },
-  submitWrap: { minWidth: 160 },
+  submitWrap: { minWidth: 130 },
 });

@@ -47,6 +47,7 @@ export interface OrderDetail extends OrderListItem {
 export interface CreateOrderRequest {
   order_date?: string | null;
   customer_name: string;
+  customer_id?: number | null;
   from_loc?: string | null;
   to_loc?: string | null;
   goods_desc?: string | null;

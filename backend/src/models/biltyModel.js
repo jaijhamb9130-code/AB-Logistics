@@ -183,8 +183,118 @@ async function findById(id) {
   return { ...header, items, advances, fuels };
 }
 
+// Full replace: UPDATE header + DELETE+INSERT all children. bilty_no never changes.
+async function updateWithChildren(id, { header, items, advances, fuels }) {
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    const [chk] = await conn.execute(
+      'SELECT id FROM bilty WHERE id = :id LIMIT 1 FOR UPDATE',
+      { id }
+    );
+    if (chk.length === 0) {
+      await conn.rollback();
+      return false;
+    }
+
+    await conn.execute(
+      `UPDATE bilty SET
+         bilty_date = :bilty_date,
+         consignor = :consignor,
+         owner_name = :owner_name,
+         agent_name = :agent_name,
+         branch = :branch,
+         zone_name = :zone_name,
+         truck_no = :truck_no,
+         goods_type = :goods_type,
+         truck_type = :truck_type
+       WHERE id = :id`,
+      {
+        id,
+        bilty_date: toDateOrNull(header.bilty_date),
+        consignor: header.consignor,
+        owner_name: header.owner_name ?? null,
+        agent_name: header.agent_name ?? null,
+        branch: header.branch ?? null,
+        zone_name: header.zone_name ?? null,
+        truck_no: header.truck_no,
+        goods_type: header.goods_type ?? null,
+        truck_type: header.truck_type ?? null,
+      }
+    );
+
+    await conn.execute('DELETE FROM bilty_items WHERE bilty_id = :id', { id });
+    await conn.execute('DELETE FROM advance_details WHERE bilty_id = :id', { id });
+    await conn.execute('DELETE FROM fuel_details WHERE bilty_id = :id', { id });
+
+    for (const it of items || []) {
+      await conn.execute(
+        `INSERT INTO bilty_items
+           (bilty_id, challan_no, lr_no, from_loc, to_loc, consignee,
+            qty, rate, inc_rate, l_rate, e_rate)
+         VALUES
+           (:bilty_id, :challan_no, :lr_no, :from_loc, :to_loc, :consignee,
+            :qty, :rate, :inc_rate, :l_rate, :e_rate)`,
+        {
+          bilty_id: id,
+          challan_no: it.challan_no ?? null,
+          lr_no: it.lr_no ?? null,
+          from_loc: it.from_loc ?? null,
+          to_loc: it.to_loc ?? null,
+          consignee: it.consignee ?? null,
+          qty: toNum(it.qty),
+          rate: toNum(it.rate),
+          inc_rate: toNum(it.inc_rate),
+          l_rate: toNum(it.l_rate),
+          e_rate: toNum(it.e_rate),
+        }
+      );
+    }
+
+    for (const a of advances || []) {
+      await conn.execute(
+        `INSERT INTO advance_details
+           (bilty_id, adv_date, adv_from, amount, narration)
+         VALUES (:bilty_id, :adv_date, :adv_from, :amount, :narration)`,
+        {
+          bilty_id: id,
+          adv_date: toDateOrNull(a.adv_date),
+          adv_from: a.adv_from ?? null,
+          amount: toNum(a.amount),
+          narration: a.narration ?? null,
+        }
+      );
+    }
+
+    for (const f of fuels || []) {
+      await conn.execute(
+        `INSERT INTO fuel_details
+           (bilty_id, from_loc, amount, doc_no, doc_date)
+         VALUES (:bilty_id, :from_loc, :amount, :doc_no, :doc_date)`,
+        {
+          bilty_id: id,
+          from_loc: f.from_loc ?? null,
+          amount: toNum(f.amount),
+          doc_no: f.doc_no ?? null,
+          doc_date: toDateOrNull(f.doc_date),
+        }
+      );
+    }
+
+    await conn.commit();
+    return true;
+  } catch (err) {
+    try { await conn.rollback(); } catch { /* ignore */ }
+    throw err;
+  } finally {
+    conn.release();
+  }
+}
+
 module.exports = {
   createWithChildren,
+  updateWithChildren,
   findAll,
   findById,
 };

@@ -89,10 +89,7 @@ export function DataTable<T>({
   const renderRow = ({ item, index }: { item: T; index: number }) => {
     const alt = index % 2 === 1;
     const content = (
-      <View
-        style={[styles.row, alt && styles.altRow]}
-        accessibilityRole={onRowPress ? 'button' : undefined}
-      >
+      <View style={[styles.row, alt && styles.altRow]}>
         {columns.map((col, i) => {
           const rendered = col.render(item);
           return (
@@ -126,11 +123,19 @@ export function DataTable<T>({
       </View>
     );
 
-    return onRowPress ? (
-      <Pressable onPress={() => onRowPress(item)}>{content}</Pressable>
-    ) : (
-      content
-    );
+    if (!onRowPress) return content;
+    if (Platform.OS === 'web') {
+      return (
+        <View
+          // @ts-ignore — web-only prop, safe to ignore on native
+          onClick={() => onRowPress(item)}
+          style={{ cursor: 'pointer' } as any}
+        >
+          {content}
+        </View>
+      );
+    }
+    return <Pressable onPress={() => onRowPress(item)}>{content}</Pressable>;
   };
 
   // ------- Web: CSS sticky via ScrollView. Native: separate header + FlatList. -------
@@ -204,25 +209,23 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
     backgroundColor: colors.card,
-    minHeight: 52,
+    minHeight: 38,
   },
   headerRow: {
     backgroundColor: '#F8FAFC',
     borderBottomWidth: 2,
     borderBottomColor: colors.border,
-    paddingVertical: spacing.md,
-    minHeight: 48,
+    minHeight: 34,
   },
   altRow: {
     backgroundColor: '#FAFBFC',
   },
   cell: {
     paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
+    paddingVertical: spacing.xs,
     justifyContent: 'center',
     alignSelf: 'stretch',
   },
@@ -232,16 +235,16 @@ const styles = StyleSheet.create({
   },
   headerText: {
     ...text.label,
-    fontSize: 13,
+    fontSize: 14,
     color: colors.textLabel,
     textTransform: 'uppercase',
-    letterSpacing: 0.6,
+    letterSpacing: 0.8,
     fontWeight: '700',
   },
   cellText: {
     ...text.value,
-    fontSize: 15,
-    lineHeight: 22,
+    fontSize: 14,
+    lineHeight: 20,
   },
   mono: {
     fontFamily: typography.mono,

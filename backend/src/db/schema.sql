@@ -160,6 +160,38 @@ CREATE TABLE IF NOT EXISTS orders (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ============================================================================
+-- Phase 6 — Customers (CUST-01..04).
+-- customer_no: CUS-YYYY-NNNNNN, auto-generated server-side.
+-- orders.customer_id FK added idempotently below.
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS customers (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  customer_no VARCHAR(32) NOT NULL UNIQUE,
+  name VARCHAR(255) NOT NULL,
+  phone_number VARCHAR(32) NULL,
+  address VARCHAR(512) NULL,
+  city VARCHAR(128) NULL,
+  state VARCHAR(128) NULL,
+  pincode VARCHAR(16) NULL,
+  created_by INT UNSIGNED NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_customers_name (name),
+  CONSTRAINT fk_customers_created_by FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Idempotent: add customer_id FK to orders.
+SET @col := (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'orders' AND column_name = 'customer_id');
+SET @sql := IF(@col = 0, 'ALTER TABLE orders ADD COLUMN customer_id INT UNSIGNED NULL AFTER customer_name, ADD INDEX idx_orders_customer_id (customer_id)', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+-- Idempotent: add FK constraint for orders.customer_id (separate step — constraint may not exist even if column does).
+SET @fk := (SELECT COUNT(*) FROM information_schema.TABLE_CONSTRAINTS WHERE CONSTRAINT_SCHEMA = DATABASE() AND TABLE_NAME = 'orders' AND CONSTRAINT_NAME = 'fk_orders_customer');
+SET @sql := IF(@fk = 0, 'ALTER TABLE orders ADD CONSTRAINT fk_orders_customer FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE SET NULL', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+-- ============================================================================
 -- Modernization Phase 0 — Audit Trail & Data Integrity
 -- ============================================================================
 

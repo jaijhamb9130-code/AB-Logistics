@@ -6,7 +6,7 @@
  * Save delegates to useBiltyCreate mutation (TanStack Query).
  */
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Controller,
   useFieldArray,
@@ -15,6 +15,7 @@ import {
 } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import {
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -22,21 +23,35 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { ButtonPrimary } from '../components/ButtonPrimary';
 import { InputField } from '../components/InputField';
+import { Loader } from '../components/Loader';
 import { colors, radius, spacing, typography } from '../constants/theme';
-import { useBiltyCreate } from '../hooks/useBiltyUpdate';
+import { useBiltyCreate, useBiltyUpdate } from '../hooks/useBiltyUpdate';
+import { biltyService } from '../services/biltyService';
 import { CreateBiltySchema } from '../../../shared/schemas/bilty.schema';
 import type { CreateBiltyInput } from '../../../shared/schemas/bilty.schema';
 import { itemsTotal, netPayable, toNum } from '../utils/biltyValidation';
+import { getTodayISO } from '../utils/dateUtils';
 import type { BiltyStackParamList } from '../navigation/types';
 
 type Nav = NativeStackNavigationProp<BiltyStackParamList, 'BiltyForm'>;
+type BiltyFormRoute = RouteProp<BiltyStackParamList, 'BiltyForm'>;
+
+function toNumStr(v: unknown): number {
+  if (v === null || v === undefined || v === '') return 0;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+function toDateStr(v: unknown): string {
+  if (!v) return '';
+  return String(v).slice(0, 10);
+}
 
 const EMPTY_HEADER: CreateBiltyInput['header'] = {
-  bilty_date: '',
+  bilty_date: getTodayISO(),
   consignor: '',
   owner_name: '',
   agent_name: '',
@@ -52,19 +67,29 @@ const EMPTY_ITEM: CreateBiltyInput['items'][number] = {
   qty: 0, rate: 0, inc_rate: 0, l_rate: 0, e_rate: 0,
 };
 const EMPTY_ADV: CreateBiltyInput['advances'][number] = {
-  adv_date: '', adv_from: '', amount: 0, narration: '',
+  adv_date: getTodayISO(), adv_from: '', amount: 0, narration: '',
 };
 const EMPTY_FUEL: CreateBiltyInput['fuels'][number] = {
-  from_loc: '', amount: 0, doc_no: '', doc_date: '',
+  from_loc: '', amount: 0, doc_no: '', doc_date: getTodayISO(),
 };
 
 export function BiltyFormScreen() {
   const navigation = useNavigation<Nav>();
-  const { mutateAsync: createBilty, isPending: saving } = useBiltyCreate();
+  const route = useRoute<BiltyFormRoute>();
+  const editingId = route.params?.id ?? null;
+  const isEdit = editingId !== null;
+
+  const { mutateAsync: createBilty, isPending: creating } = useBiltyCreate();
+  const { mutateAsync: updateBilty, isPending: updating } = useBiltyUpdate(editingId ?? 0);
+  const saving = creating || updating;
+
+  const [loading, setLoading] = useState<boolean>(isEdit);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const {
     control,
     handleSubmit,
+    reset,
     setError,
     formState: { errors },
   } = useForm<CreateBiltyInput>({
@@ -72,10 +97,73 @@ export function BiltyFormScreen() {
     defaultValues: {
       header: EMPTY_HEADER,
       items: [{ ...EMPTY_ITEM }],
-      advances: [],
-      fuels: [],
+      advances: [{ ...EMPTY_ADV }],
+      fuels: [{ ...EMPTY_FUEL }],
     },
   });
+
+  // Set dynamic header title based on mode
+  useEffect(() => {
+    navigation.setOptions({ title: isEdit ? 'Edit Bilty' : 'New Bilty' });
+  }, [navigation, isEdit]);
+
+  // Load existing bilty when editing
+  useEffect(() => {
+    if (!isEdit || editingId === null) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        setLoading(true);
+        setLoadError(null);
+        const detail = await biltyService.get(editingId);
+        if (cancelled) return;
+        reset({
+          header: {
+            bilty_date: toDateStr(detail.bilty_date) || getTodayISO(),
+            consignor: detail.consignor ?? '',
+            owner_name: detail.owner_name ?? '',
+            agent_name: detail.agent_name ?? '',
+            branch: detail.branch ?? '',
+            zone_name: detail.zone_name ?? '',
+            truck_no: detail.truck_no ?? '',
+            goods_type: detail.goods_type ?? '',
+            truck_type: detail.truck_type ?? '',
+          },
+          items: (detail.items && detail.items.length > 0
+            ? detail.items.map((it) => ({
+                challan_no: it.challan_no ?? '',
+                lr_no: it.lr_no ?? '',
+                from_loc: it.from_loc ?? '',
+                to_loc: it.to_loc ?? '',
+                consignee: it.consignee ?? '',
+                qty: toNumStr(it.qty),
+                rate: toNumStr(it.rate),
+                inc_rate: toNumStr(it.inc_rate),
+                l_rate: toNumStr(it.l_rate),
+                e_rate: toNumStr(it.e_rate),
+              }))
+            : [{ ...EMPTY_ITEM }]),
+          advances: (detail.advances ?? []).map((a) => ({
+            adv_date: toDateStr(a.adv_date) || getTodayISO(),
+            adv_from: a.adv_from ?? '',
+            amount: toNumStr(a.amount),
+            narration: a.narration ?? '',
+          })),
+          fuels: (detail.fuels ?? []).map((f) => ({
+            from_loc: f.from_loc ?? '',
+            amount: toNumStr(f.amount),
+            doc_no: f.doc_no ?? '',
+            doc_date: toDateStr(f.doc_date) || getTodayISO(),
+          })),
+        });
+      } catch (_e) {
+        if (!cancelled) setLoadError('Could not load bilty. Try again.');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [isEdit, editingId, reset]);
 
   const { fields: itemFields, append: appendItem, remove: removeItem } =
     useFieldArray({ control, name: 'items' });
@@ -90,8 +178,13 @@ export function BiltyFormScreen() {
 
   const onSave = handleSubmit(async (data) => {
     try {
-      const { id } = await createBilty(data);
-      navigation.replace('BiltyDetail', { id });
+      if (isEdit && editingId !== null) {
+        await updateBilty(data);
+        navigation.navigate('BiltyDetail', { id: editingId });
+      } else {
+        await createBilty(data);
+        navigation.navigate('BiltyList');
+      }
     } catch (err: any) {
       const apiErr = err?.response?.data?.error;
       if (apiErr?.fields) {
@@ -109,13 +202,31 @@ export function BiltyFormScreen() {
     errors.items?.root?.message ||
     null;
 
+  if (isEdit && loading) {
+    return (
+      <View style={[styles.wrap, styles.centerWrap]}>
+        <Loader />
+      </View>
+    );
+  }
+
+  if (isEdit && loadError) {
+    return (
+      <View style={[styles.wrap, styles.centerWrap]}>
+        <View style={styles.formError}>
+          <Text style={styles.formErrorText}>{loadError}</Text>
+        </View>
+      </View>
+    );
+  }
+
   return (
     <ScrollView
       style={styles.wrap}
       contentContainerStyle={styles.content}
       keyboardShouldPersistTaps="handled"
     >
-      <Text style={styles.title}>New Bilty</Text>
+      <Text style={styles.title}>{isEdit ? 'Edit Bilty' : 'New Bilty'}</Text>
 
       {formError ? (
         <View style={styles.formError}>
@@ -125,8 +236,10 @@ export function BiltyFormScreen() {
 
       {/* ---- Header section ---- */}
       <Text style={styles.sectionTitle}>Bilty Details</Text>
-      <View style={styles.grid}>
-        <View style={styles.gridCol}>
+
+      {/* Row 1: Consignor (wide) · Branch (small) · Date (compact) */}
+      <View style={styles.gridRow}>
+        <View style={styles.fieldWide}>
           <Controller
             control={control}
             name="header.consignor"
@@ -140,6 +253,36 @@ export function BiltyFormScreen() {
               />
             )}
           />
+        </View>
+        <View style={styles.fieldSmall}>
+          <Controller
+            control={control}
+            name="header.branch"
+            render={({ field: { value, onChange } }) => (
+              <InputField label="Branch" value={value ?? ''} onChangeText={onChange} />
+            )}
+          />
+        </View>
+        <View style={styles.fieldDate}>
+          <Controller
+            control={control}
+            name="header.bilty_date"
+            render={({ field: { value, onChange } }) => (
+              <InputField
+                label="Date"
+                value={value ?? ''}
+                onChangeText={onChange}
+                placeholder="YYYY-MM-DD"
+                testID="bilty-date-input"
+              />
+            )}
+          />
+        </View>
+      </View>
+
+      {/* Row 2: Truck No · Truck Type · Zone */}
+      <View style={styles.gridRow}>
+        <View style={styles.fieldThird}>
           <Controller
             control={control}
             name="header.truck_no"
@@ -154,19 +297,30 @@ export function BiltyFormScreen() {
               />
             )}
           />
+        </View>
+        <View style={styles.fieldThird}>
           <Controller
             control={control}
-            name="header.bilty_date"
+            name="header.truck_type"
             render={({ field: { value, onChange } }) => (
-              <InputField
-                label="Bilty Date"
-                value={value ?? ''}
-                onChangeText={onChange}
-                placeholder="YYYY-MM-DD"
-                testID="bilty-date-input"
-              />
+              <InputField label="Truck Type" value={value ?? ''} onChangeText={onChange} />
             )}
           />
+        </View>
+        <View style={styles.fieldThird}>
+          <Controller
+            control={control}
+            name="header.zone_name"
+            render={({ field: { value, onChange } }) => (
+              <InputField label="Zone" value={value ?? ''} onChangeText={onChange} />
+            )}
+          />
+        </View>
+      </View>
+
+      {/* Row 3: Owner Name · Agent Name · Goods Type */}
+      <View style={styles.gridRow}>
+        <View style={styles.fieldThird}>
           <Controller
             control={control}
             name="header.owner_name"
@@ -174,6 +328,8 @@ export function BiltyFormScreen() {
               <InputField label="Owner Name" value={value ?? ''} onChangeText={onChange} />
             )}
           />
+        </View>
+        <View style={styles.fieldThird}>
           <Controller
             control={control}
             name="header.agent_name"
@@ -182,33 +338,12 @@ export function BiltyFormScreen() {
             )}
           />
         </View>
-        <View style={styles.gridCol}>
-          <Controller
-            control={control}
-            name="header.branch"
-            render={({ field: { value, onChange } }) => (
-              <InputField label="Branch" value={value ?? ''} onChangeText={onChange} />
-            )}
-          />
-          <Controller
-            control={control}
-            name="header.zone_name"
-            render={({ field: { value, onChange } }) => (
-              <InputField label="Zone" value={value ?? ''} onChangeText={onChange} />
-            )}
-          />
+        <View style={styles.fieldThird}>
           <Controller
             control={control}
             name="header.goods_type"
             render={({ field: { value, onChange } }) => (
               <InputField label="Goods Type" value={value ?? ''} onChangeText={onChange} />
-            )}
-          />
-          <Controller
-            control={control}
-            name="header.truck_type"
-            render={({ field: { value, onChange } }) => (
-              <InputField label="Truck Type" value={value ?? ''} onChangeText={onChange} />
             )}
           />
         </View>
@@ -334,7 +469,7 @@ export function BiltyFormScreen() {
         </Pressable>
         <View style={styles.submitWrap}>
           <ButtonPrimary
-            title="Save Bilty"
+            title={isEdit ? 'Save changes' : 'Save Bilty'}
             onPress={onSave}
             loading={saving}
             testID="bilty-save-btn"
@@ -386,6 +521,7 @@ function RowInput({ value, onChangeText, numeric, placeholder, testID, error }: 
   value: string; onChangeText: (v: string) => void; numeric?: boolean;
   placeholder?: string; testID?: string; error?: string;
 }) {
+  const [focused, setFocused] = useState(false);
   const handleChange = (raw: string) => {
     onChangeText(numeric ? filterDecimal(raw) : raw);
   };
@@ -393,10 +529,18 @@ function RowInput({ value, onChangeText, numeric, placeholder, testID, error }: 
     <TextInput
       value={value}
       onChangeText={handleChange}
+      onFocus={() => setFocused(true)}
+      onBlur={() => setFocused(false)}
       keyboardType={numeric ? 'decimal-pad' : 'default'}
       placeholder={placeholder}
       placeholderTextColor={colors.textMuted}
-      style={[styles.rowInput, numeric && styles.rowInputRight, error ? styles.rowInputError : null]}
+      style={[
+        styles.rowInput,
+        numeric && styles.rowInputRight,
+        error ? styles.rowInputError : null,
+        focused && styles.rowInputFocused,
+        Platform.OS === 'web' && ({ outline: 'none' } as any),
+      ]}
       testID={testID}
     />
   );
@@ -426,40 +570,45 @@ function fmt(n: number): string {
 
 const styles = StyleSheet.create({
   wrap: { flex: 1, backgroundColor: colors.background },
+  centerWrap: { alignItems: 'center', justifyContent: 'center', padding: spacing.lg },
   content: { padding: spacing.lg, paddingBottom: spacing.xxl },
-  title: { fontSize: 22, color: colors.text, fontFamily: typography.uiBold, marginBottom: spacing.lg },
+  title: { fontSize: 24, lineHeight: 32, color: colors.text, fontFamily: typography.uiBold, marginBottom: spacing.lg },
   sectionBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: spacing.lg, marginBottom: spacing.sm },
   sectionTitle: { fontSize: 16, color: colors.text, fontFamily: typography.uiBold },
-  sectionError: { color: colors.danger, fontSize: 12, fontFamily: typography.ui, marginBottom: spacing.sm },
+  sectionError: { color: colors.danger, fontSize: 13, lineHeight: 18, fontFamily: typography.ui, marginBottom: spacing.sm },
   addBtn: { paddingVertical: spacing.xs, paddingHorizontal: spacing.md, borderRadius: radius.md, borderWidth: 1, borderColor: colors.primary },
-  addBtnText: { color: colors.primary, fontFamily: typography.uiBold, fontSize: 13 },
-  grid: { flexDirection: 'row', gap: spacing.lg, flexWrap: 'wrap' },
-  gridCol: { flex: 1, minWidth: 260 },
+  addBtnText: { color: colors.primary, fontFamily: typography.uiBold, fontSize: 14, lineHeight: 20 },
+  gridRow: { flexDirection: 'row', gap: spacing.md, marginBottom: 0 },
+  fieldWide: { flex: 1.5, minWidth: 150 },
+  fieldSmall: { flex: 1, minWidth: 100 },
+  fieldDate: { width: 140 },
+  fieldThird: { flex: 1, minWidth: 140 },
   tableOuter: { borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, overflow: 'hidden', backgroundColor: colors.card },
   row: { flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: colors.border, backgroundColor: colors.card },
   headerRow: { backgroundColor: colors.background },
   altRow: { backgroundColor: colors.background },
   cell: { paddingHorizontal: spacing.sm, paddingVertical: spacing.xs, justifyContent: 'center' },
-  headerText: { fontSize: 11, color: colors.textMuted, fontFamily: typography.uiBold, textTransform: 'uppercase', letterSpacing: 0.5 },
+  headerText: { fontSize: 13, lineHeight: 18, color: colors.textMuted, fontFamily: typography.uiBold, textTransform: 'uppercase', letterSpacing: 0.5 },
   alignRight: { alignItems: 'flex-end' },
   alignCenter: { alignItems: 'center' },
   textRight: { textAlign: 'right' },
   textCenter: { textAlign: 'center' },
-  rowInput: { width: '100%', paddingVertical: spacing.xs, paddingHorizontal: spacing.sm, fontSize: 13, color: colors.text, fontFamily: typography.ui, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card },
+  rowInput: { width: '100%', paddingVertical: spacing.xs, paddingHorizontal: spacing.sm, fontSize: 14, lineHeight: 20, color: colors.text, fontFamily: typography.ui, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card },
   rowInputRight: { textAlign: 'right', fontFamily: typography.mono },
   rowInputError: { borderColor: colors.danger },
+  rowInputFocused: { borderColor: colors.brandRed, borderWidth: 2 },
   removeBtn: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
   removeBtnText: { color: colors.danger, fontSize: 20, fontFamily: typography.uiBold, lineHeight: 22 },
   removeDisabled: { color: colors.textMuted, opacity: 0.4 },
   emptyRow: { padding: spacing.md, justifyContent: 'center' },
-  emptyText: { color: colors.textMuted, fontSize: 12, fontFamily: typography.ui },
+  emptyText: { color: colors.textMuted, fontSize: 13, lineHeight: 18, fontFamily: typography.ui },
   totalsRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: spacing.sm, borderTopWidth: 1, borderTopColor: colors.border, marginTop: spacing.sm },
-  totalsLabel: { color: colors.textMuted, fontSize: 13, fontFamily: typography.ui },
-  totalsValue: { color: colors.text, fontSize: 14, fontFamily: typography.mono },
+  totalsLabel: { color: colors.textMuted, fontSize: 14, lineHeight: 20, fontFamily: typography.ui },
+  totalsValue: { color: colors.text, fontSize: 15, lineHeight: 21, fontFamily: typography.mono },
   formError: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.danger, borderRadius: radius.md, padding: spacing.md, marginBottom: spacing.md },
-  formErrorText: { color: colors.danger, fontFamily: typography.ui, fontSize: 13 },
+  formErrorText: { color: colors.danger, fontFamily: typography.ui, fontSize: 14, lineHeight: 20 },
   actions: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', marginTop: spacing.xl, gap: spacing.md },
   cancelBtn: { paddingVertical: spacing.md, paddingHorizontal: spacing.lg },
-  cancelBtnText: { color: colors.textMuted, fontSize: 14, fontFamily: typography.uiBold },
+  cancelBtnText: { color: colors.textMuted, fontSize: 15, lineHeight: 21, fontFamily: typography.uiBold },
   submitWrap: { minWidth: 160 },
 });

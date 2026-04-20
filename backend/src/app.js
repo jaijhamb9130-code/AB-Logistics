@@ -12,6 +12,7 @@ const freightRouter = require('./routes/freight');
 const ordersRouter = require('./routes/orders');
 const vehiclesRouter = require('./routes/vehicles');
 const reportsRouter = require('./routes/reports');
+const customersRouter = require('./routes/customers');
 
 const { logger } = require('./utils/logger');
 
@@ -42,6 +43,7 @@ v1.use('/freight', freightRouter);
 v1.use('/orders', ordersRouter);
 v1.use('/vehicles', vehiclesRouter);
 v1.use('/reports', reportsRouter);
+v1.use('/customers', customersRouter);
 
 app.use('/api/v1', v1);
 app.use('/api', v1);

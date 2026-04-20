@@ -53,7 +53,7 @@ exports.get = async (req, res, next) => {
 exports.create = async (req, res, next) => {
   try {
     const body = req.body || {};
-    const { order_date, customer_name, from_loc, to_loc, goods_desc, vehicle_id } = body;
+    const { order_date, customer_name, customer_id, from_loc, to_loc, goods_desc, vehicle_id } = body;
 
     if (!isNonEmptyString(customer_name)) {
       return res.status(400).json({ error: 'invalid_customer_name' });
@@ -66,10 +66,18 @@ exports.create = async (req, res, next) => {
       if (vid === null) return res.status(400).json({ error: 'invalid_vehicle_id' });
     }
 
+    // customer_id is optional FK to customers table.
+    let cid = null;
+    if (customer_id !== undefined && customer_id !== null && customer_id !== '') {
+      cid = parseId(customer_id);
+      if (cid === null) return res.status(400).json({ error: 'invalid_customer_id' });
+    }
+
     const userId = req.user ? req.user.id : null;
     const { id, order_no } = await orderModel.create({
       order_date,
       customer_name: customer_name.trim(),
+      customer_id: cid,
       from_loc,
       to_loc,
       goods_desc,

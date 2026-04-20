@@ -10,9 +10,9 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import {
-  Pressable, StyleSheet, Text, View,
+  StyleSheet, Text, View,
 } from 'react-native';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useRoute, type RouteProp } from '@react-navigation/native';
 import { DataTable, type Column } from '../components/DataTable';
 import { Loader } from '../components/Loader';
 import { colors, radius, spacing, typography } from '../constants/theme';
@@ -20,6 +20,7 @@ import { reportService } from '../services/reportService';
 import type { ReportHistory } from '../../../shared/types/report';
 import type { BiltyListItem } from '../../../shared/types/bilty';
 import type { OrderListItem, OrderStatus } from '../../../shared/types/order';
+import type { AppTabsParamList } from '../navigation/types';
 
 type TabKey = 'bilty' | 'order';
 
@@ -80,10 +81,12 @@ const orderColumns: Column<OrderListItem>[] = [
 ];
 
 export function ReportsScreen() {
+  const route = useRoute<RouteProp<AppTabsParamList, 'Reports'>>();
+  const paramSection = route.params?.section;
   const [history, setHistory] = useState<ReportHistory | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
-  const [tab, setTab] = useState<TabKey>('bilty');
+  const [tab, setTab] = useState<TabKey>(paramSection ?? 'bilty');
 
   const load = useCallback(async () => {
     setError(null);
@@ -91,19 +94,29 @@ export function ReportsScreen() {
     try {
       const h = await reportService.getHistory();
       setHistory(h);
-      // Pick the first permitted tab as default
-      if (h.permissions.bilty) setTab('bilty');
-      else if (h.permissions.order) setTab('order');
+      if (paramSection && h.permissions[paramSection]) {
+        setTab(paramSection);
+      } else if (h.permissions.bilty) {
+        setTab('bilty');
+      } else if (h.permissions.order) {
+        setTab('order');
+      }
     } catch {
       setError('Could not load reports. Try again.');
       setHistory(null);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [paramSection]);
 
   useEffect(() => { load(); }, [load]);
   useFocusEffect(useCallback(() => { load(); }, [load]));
+
+  useEffect(() => {
+    if (paramSection && history?.permissions?.[paramSection]) {
+      setTab(paramSection);
+    }
+  }, [paramSection, history]);
 
   const perms = history?.permissions ?? { bilty: false, order: false };
   const showBilty = perms.bilty;
@@ -114,42 +127,17 @@ export function ReportsScreen() {
       ? 'order'
       : tab;
 
+  const pageTitle = activeTab === 'order' ? 'Order History' : 'Bilty History';
+
   return (
     <View style={styles.wrap}>
-      <View style={styles.header}>
-        <Text style={styles.title}>Reports</Text>
-      </View>
+      <Text style={styles.title}>{pageTitle}</Text>
 
       {error ? (
         <View style={styles.errorBanner} testID="reports-error">
           <Text style={styles.errorBannerText}>{error}</Text>
         </View>
       ) : null}
-
-      <View style={styles.tabs}>
-        {showBilty ? (
-          <Pressable
-            style={[styles.tab, activeTab === 'bilty' && styles.tabActive]}
-            onPress={() => setTab('bilty')}
-            testID="reports-tab-bilty"
-          >
-            <Text style={[styles.tabText, activeTab === 'bilty' && styles.tabTextActive]}>
-              Bilty History
-            </Text>
-          </Pressable>
-        ) : null}
-        {showOrder ? (
-          <Pressable
-            style={[styles.tab, activeTab === 'order' && styles.tabActive]}
-            onPress={() => setTab('order')}
-            testID="reports-tab-order"
-          >
-            <Text style={[styles.tabText, activeTab === 'order' && styles.tabTextActive]}>
-              Order History
-            </Text>
-          </Pressable>
-        ) : null}
-      </View>
 
       {loading && history === null ? (
         <Loader />
@@ -187,37 +175,12 @@ export function ReportsScreen() {
 
 const styles = StyleSheet.create({
   wrap: { flex: 1, backgroundColor: colors.background, padding: spacing.lg },
-  header: {
-    flexDirection: 'row', alignItems: 'center',
-    justifyContent: 'space-between', marginBottom: spacing.lg,
-  },
-  title: { fontSize: 22, color: colors.text, fontFamily: typography.uiBold },
+  title: { fontSize: 24, lineHeight: 32, color: colors.text, fontFamily: typography.uiBold, marginBottom: spacing.lg },
   errorBanner: {
     backgroundColor: colors.card, borderWidth: 1, borderColor: colors.danger,
     borderRadius: radius.md, padding: spacing.md, marginBottom: spacing.md,
   },
-  errorBannerText: { color: colors.danger, fontFamily: typography.ui, fontSize: 13 },
-  tabs: {
-    flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.md,
-  },
-  tab: {
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.lg,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.card,
-  },
-  tabActive: {
-    backgroundColor: colors.brandYellow,
-    borderColor: colors.brandYellow,
-  },
-  tabText: {
-    color: colors.textMuted,
-    fontFamily: typography.uiBold,
-    fontSize: 13,
-  },
-  tabTextActive: { color: colors.brandBlack },
+  errorBannerText: { color: colors.danger, fontFamily: typography.ui, fontSize: 14, lineHeight: 20 },
   tableWrap: { flex: 1, minHeight: 200 },
   empty: {
     flex: 1, alignItems: 'center', justifyContent: 'center',
@@ -230,5 +193,5 @@ const styles = StyleSheet.create({
     borderRadius: radius.sm,
     alignSelf: 'flex-start',
   },
-  pillText: { fontSize: 12, fontFamily: typography.uiBold },
+  pillText: { fontSize: 13, lineHeight: 18, fontFamily: typography.uiBold },
 });

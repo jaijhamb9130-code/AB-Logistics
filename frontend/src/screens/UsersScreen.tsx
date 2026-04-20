@@ -581,8 +581,8 @@ const styles = StyleSheet.create({
   },
   title: {
     ...text.heading,
-    fontSize: 22,
-    lineHeight: 28,
+    fontSize: 24,
+    lineHeight: 32,
   },
   headerBtn: {
     minWidth: 140,
@@ -688,13 +688,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'flex-end',
-    marginTop: spacing.lg,
-    gap: spacing.md,
+    marginTop: spacing.sm,
+    gap: spacing.sm,
   },
   cancelBtn: {
-    paddingVertical: spacing.md,
-    paddingHorizontal: spacing.lg,
-    marginRight: spacing.sm,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
   },
   cancelBtnText: {
     ...text.action,
@@ -702,7 +701,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   submitWrap: {
-    minWidth: 160,
+    minWidth: 130,
   },
   rowActions: {
     flexDirection: 'row',

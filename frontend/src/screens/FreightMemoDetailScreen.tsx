@@ -43,6 +43,10 @@ export function FreightMemoDetailScreen() {
   const [err, setErr] = useState<string | null>(null);
 
   const load = useCallback(async () => {
+    if (!id) {
+      navigation.navigate('FreightList');
+      return;
+    }
     setErr(null);
     try {
       const d = await freightService.get(id);
@@ -50,7 +54,7 @@ export function FreightMemoDetailScreen() {
     } catch (_e) {
       setErr('Could not load freight memo.');
     }
-  }, [id]);
+  }, [id, navigation]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -78,7 +82,6 @@ export function FreightMemoDetailScreen() {
   const advances = bilty?.advances || [];
   const fuels = bilty?.fuels || [];
 
-  // Build debit rows (items) and credit rows (advances + fuels).
   const debitRows = items.map((it, i) => ({
     key: `d-${it.id ?? i}`,
     label: debitLabel(it, i),
@@ -97,7 +100,6 @@ export function FreightMemoDetailScreen() {
     })),
   ];
 
-  // Pair left/right for the A4 ledger render.
   const ledgerRows: Array<{
     key: string;
     left: { label: string; amount: number } | null;
@@ -120,7 +122,6 @@ export function FreightMemoDetailScreen() {
 
   return (
     <ScrollView style={styles.wrap} contentContainerStyle={styles.content}>
-      {/* ---- Top bar with Back / Print (hidden from print via no-print class on web) ---- */}
       <View style={styles.topBar} accessibilityElementsHidden={false}>
         <Pressable
           onPress={() => navigation.goBack()}
@@ -142,9 +143,7 @@ export function FreightMemoDetailScreen() {
         ) : null}
       </View>
 
-      {/* ---- A4 ledger sheet ---- */}
       <View style={styles.sheet} testID="memo-sheet">
-        {/* Company / memo header */}
         <View style={styles.headerRow}>
           <View style={{ flex: 1 }}>
             <Text style={styles.companyName}>{COMPANY_NAME}</Text>
@@ -158,7 +157,6 @@ export function FreightMemoDetailScreen() {
 
         <View style={styles.divider} />
 
-        {/* Bilty reference */}
         {bilty ? (
           <View style={styles.refBlock}>
             <KV label="Bilty No" value={bilty.bilty_no} mono />
@@ -174,7 +172,6 @@ export function FreightMemoDetailScreen() {
           </View>
         )}
 
-        {/* Ledger */}
         <View style={styles.ledgerHead}>
           <Text style={styles.ledgerHeadText}>Debit</Text>
           <Text style={styles.ledgerHeadText}>Credit</Text>
@@ -205,7 +202,6 @@ export function FreightMemoDetailScreen() {
           ))
         )}
 
-        {/* Totals row */}
         <View style={styles.ledgerTotalRow}>
           <View style={styles.ledgerCell}>
             <Text style={styles.totalLabel}>Freight Total</Text>
@@ -218,13 +214,11 @@ export function FreightMemoDetailScreen() {
           </View>
         </View>
 
-        {/* Component totals for clarity (advance / fuel split) */}
         <View style={styles.totalsSplit}>
           <KV label="Advance Total" value={fmt(advanceTotal)} mono />
           <KV label="Fuel Total" value={fmt(fuelTotal)} mono />
         </View>
 
-        {/* Net Payable — highlighted */}
         <View style={styles.netBox}>
           <Text style={styles.netLabel}>Net Payable</Text>
           <Text style={styles.netAmt} testID="net-payable">₹ {fmt(netPayable)}</Text>
@@ -343,7 +337,7 @@ const styles = StyleSheet.create({
   topBtnText: {
     color: colors.text,
     fontFamily: typography.uiBold,
-    fontSize: 13,
+    fontSize: 15,
   },
   topBtnPrimaryText: {
     color: colors.card,
@@ -369,9 +363,9 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
   },
   companyTagline: {
-    fontSize: 12,
+    fontSize: 14,
     color: colors.textMuted,
-    fontFamily: typography.ui,
+    fontFamily: typography.uiBold,
     marginTop: 2,
     textTransform: 'uppercase',
     letterSpacing: 1.2,
@@ -395,8 +389,19 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.border,
   },
   kv: { minWidth: 140 },
-  kvLabel: { fontSize: 10, color: colors.textMuted, fontFamily: typography.ui, textTransform: 'uppercase', letterSpacing: 0.5 },
-  kvValue: { fontSize: 13, color: colors.text, fontFamily: typography.ui, marginTop: 2 },
+  kvLabel: {
+    fontSize: 12,
+    color: colors.textMuted,
+    fontFamily: typography.uiBold,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  kvValue: {
+    fontSize: 15,
+    color: colors.text,
+    fontFamily: typography.ui,
+    marginTop: 3,
+  },
   ledgerHead: {
     flexDirection: 'row',
     borderTopWidth: 2,
@@ -406,7 +411,7 @@ const styles = StyleSheet.create({
   ledgerHeadText: {
     flex: 1,
     textAlign: 'center',
-    fontSize: 12,
+    fontSize: 14,
     color: colors.text,
     fontFamily: typography.uiBold,
     textTransform: 'uppercase',
@@ -431,7 +436,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
-    minHeight: 32,
+    minHeight: 36,
     gap: spacing.sm,
   },
   ledgerDividerCol: {
@@ -439,25 +444,25 @@ const styles = StyleSheet.create({
     backgroundColor: colors.text,
   },
   subHeadLabel: {
-    fontSize: 11,
+    fontSize: 13,
     color: colors.textMuted,
     fontFamily: typography.uiBold,
     textTransform: 'uppercase',
   },
   subHeadAmt: {
-    fontSize: 11,
+    fontSize: 13,
     color: colors.textMuted,
     fontFamily: typography.uiBold,
     textTransform: 'uppercase',
   },
   cellLabel: {
     flex: 1,
-    fontSize: 12,
+    fontSize: 14,
     color: colors.text,
     fontFamily: typography.ui,
   },
   cellAmt: {
-    fontSize: 13,
+    fontSize: 14,
     color: colors.text,
     fontFamily: typography.mono,
     textAlign: 'right',
@@ -476,14 +481,14 @@ const styles = StyleSheet.create({
     backgroundColor: colors.background,
   },
   totalLabel: {
-    fontSize: 12,
+    fontSize: 14,
     color: colors.text,
     fontFamily: typography.uiBold,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
   },
   totalAmt: {
-    fontSize: 14,
+    fontSize: 15,
     color: colors.text,
     fontFamily: typography.mono,
     textAlign: 'right',
@@ -506,19 +511,19 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   netLabel: {
-    fontSize: 16,
+    fontSize: 17,
     color: colors.text,
     fontFamily: typography.uiBold,
     textTransform: 'uppercase',
     letterSpacing: 1.2,
   },
   netAmt: {
-    fontSize: 20,
+    fontSize: 22,
     color: colors.text,
     fontFamily: typography.mono,
   },
   footerNote: {
-    fontSize: 11,
+    fontSize: 13,
     color: colors.textMuted,
     fontFamily: typography.ui,
     fontStyle: 'italic',
@@ -528,9 +533,9 @@ const styles = StyleSheet.create({
   mutedText: {
     color: colors.textMuted,
     fontFamily: typography.ui,
-    fontSize: 12,
+    fontSize: 14,
   },
-  title: { fontSize: 22, color: colors.text, fontFamily: typography.uiBold, padding: spacing.lg },
+  title: { fontSize: 24, color: colors.text, fontFamily: typography.uiBold, padding: spacing.lg },
   errorBanner: {
     backgroundColor: colors.card,
     borderWidth: 1,
@@ -542,6 +547,6 @@ const styles = StyleSheet.create({
   errorBannerText: {
     color: colors.danger,
     fontFamily: typography.ui,
-    fontSize: 13,
+    fontSize: 14,
   },
 });

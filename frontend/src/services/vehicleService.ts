@@ -36,4 +36,9 @@ export const vehicleService = {
     const { data } = await http.post<Vehicle>(`/api/vehicles/${id}/deactivate`);
     return data;
   },
+
+  async activate(id: number): Promise<Vehicle> {
+    const { data } = await http.post<Vehicle>(`/api/vehicles/${id}/activate`);
+    return data;
+  },
 };

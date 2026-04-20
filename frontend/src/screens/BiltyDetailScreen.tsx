@@ -47,6 +47,10 @@ export function BiltyDetailScreen() {
   const [memoErr, setMemoErr] = useState<string | null>(null);
 
   const load = useCallback(async () => {
+    if (!id) {
+      navigation.navigate('BiltyList');
+      return;
+    }
     setErr(null);
     try {
       const d = await biltyService.get(id);
@@ -54,7 +58,7 @@ export function BiltyDetailScreen() {
     } catch (_e) {
       setErr('Could not load bilty.');
     }
-  }, [id]);
+  }, [id, navigation]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -106,9 +110,18 @@ export function BiltyDetailScreen() {
   if (err) {
     return (
       <View style={styles.wrap}>
-        <Text style={styles.title}>Bilty</Text>
-        <View style={styles.errorBanner}>
-          <Text style={styles.errorBannerText}>{err}</Text>
+        <View style={styles.errorWrap}>
+          <Text style={styles.title}>Bilty</Text>
+          <View style={styles.errorBanner}>
+            <Text style={styles.errorBannerText}>{err}</Text>
+          </View>
+          <Pressable
+            onPress={() => navigation.navigate('BiltyList')}
+            style={styles.backBtn}
+            accessibilityRole="button"
+          >
+            <Text style={styles.backBtnText}>Go Back</Text>
+          </Pressable>
         </View>
       </View>
     );
@@ -289,8 +302,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: spacing.lg,
   },
-  title: { fontSize: 22, color: colors.text, fontFamily: typography.uiBold },
-  subtitle: { fontSize: 13, color: colors.textMuted, fontFamily: typography.ui, marginTop: spacing.xs },
+  title: { fontSize: 24, color: colors.text, fontFamily: typography.uiBold },
+  subtitle: { fontSize: 15, color: colors.textMuted, fontFamily: typography.ui, marginTop: spacing.xs },
   backBtn: {
     paddingVertical: spacing.sm,
     paddingHorizontal: spacing.md,
@@ -301,7 +314,7 @@ const styles = StyleSheet.create({
   backBtnText: {
     color: colors.text,
     fontFamily: typography.uiBold,
-    fontSize: 13,
+    fontSize: 15,
   },
   headerBtns: {
     flexDirection: 'row',
@@ -327,7 +340,7 @@ const styles = StyleSheet.create({
     marginBottom: spacing.lg,
   },
   sectionTitle: {
-    fontSize: 15,
+    fontSize: 17,
     color: colors.text,
     fontFamily: typography.uiBold,
     marginTop: spacing.md,
@@ -335,8 +348,8 @@ const styles = StyleSheet.create({
   },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.lg },
   kv: { minWidth: 180 },
-  kvLabel: { fontSize: 11, color: colors.textMuted, fontFamily: typography.ui },
-  kvValue: { fontSize: 14, color: colors.text, fontFamily: typography.ui, marginTop: 2 },
+  kvLabel: { fontSize: 13, color: colors.textMuted, fontFamily: typography.uiBold },
+  kvValue: { fontSize: 15, color: colors.text, fontFamily: typography.ui, marginTop: 3 },
   tableWrap: { minHeight: 120, marginBottom: spacing.md },
   totalsBox: {
     backgroundColor: colors.card,
@@ -347,13 +360,16 @@ const styles = StyleSheet.create({
     marginTop: spacing.md,
     gap: spacing.sm,
   },
+  errorWrap: {
+    padding: spacing.lg,
+  },
   errorBanner: {
     backgroundColor: colors.card,
     borderWidth: 1,
     borderColor: colors.danger,
     borderRadius: radius.md,
     padding: spacing.md,
-    margin: spacing.lg,
+    marginVertical: spacing.lg,
   },
   errorBannerText: {
     color: colors.danger,

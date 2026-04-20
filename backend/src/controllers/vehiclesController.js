@@ -9,6 +9,7 @@
  *   POST /api/vehicles            → vehicle.edit
  *   PATCH /api/vehicles/:id       → vehicle.edit
  *   POST /api/vehicles/:id/deactivate → vehicle.edit
+ *   POST /api/vehicles/:id/activate   → vehicle.edit
  */
 
 const vehicleModel = require('../models/vehicleModel');
@@ -139,6 +140,22 @@ exports.deactivate = async (req, res, next) => {
     if (id === null) return res.status(400).json({ error: 'invalid_id' });
 
     const ok = await vehicleModel.setActive(id, 0);
+    if (!ok) return res.status(404).json({ error: 'vehicle_not_found' });
+
+    const row = await vehicleModel.findById(id);
+    return res.status(200).json(sanitize(row));
+  } catch (err) {
+    return next(err);
+  }
+};
+
+// POST /api/vehicles/:id/activate
+exports.activate = async (req, res, next) => {
+  try {
+    const id = parseId(req.params.id);
+    if (id === null) return res.status(400).json({ error: 'invalid_id' });
+
+    const ok = await vehicleModel.setActive(id, 1);
     if (!ok) return res.status(404).json({ error: 'vehicle_not_found' });
 
     const row = await vehicleModel.findById(id);

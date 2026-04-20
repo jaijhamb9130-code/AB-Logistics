@@ -5,3 +5,4 @@ export * from './freight';
 export * from './vehicle';
 export * from './order';
 export * from './report';
+export * from './customer';

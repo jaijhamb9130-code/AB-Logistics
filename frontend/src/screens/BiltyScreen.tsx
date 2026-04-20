@@ -20,6 +20,7 @@ import { DataTable, type Column } from '../components/DataTable';
 import { Loader } from '../components/Loader';
 import { colors, radius, spacing, text } from '../constants/theme';
 import { biltyService } from '../services/biltyService';
+import { useAuth } from '../context/AuthContext';
 import type { BiltyListItem } from '../../../shared/types/bilty';
 import type { BiltyStackParamList } from '../navigation/types';
 
@@ -27,6 +28,10 @@ type Nav = NativeStackNavigationProp<BiltyStackParamList, 'BiltyList'>;
 
 export function BiltyScreen() {
   const navigation = useNavigation<Nav>();
+  const { user } = useAuth();
+  const canEdit =
+    user?.role === 'admin' ||
+    (user?.permissions ?? []).some((p) => p === '*' || p === 'bilty.edit');
   const [rows, setRows] = useState<BiltyListItem[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
@@ -60,17 +65,37 @@ export function BiltyScreen() {
     {
       key: 'actions',
       label: '',
-      width: 90,
+      width: 150,
       align: 'right',
       render: (r) => (
-        <Pressable
-          onPress={() => navigation.navigate('BiltyDetail', { id: r.id })}
-          accessibilityRole="button"
-          accessibilityLabel={`View ${r.bilty_no}`}
-          testID={`view-${r.id}`}
-        >
-          <Text style={styles.viewAction}>View</Text>
-        </Pressable>
+        <View style={styles.actionGroup}>
+          <Pressable
+            onPress={(e) => {
+              // @ts-expect-error RN event supports stopPropagation on web
+              e?.stopPropagation?.();
+              navigation.navigate('BiltyDetail', { id: r.id });
+            }}
+            accessibilityRole="button"
+            accessibilityLabel={`View ${r.bilty_no}`}
+            testID={`view-${r.id}`}
+          >
+            <Text style={styles.viewAction}>View</Text>
+          </Pressable>
+          {canEdit ? (
+            <Pressable
+              onPress={(e) => {
+                // @ts-expect-error RN event supports stopPropagation on web
+                e?.stopPropagation?.();
+                navigation.navigate('BiltyForm', { id: r.id });
+              }}
+              accessibilityRole="button"
+              accessibilityLabel={`Edit ${r.bilty_no}`}
+              testID={`edit-${r.id}`}
+            >
+              <Text style={styles.editAction}>Edit</Text>
+            </Pressable>
+          ) : null}
+        </View>
       ),
     },
   ];
@@ -79,13 +104,15 @@ export function BiltyScreen() {
     <View style={styles.wrap}>
       <View style={styles.header}>
         <Text style={styles.title}>Bilty</Text>
-        <View style={styles.headerBtn}>
-          <ButtonPrimary
-            title="New Bilty"
-            onPress={() => navigation.navigate('BiltyForm')}
-            testID="new-bilty-btn"
-          />
-        </View>
+        {canEdit ? (
+          <View style={styles.headerBtn}>
+            <ButtonPrimary
+              title="New Bilty"
+              onPress={() => navigation.navigate('BiltyForm')}
+              testID="new-bilty-btn"
+            />
+          </View>
+        ) : null}
       </View>
 
       {err ? (
@@ -141,7 +168,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginBottom: spacing.lg,
   },
-  title: { ...text.heading, fontSize: 22, lineHeight: 28 },
+  title: { ...text.heading, fontSize: 24, lineHeight: 32 },
   headerBtn: { minWidth: 140 },
   tableWrap: { flex: 1, minHeight: 200 },
   errorBanner: {
@@ -161,5 +188,17 @@ const styles = StyleSheet.create({
     color: colors.primary,
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.xs,
+  },
+  editAction: {
+    ...text.action,
+    color: colors.brandRed,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+  },
+  actionGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: spacing.sm,
   },
 });

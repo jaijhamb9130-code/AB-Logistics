@@ -23,8 +23,8 @@ const pool = require('../db/pool');
 async function nextOrderNo(conn, year) {
   const prefix = `OR-${year}-`;
   const [rows] = await conn.execute(
-    'SELECT order_no FROM orders WHERE order_no LIKE :p ORDER BY id DESC LIMIT 1 FOR UPDATE',
-    { p: `${prefix}%` }
+    'SELECT order_no FROM orders WHERE order_no LIKE ? ORDER BY id DESC LIMIT 1 FOR UPDATE',
+    [`${prefix}%`]
   );
   let seq = 1;
   if (rows.length > 0) {
@@ -57,7 +57,7 @@ function isValidTransition(from, to) {
 
 // ---- CRUD -----------------------------------------------------------------
 
-async function create({ order_date, customer_name, from_loc, to_loc, goods_desc, vehicle_id, userId }) {
+async function create({ order_date, customer_name, customer_id, from_loc, to_loc, goods_desc, vehicle_id, userId }) {
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
@@ -69,18 +69,17 @@ async function create({ order_date, customer_name, from_loc, to_loc, goods_desc,
          (order_no, order_date, customer_name, from_loc, to_loc, goods_desc,
           status, vehicle_id, created_by)
        VALUES
-         (:order_no, :order_date, :customer_name, :from_loc, :to_loc, :goods_desc,
-          'pending', :vehicle_id, :created_by)`,
-      {
+         (?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+      [
         order_no,
-        order_date: toDateOrNull(order_date),
+        toDateOrNull(order_date),
         customer_name,
-        from_loc: from_loc ?? null,
-        to_loc: to_loc ?? null,
-        goods_desc: goods_desc ?? null,
-        vehicle_id: vehicle_id ?? null,
-        created_by: userId ?? null,
-      }
+        from_loc ?? null,
+        to_loc ?? null,
+        goods_desc ?? null,
+        vehicle_id ?? null,
+        userId ?? null,
+      ]
     );
 
     await conn.commit();
@@ -116,8 +115,8 @@ async function findById(id) {
             v.owner_name AS vehicle_owner_name
        FROM orders o
        LEFT JOIN vehicles v ON v.id = o.vehicle_id
-       WHERE o.id = :id LIMIT 1`,
-    { id }
+       WHERE o.id = ? LIMIT 1`,
+    [id]
   );
   return rows[0] || null;
 }
@@ -136,8 +135,8 @@ async function updateStatus(id, newStatus) {
     throw e;
   }
   const [r] = await pool.execute(
-    'UPDATE orders SET status = :s WHERE id = :id',
-    { s: newStatus, id }
+    'UPDATE orders SET status = ? WHERE id = ?',
+    [newStatus, id]
   );
   return r.affectedRows > 0;
 }
@@ -145,8 +144,8 @@ async function updateStatus(id, newStatus) {
 // Attach a vehicle to an order. Vehicle must exist — controller surfaces 404.
 async function assignVehicle(id, vehicleId) {
   const [vRows] = await pool.execute(
-    'SELECT id FROM vehicles WHERE id = :v LIMIT 1',
-    { v: vehicleId }
+    'SELECT id FROM vehicles WHERE id = ? LIMIT 1',
+    [vehicleId]
   );
   if (vRows.length === 0) {
     const e = new Error('vehicle_not_found');
@@ -154,8 +153,8 @@ async function assignVehicle(id, vehicleId) {
     throw e;
   }
   const [r] = await pool.execute(
-    'UPDATE orders SET vehicle_id = :v WHERE id = :id',
-    { v: vehicleId, id }
+    'UPDATE orders SET vehicle_id = ? WHERE id = ?',
+    [vehicleId, id]
   );
   if (r.affectedRows === 0) {
     const e = new Error('order_not_found');
