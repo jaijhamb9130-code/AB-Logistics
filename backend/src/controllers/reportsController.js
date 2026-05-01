@@ -1,22 +1,13 @@
 'use strict';
 
 /**
- * Phase 6 — Reports controller (REPORT-01..03).
- *
- * Endpoints:
- *   GET /api/reports/summary  → totals (bilties, freight_memos, orders, vehicles, active_users)
- *   GET /api/reports/history  → recent bilties + orders (last 20 each)
- *
- * Permission gating happens INSIDE the handlers (not via requirePermission
- * middleware) because a user may have partial visibility — e.g. staff with
- * only `bilty.read` should see bilty stats / bilty history and zero/empty
- * for the rest, NOT a 403 for the whole endpoint.
+ * Reports controller. Permission gating happens INSIDE the handlers so a
+ * user with partial visibility sees zero/empty for stats they can't view
+ * (instead of a 403 for the whole endpoint).
  */
 
 const pool = require('../db/pool');
 const biltyModel = require('../models/biltyModel');
-const orderModel = require('../models/orderModel');
-const vehicleModel = require('../models/vehicleModel');
 const userModel = require('../models/userModel');
 
 function normalizePerms(raw) {
@@ -55,31 +46,24 @@ async function countActiveUsers() {
 exports.getSummary = async (req, res, next) => {
   try {
     const user = req.user;
+    const canBilty = hasPerm(user, 'bilty.edit');
+    const canReport = hasPerm(user, 'report.access');
+    // Freight visibility tracks bilty (Phase 4 convention).
+    const canFreight = hasPerm(user, 'freight.access') || canBilty;
 
-    const canBilty = hasPerm(user, 'bilty.read');
-    const canOrder = hasPerm(user, 'order.read');
-    const canVehicle = hasPerm(user, 'vehicle.read');
-    const canReport = hasPerm(user, 'report.read');
-    // freight visibility tracks bilty per Phase 4 convention
-    const canFreight = hasPerm(user, 'freight.read') || canBilty;
-
-    const payload = {
+    const canLedgerGroup = hasPerm(user, 'ledgergroup.edit');
+    return res.status(200).json({
       bilties: canBilty ? await countTable('bilty') : 0,
       freight_memos: canFreight ? await countTable('freight_memo') : 0,
-      orders: canOrder ? await countTable('orders') : 0,
-      vehicles: canVehicle ? await countTable('vehicles') : 0,
-      // active_users is admin-only metadata — gated by report.read (admin passes via hasPerm)
+      ledger_groups: canLedgerGroup ? await countTable('ledger_group') : 0,
       active_users: canReport ? await countActiveUsers() : 0,
       permissions: {
         bilty: canBilty,
         freight: canFreight,
-        order: canOrder,
-        vehicle: canVehicle,
         report: canReport,
+        ledgergroup: canLedgerGroup,
       },
-    };
-
-    return res.status(200).json(payload);
+    });
   } catch (err) {
     return next(err);
   }
@@ -89,21 +73,13 @@ exports.getSummary = async (req, res, next) => {
 exports.getHistory = async (req, res, next) => {
   try {
     const user = req.user;
-    const canBilty = hasPerm(user, 'bilty.read');
-    const canOrder = hasPerm(user, 'order.read');
+    const canBilty = hasPerm(user, 'bilty.edit');
 
-    const [bilties, orders] = await Promise.all([
-      canBilty ? biltyModel.findAll() : Promise.resolve([]),
-      canOrder ? orderModel.findAll() : Promise.resolve([]),
-    ]);
+    const bilties = canBilty ? await biltyModel.findAll() : [];
 
     return res.status(200).json({
       bilties: bilties.slice(0, 20),
-      orders: orders.slice(0, 20),
-      permissions: {
-        bilty: canBilty,
-        order: canOrder,
-      },
+      permissions: { bilty: canBilty },
     });
   } catch (err) {
     return next(err);
@@ -112,6 +88,4 @@ exports.getHistory = async (req, res, next) => {
 
 // Exported for tests
 exports._internals = { hasPerm, normalizePerms };
-
-// unused-but-convenient: referenced models so tests can assert mocking
-exports._models = { biltyModel, orderModel, vehicleModel, userModel };
+exports._models = { biltyModel, userModel };
