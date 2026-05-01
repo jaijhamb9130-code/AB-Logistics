@@ -15,19 +15,32 @@ export interface User {
 }
 
 /**
- * Phase 02 — canonical permission vocabulary mirrored from
- * backend/src/constants/permissions.js. The backend validates all
- * incoming permission arrays against the same list plus '*'.
+ * Canonical permission vocabulary — one permission per page.
+ *
+ * Convention:
+ *   - For editable pages: `<entity>.edit` — granting it implies full access
+ *     (read + create + edit + delete on that page).
+ *   - For view-only pages (Freight, Reports): `<entity>.access` — they have
+ *     no editing concept; the permission simply controls tab visibility.
+ *   - Users page: `user.manage` — admin-trust permission.
+ *   - `*` wildcard grants everything.
+ *
+ * The backend validates incoming permission arrays against this list; the
+ * frontend mirrors it in roles.ts for the PermissionPicker.
  */
 export type Permission =
-  | 'bilty.read'
   | 'bilty.edit'
-  | 'freight.read'
-  | 'order.read'
-  | 'order.edit'
-  | 'vehicle.read'
-  | 'vehicle.edit'
-  | 'report.read'
+  | 'freight.access'
+  | 'report.access'
+  | 'partymaster.edit'
+  | 'ownermaster.edit'
+  | 'agentmaster.edit'
+  | 'itemmaster.edit'
+  | 'vehiclemaster.edit'
+  | 'destinationmaster.edit'
+  | 'ledgergroup.edit'
+  | 'voucher.edit'
+  | 'user.manage'
   | '*';
 
 export interface UserListItem {

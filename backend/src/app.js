@@ -9,20 +9,27 @@ const authRouter = require('./routes/auth');
 const usersRouter = require('./routes/users');
 const biltyRouter = require('./routes/bilty');
 const freightRouter = require('./routes/freight');
-const ordersRouter = require('./routes/orders');
-const vehiclesRouter = require('./routes/vehicles');
 const reportsRouter = require('./routes/reports');
-const customersRouter = require('./routes/customers');
+const partyLedgerRouter = require('./routes/partyLedger');
+const itemMasterRouter = require('./routes/itemMaster');
+const vehicleMasterRouter = require('./routes/vehicleMaster');
+const destinationsRouter = require('./routes/destinations');
+const ledgerGroupsRouter = require('./routes/ledgerGroups');
+const vchTypesRouter = require('./routes/vchTypes');
+const vouchersRouter = require('./routes/vouchers');
 
 const { logger } = require('./utils/logger');
 
 const app = express();
 
+// Trust cPanel/Apache reverse proxy so rate-limit & IP detection work correctly
+app.set('trust proxy', 1);
+
 // T-01-15 mitigation — explicit origin, credentials enabled for cookie-based refresh.
 app.use(helmet());
 app.use(
   cors({
-    origin: env.CORS_ORIGIN,
+    origin: env.FRONTEND_URL,
     credentials: true,
   })
 );
@@ -40,10 +47,14 @@ v1.use('/auth', authRouter);
 v1.use('/users', usersRouter);
 v1.use('/bilty', biltyRouter);
 v1.use('/freight', freightRouter);
-v1.use('/orders', ordersRouter);
-v1.use('/vehicles', vehiclesRouter);
 v1.use('/reports', reportsRouter);
-v1.use('/customers', customersRouter);
+v1.use('/party-ledger', partyLedgerRouter);
+v1.use('/item-master', itemMasterRouter);
+v1.use('/vehicle-master', vehicleMasterRouter);
+v1.use('/destinations', destinationsRouter);
+v1.use('/ledger-groups', ledgerGroupsRouter);
+v1.use('/vch-types', vchTypesRouter);
+v1.use('/vouchers', vouchersRouter);
 
 app.use('/api/v1', v1);
 app.use('/api', v1);

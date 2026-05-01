@@ -1,6 +1,7 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Animated,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -17,15 +18,32 @@ const LABELS: Record<string, string> = {
   Dashboard: 'Dashboard',
   Bilty: 'Bilty',
   Freight: 'Freight',
-  Orders: 'Orders',
-  Vehicles: 'Vehicles',
-  Customers: 'Customers',
+  Billing: 'Billing',
+  PartyMaster: 'Party Master',
+  OwnerMaster: 'Owner Master',
+  AgentMaster: 'Agent Master',
+  ItemMaster: 'Item Master',
+  VehicleMaster: 'Vehicle Master',
+  DestinationMaster: 'Destination Master',
   Reports: 'Reports',
+  LedgerGroups: 'Ledger Groups',
   Users: 'Users',
 };
 
+// Explicit left-to-right display order of nav items.
+// LedgerGroups sits second-last (just before Users).
+const NAV_ORDER = ['Dashboard', 'Ledger', 'Bilty', 'Freight', 'Billing', 'Reports', 'LedgerGroups', 'Users'];
+
 // Routes grouped under the "Ledger" dropdown — hidden as top-level nav items.
-const LEDGER_ROUTES = ['Vehicles', 'Customers'];
+// Order here = order shown inside the dropdown (matches the user's requested sequence).
+const LEDGER_ROUTES = [
+  'PartyMaster',
+  'OwnerMaster',
+  'AgentMaster',
+  'ItemMaster',
+  'VehicleMaster',
+  'DestinationMaster',
+];
 // Routes shown as dropdown instead of top-level (just Reports for now).
 const REPORTS_ROUTES = ['Reports'];
 const HIDDEN_FROM_NAV = [...LEDGER_ROUTES, ...REPORTS_ROUTES];
@@ -70,69 +88,79 @@ export function TopNavBar({ state, navigation }: BottomTabBarProps) {
           <Text style={styles.logoWordmark}>LOGISTICS</Text>
         </View>
 
-        {/* ── Nav items ── */}
+        {/* ── Nav items — rendered in explicit display order ── */}
         <View style={styles.navItems}>
-          {state.routes.map((route, index) => {
-            if (HIDDEN_FROM_NAV.includes(route.name)) return null;
-            const active = state.index === index;
-            const label = LABELS[route.name] ?? route.name;
+          {NAV_ORDER.map((name) => {
+            if (name === 'Ledger') {
+              return availableLedgerTargets.length > 0 ? (
+                <DropdownNavItem
+                  key="ledger"
+                  label="Ledger"
+                  active={ledgerActive}
+                  activeKey={activeRouteName}
+                  isOpen={openDropdown === 'ledger'}
+                  onToggle={() => setOpenDropdown((v) => (v === 'ledger' ? null : 'ledger'))}
+                  onClose={() => setOpenDropdown(null)}
+                  items={availableLedgerTargets.map((n) => ({
+                    key: n,
+                    label: LABELS[n] ?? n,
+                    onPress: () => navigateTo(n),
+                  }))}
+                />
+              ) : null;
+            }
+
+            if (name === 'Reports') {
+              const reportsRoute = state.routes.find((r) => r.name === 'Reports');
+              const reportsSection = (reportsRoute?.params as any)?.section ?? 'bilty';
+              return hasReports ? (
+                <DropdownNavItem
+                  key="reports"
+                  label="Reports"
+                  active={reportsActive}
+                  activeKey={reportsActive ? reportsSection : ''}
+                  isOpen={openDropdown === 'reports'}
+                  onToggle={() => setOpenDropdown((v) => (v === 'reports' ? null : 'reports'))}
+                  onClose={() => setOpenDropdown(null)}
+                  items={[
+                    {
+                      key: 'bilty',
+                      label: 'Bilty History',
+                      onPress: () => navigateTo('Reports', { section: 'bilty' }),
+                    },
+                  ]}
+                />
+              ) : null;
+            }
+
+            const routeIndex = state.routes.findIndex((r) => r.name === name);
+            if (routeIndex === -1) return null;
+            const route = state.routes[routeIndex];
+            const isRouteActive = state.index === routeIndex;
+            // Suppress the active glow / underline on this tab while any
+            // dropdown menu is open — only the open dropdown should look
+            // "active" at that moment, even though the underlying route
+            // hasn't changed yet.
+            const showActive = isRouteActive && openDropdown === null;
             return (
               <NavItem
                 key={route.key}
-                label={label}
-                active={active}
+                label={LABELS[route.name] ?? route.name}
+                active={showActive}
                 onPress={() => {
+                  setOpenDropdown(null);
                   const event = navigation.emit({
                     type: 'tabPress',
                     target: route.key,
                     canPreventDefault: true,
                   });
-                  if (!active && !event.defaultPrevented) {
+                  if (!isRouteActive && !event.defaultPrevented) {
                     navigation.navigate(route.name);
                   }
                 }}
               />
             );
           })}
-
-          {/* Ledger dropdown — only if user has access to at least one ledger page */}
-          {availableLedgerTargets.length > 0 ? (
-            <DropdownNavItem
-              label="Ledger"
-              active={ledgerActive}
-              isOpen={openDropdown === 'ledger'}
-              onToggle={() => setOpenDropdown((v) => (v === 'ledger' ? null : 'ledger'))}
-              onClose={() => setOpenDropdown(null)}
-              items={availableLedgerTargets.map((name) => ({
-                key: name,
-                label: LABELS[name] ?? name,
-                onPress: () => navigateTo(name),
-              }))}
-            />
-          ) : null}
-
-          {/* Reports dropdown → routes to Reports tab with section param */}
-          {hasReports ? (
-            <DropdownNavItem
-              label="Reports"
-              active={reportsActive}
-              isOpen={openDropdown === 'reports'}
-              onToggle={() => setOpenDropdown((v) => (v === 'reports' ? null : 'reports'))}
-              onClose={() => setOpenDropdown(null)}
-              items={[
-                {
-                  key: 'bilty',
-                  label: 'Bilty History',
-                  onPress: () => navigateTo('Reports', { section: 'bilty' }),
-                },
-                {
-                  key: 'order',
-                  label: 'Order History',
-                  onPress: () => navigateTo('Reports', { section: 'order' }),
-                },
-              ]}
-            />
-          ) : null}
         </View>
 
         {/* ── Profile avatar ── */}
@@ -165,6 +193,7 @@ type DropdownItem = { key: string; label: string; onPress: () => void };
 function DropdownNavItem({
   label,
   active,
+  activeKey,
   isOpen,
   onToggle,
   onClose,
@@ -172,38 +201,88 @@ function DropdownNavItem({
 }: {
   label: string;
   active: boolean;
+  activeKey: string;
   isOpen: boolean;
   onToggle: () => void;
   onClose: () => void;
   items: DropdownItem[];
 }) {
+  const [highlight, setHighlight] = useState(0);
+
+  // Reset highlight whenever the menu opens.
+  useEffect(() => {
+    if (isOpen) setHighlight(0);
+  }, [isOpen]);
+
+  // Web keyboard navigation — same capture-phase pattern as AutocompleteField.
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !isOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setHighlight((i) => (i + 1) % items.length);
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setHighlight((i) => (i - 1 + items.length) % items.length);
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        const it = items[highlight];
+        if (it) it.onPress();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        onClose();
+      }
+    };
+    document.addEventListener('keydown', onKeyDown, true);
+    return () => document.removeEventListener('keydown', onKeyDown, true);
+  }, [isOpen, items, highlight, onClose]);
+
   return (
     <View style={styles.navItem}>
-      <Pressable onPress={onToggle} style={styles.navItemInner} accessibilityRole="button">
-        <Text style={[styles.navLabel, active && styles.navLabelActive]}>
+      <Pressable
+        onPress={onToggle}
+        // Apply the same red-tinted glow as regular tabs when the menu is
+        // either on an active sub-route OR currently open.
+        style={[styles.navItemInner, (active || isOpen) && styles.navItemInnerActive]}
+        accessibilityRole="button"
+      >
+        <Text style={[styles.navLabel, (active || isOpen) && styles.navLabelActive]}>
           {label} <Text style={styles.caret}>{isOpen ? '▴' : '▾'}</Text>
         </Text>
-        {active && <View style={styles.activeBar} />}
+        {(active || isOpen) && <View style={styles.activeBar} />}
       </Pressable>
 
       {isOpen ? (
         <>
-          {/* Click-outside scrim — closes the menu when tapping elsewhere */}
           <Pressable style={styles.dropdownScrim} onPress={onClose} />
           <View style={styles.dropdownMenu}>
-            {items.map((it) => (
-              <Pressable
-                key={it.key}
-                onPress={it.onPress}
-                style={({ pressed }) => [
-                  styles.dropdownItem,
-                  pressed && styles.dropdownItemPressed,
-                ]}
-                accessibilityRole="menuitem"
-              >
-                <Text style={styles.dropdownItemText}>{it.label}</Text>
-              </Pressable>
-            ))}
+            {items.map((it, idx) => {
+              const isActive = it.key === activeKey;
+              const isHighlight = idx === highlight;
+              return (
+                <Pressable
+                  key={it.key}
+                  onPress={it.onPress}
+                  // Mouse hover keeps keyboard + cursor highlight in sync.
+                  {...(Platform.OS === 'web'
+                    ? ({ onMouseEnter: () => setHighlight(idx) } as any)
+                    : {})}
+                  style={({ pressed }) => [
+                    styles.dropdownItem,
+                    isActive && styles.dropdownItemActive,
+                    isHighlight && styles.dropdownItemHover,
+                    pressed && styles.dropdownItemPressed,
+                    idx === items.length - 1 && styles.dropdownItemLast,
+                  ]}
+                  accessibilityRole="menuitem"
+                >
+                  <View style={[styles.dropdownDot, isActive && styles.dropdownDotActive]} />
+                  <Text style={[styles.dropdownItemText, isActive && styles.dropdownItemTextActive]}>
+                    {it.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
           </View>
         </>
       ) : null}
@@ -232,10 +311,14 @@ function NavItem({
       onPress={onPress}
       onPressIn={onPressIn}
       onPressOut={onPressOut}
-      style={styles.navItem}
+      style={({ pressed }) => [styles.navItem, Platform.OS === 'web' && (styles.navItemHoverWrap as any)]}
       accessibilityRole="link"
     >
-      <Animated.View style={[styles.navItemInner, { transform: [{ scale: scaleAnim }] }]}>
+      <Animated.View style={[
+        styles.navItemInner,
+        { transform: [{ scale: scaleAnim }] },
+        active && styles.navItemInnerActive,
+      ]}>
         <Text style={[styles.navLabel, active && styles.navLabelActive]}>{label}</Text>
         {active && <View style={styles.activeBar} />}
       </Animated.View>
@@ -300,19 +383,37 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   navItem: {
-    paddingHorizontal: 2,
+    paddingHorizontal: 1,
   },
+  navItemHoverWrap: Platform.OS === 'web' ? {
+    // @ts-ignore web-only CSS
+    cursor: 'pointer',
+    transition: 'all 0.2s ease',
+  } as any : {},
   navItemInner: {
     paddingHorizontal: 14,
     paddingVertical: 8,
     alignItems: 'center',
     position: 'relative',
+    borderRadius: 8,
+    // Suppress the browser's default black focus outline on the dropdown
+    // toggle buttons (Ledger / Reports) — the active red underline already
+    // serves as a visual focus indicator.
+    ...(Platform.OS === 'web'
+      ? ({ outline: 'none', transition: 'background-color 0.2s ease, box-shadow 0.2s ease' } as any)
+      : {}),
   },
+  navItemInnerActive: Platform.OS === 'web' ? {
+    backgroundColor: 'rgba(247,72,61,0.06)',
+    // @ts-ignore web-only
+    boxShadow: '0 0 12px rgba(247,72,61,0.12)',
+  } as any : {},
   navLabel: {
     color: 'rgba(15,23,42,0.45)',
     fontFamily: typography.uiBold,
     fontSize: 14,
     letterSpacing: 0.3,
+    ...(Platform.OS === 'web' ? { transition: 'color 0.2s ease' } as any : {}),
   },
   navLabelActive: {
     color: '#0F172A',
@@ -320,11 +421,12 @@ const styles = StyleSheet.create({
   activeBar: {
     position: 'absolute',
     bottom: -4,
-    left: 14,
-    right: 14,
-    height: 2,
+    left: 10,
+    right: 10,
+    height: 2.5,
     backgroundColor: colors.brandRed,
     borderRadius: 2,
+    ...(Platform.OS === 'web' ? { boxShadow: '0 1px 6px rgba(247,72,61,0.35)' } as any : {}),
   },
   caret: {
     fontSize: 10,
@@ -342,33 +444,70 @@ const styles = StyleSheet.create({
   },
   dropdownMenu: {
     position: 'absolute',
-    top: TOP_NAV_HEIGHT - 10,
-    left: 0,
-    minWidth: 180,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 10,
+    top: TOP_NAV_HEIGHT - 16,
+    left: -4,
+    minWidth: 210,
+    backgroundColor: 'rgba(255,255,255,0.98)',
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: 'rgba(226,232,240,0.6)',
     paddingVertical: 6,
     zIndex: 1001,
-    elevation: 20,
-    shadowColor: '#000',
-    shadowOpacity: 0.1,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 4 },
+    elevation: 24,
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.10,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 6 },
+    ...(Platform.OS === 'web' ? {
+      backdropFilter: 'blur(20px)',
+      WebkitBackdropFilter: 'blur(20px)',
+      boxShadow: '0 4px 24px rgba(15,23,42,0.10), 0 0 0 1px rgba(226,232,240,0.3)',
+    } as any : {}),
   },
   dropdownItem: {
-    paddingVertical: 10,
-    paddingHorizontal: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 9,
+    paddingHorizontal: 14,
+    marginHorizontal: 5,
+    borderRadius: 7,
+    gap: 9,
+    ...(Platform.OS === 'web' ? { transition: 'background-color 0.15s ease' } as any : {}),
   },
   dropdownItemPressed: {
-    backgroundColor: '#F5F7FA',
+    backgroundColor: colors.brandRedTone,
+  },
+  dropdownItemActive: {
+    backgroundColor: 'rgba(247,72,61,0.08)',
+  },
+  // Keyboard / mouse hover highlight — same light grey used in AutocompleteField.
+  dropdownItemHover: {
+    backgroundColor: '#EEF2F7',
+  },
+  dropdownItemLast: {
+    marginBottom: 2,
+  },
+  dropdownDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: colors.brandRed,
+    opacity: 0.45,
+  },
+  dropdownDotActive: {
+    opacity: 1,
+    width: 6,
+    height: 6,
   },
   dropdownItemText: {
-    color: '#0F172A',
+    color: '#1E293B',
+    fontFamily: typography.uiMedium,
+    fontSize: 13,
+    letterSpacing: 0.1,
+  },
+  dropdownItemTextActive: {
+    color: colors.brandRed,
     fontFamily: typography.uiBold,
-    fontSize: 14,
-    letterSpacing: 0.2,
   },
 
   // Avatar

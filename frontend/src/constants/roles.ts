@@ -24,25 +24,33 @@ export const PERMISSIONS = {
 // ---------------------------------------------------------------------------
 
 export const PERMISSION_LIST: readonly Exclude<Permission, '*'>[] = [
-  'bilty.read',
   'bilty.edit',
-  'freight.read',
-  'order.read',
-  'order.edit',
-  'vehicle.read',
-  'vehicle.edit',
-  'report.read',
+  'freight.access',
+  'report.access',
+  'partymaster.edit',
+  'ownermaster.edit',
+  'agentmaster.edit',
+  'itemmaster.edit',
+  'vehiclemaster.edit',
+  'destinationmaster.edit',
+  'ledgergroup.edit',
+  'voucher.edit',
+  'user.manage',
 ] as const;
 
 export const PERMISSION_LABELS: Record<Permission, string> = {
-  'bilty.read': 'Bilty · Read',
-  'bilty.edit': 'Bilty · Edit',
-  'freight.read': 'Freight · Read',
-  'order.read': 'Order · Read',
-  'order.edit': 'Order · Edit',
-  'vehicle.read': 'Vehicle · Read',
-  'vehicle.edit': 'Vehicle · Edit',
-  'report.read': 'Report · Read',
+  'bilty.edit': 'Bilty',
+  'freight.access': 'Freight',
+  'report.access': 'Reports',
+  'partymaster.edit': 'Party Master',
+  'ownermaster.edit': 'Owner Master',
+  'agentmaster.edit': 'Agent Master',
+  'itemmaster.edit': 'Item Master',
+  'vehiclemaster.edit': 'Vehicle Master',
+  'destinationmaster.edit': 'Destination Master',
+  'ledgergroup.edit': 'Ledger Groups',
+  'voucher.edit': 'Billing',
+  'user.manage': 'Users',
   '*': 'All (wildcard)',
 };
 

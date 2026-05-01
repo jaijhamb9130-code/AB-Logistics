@@ -14,15 +14,22 @@
  * /api/users must pass isValidPermission(), else 400 invalid_permissions.
  */
 
+// One permission per page. Editable pages use .edit (implies read+create+
+// edit+delete). View-only pages (Freight, Reports) use .access. Users page
+// uses .manage. Admin can mix and match these on each staff user.
 const PERMISSIONS = Object.freeze([
-  'bilty.read',
   'bilty.edit',
-  'freight.read',
-  'order.read',
-  'order.edit',
-  'vehicle.read',
-  'vehicle.edit',
-  'report.read',
+  'freight.access',
+  'report.access',
+  'partymaster.edit',
+  'ownermaster.edit',
+  'agentmaster.edit',
+  'itemmaster.edit',
+  'vehiclemaster.edit',
+  'destinationmaster.edit',
+  'ledgergroup.edit',
+  'voucher.edit',
+  'user.manage',
 ]);
 
 const WILDCARD = '*';

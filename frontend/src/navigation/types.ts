@@ -7,16 +7,22 @@ export type AuthStackParamList = {
   Login: undefined;
 };
 
-export type ReportsSection = 'bilty' | 'order';
+export type ReportsSection = 'bilty';
 
 export type AppTabsParamList = {
   Dashboard: undefined;
   Bilty: undefined;
   Freight: undefined;
-  Orders: undefined;
-  Vehicles: undefined;
-  Customers: undefined;
+  Billing: undefined;
+  PartyMaster: undefined;
+  OwnerMaster: undefined;
+  AgentMaster: undefined;
+  ItemMaster: undefined;
+  VehicleMaster: undefined;
+  DestinationMaster: undefined;
   Reports: { section?: ReportsSection } | undefined;
+  // Top-level Ledger Groups admin tab — second-last (just before Users).
+  LedgerGroups: undefined;
   Users: undefined;
 };
 
@@ -43,26 +49,11 @@ export type FreightStackParamList = {
 };
 
 /**
- * Orders stack (Phase 5) — nested inside the Orders tab.
- * OrderList → OrderDetail. New Order is a modal on OrderList (not a stack route).
+ * Billing stack — Tally-style vouchers (Phase 7).
+ * VouchersList → VoucherForm (create or edit) → Daybook (day view).
  */
-export type OrdersStackParamList = {
-  OrderList: undefined;
-  OrderDetail: { id: number };
-};
-
-/**
- * Vehicles stack (Phase 5) — nested inside the Vehicles tab.
- * Single list screen; create/edit/deactivate happen in modals.
- */
-export type VehiclesStackParamList = {
-  VehicleList: undefined;
-};
-
-/**
- * Customers stack (Phase 6) — nested inside the Customers tab.
- * Single list screen; create happens in a modal popup.
- */
-export type CustomersStackParamList = {
-  CustomerList: undefined;
+export type BillingStackParamList = {
+  VouchersList: undefined;
+  VoucherForm: { id?: number; editVoucher?: { id: number } } | undefined;
+  Daybook: { date?: string } | undefined;
 };
