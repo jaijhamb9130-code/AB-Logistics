@@ -6,7 +6,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -108,7 +107,7 @@ export function VouchersListScreen() {
   const totalPages = Math.max(1, Math.ceil(total / limit));
 
   return (
-    <ScrollView style={styles.wrap} contentContainerStyle={styles.content}>
+    <View style={styles.wrap}>
       <View style={styles.header}>
         <Text style={text.heading}>Billing — Vouchers</Text>
         <View style={styles.headerActions}>
@@ -166,7 +165,7 @@ export function VouchersListScreen() {
       {rows === null ? (
         <Loader />
       ) : (
-        <>
+        <View style={styles.tableWrap}>
           <DataTable
             columns={columns}
             rows={rows}
@@ -194,9 +193,9 @@ export function VouchersListScreen() {
               </Pressable>
             </View>
           ) : null}
-        </>
+        </View>
       )}
-    </ScrollView>
+    </View>
   );
 }
 
@@ -208,8 +207,8 @@ function typePillColor(name: string | null) {
 }
 
 const styles = StyleSheet.create({
-  wrap: { flex: 1, backgroundColor: colors.background },
-  content: { padding: spacing.lg, paddingBottom: spacing.xxl },
+  wrap: { flex: 1, backgroundColor: colors.background, padding: spacing.lg },
+  tableWrap: { flex: 1, minHeight: 200 },
   header: {
     flexDirection: 'row',
     alignItems: 'center',

@@ -5,7 +5,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -104,7 +103,7 @@ export function DaybookScreen() {
   ];
 
   return (
-    <ScrollView style={styles.wrap} contentContainerStyle={styles.content}>
+    <View style={styles.wrap}>
       <View style={styles.dateRow}>
         <Pressable style={styles.dateBtn} onPress={() => setDate(shiftDate(date, -1))}>
           <Text style={text.action}>‹</Text>
@@ -136,7 +135,7 @@ export function DaybookScreen() {
       {rows === null ? (
         <Loader />
       ) : (
-        <>
+        <View style={styles.tableWrap}>
           <DataTable
             columns={columns}
             rows={rows}
@@ -154,15 +153,15 @@ export function DaybookScreen() {
               </View>
             </View>
           ) : null}
-        </>
+        </View>
       )}
-    </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  wrap: { flex: 1, backgroundColor: colors.background },
-  content: { padding: spacing.lg, paddingBottom: spacing.xxl },
+  wrap: { flex: 1, backgroundColor: colors.background, padding: spacing.lg },
+  tableWrap: { flex: 1, minHeight: 200 },
   dateRow: {
     flexDirection: 'row',
     alignItems: 'flex-end',
