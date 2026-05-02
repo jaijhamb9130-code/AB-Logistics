@@ -1,5 +1,7 @@
 'use strict';
 
+const path = require('path');
+const fs = require('fs');
 const express = require('express');
 const helmet = require('helmet');
 const cors = require('cors');
@@ -26,10 +28,19 @@ const app = express();
 app.set('trust proxy', 1);
 
 // T-01-15 mitigation — explicit origin, credentials enabled for cookie-based refresh.
-app.use(helmet());
+// HSTS / COOP / CSP disabled because the EB environment is HTTP-only — once HTTPS
+// is provisioned (ALB + ACM cert) flip these back on.
+app.use(
+  helmet({
+    hsts: false,
+    contentSecurityPolicy: false,
+    crossOriginOpenerPolicy: false,
+    crossOriginEmbedderPolicy: false,
+  })
+);
 app.use(
   cors({
-    origin: env.FRONTEND_URL,
+    origin: env.FRONTEND_URL || true,
     credentials: true,
   })
 );
@@ -58,6 +69,19 @@ v1.use('/vouchers', vouchersRouter);
 
 app.use('/api/v1', v1);
 app.use('/api', v1);
+
+// ── Frontend static files ───────────────────────────────────────────────────
+// Serve the built frontend (frontend/dist) when it exists in the deployment
+// bundle. Skipped silently in dev where the frontend runs separately on :8081.
+const frontendDist = path.resolve(__dirname, '../../frontend/dist');
+if (fs.existsSync(frontendDist)) {
+  app.use(express.static(frontendDist));
+  // SPA fallback — any non-API route returns index.html so React Navigation
+  // can handle the route client-side.
+  app.get(/^(?!\/api).*/, (_req, res) => {
+    res.sendFile(path.join(frontendDist, 'index.html'));
+  });
+}
 
 // 404
 app.use((_req, res) => {
