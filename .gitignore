@@ -28,3 +28,13 @@ Thumbs.db
 
 # Build artifacts
 *.tsbuildinfo
+
+# Deploy zips and extracted artifacts
+*.zip
+ab-logistics-database/
+
+# Scratch / temp files
+backend/scratch_*.js
+
+# Production credentials — never commit
+deploy/backend/.env

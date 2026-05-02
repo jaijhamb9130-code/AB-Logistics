@@ -138,11 +138,11 @@ export function ProfilePanel({ visible, onClose, user, logout, onNavigate }: Pro
               onPress={onNavigate ? () => onNavigate('Freight') : undefined}
             />
             <StatCard
-              label="Orders"
-              value={summary?.orders ?? null}
+              label="Ledger Groups"
+              value={summary?.ledger_groups ?? null}
               loading={loadingStats}
               accent="#60A5FA"
-              onPress={onNavigate ? () => onNavigate('Orders') : undefined}
+              onPress={onNavigate ? () => onNavigate('LedgerGroups') : undefined}
             />
           </View>
 

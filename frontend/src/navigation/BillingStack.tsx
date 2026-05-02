@@ -15,6 +15,7 @@ const Stack = createNativeStackNavigator<BillingStackParamList>();
 export function BillingStack() {
   return (
     <Stack.Navigator
+      initialRouteName="VoucherForm"
       screenOptions={{
         headerStyle: { backgroundColor: colors.card },
         headerTintColor: colors.text,
@@ -28,9 +29,7 @@ export function BillingStack() {
       <Stack.Screen
         name="VoucherForm"
         component={VoucherFormScreen}
-        options={({ route }) => ({
-          title: route.params?.id ? 'Edit Voucher' : 'New Voucher',
-        })}
+        options={{ headerShown: false }}
       />
       <Stack.Screen
         name="Daybook"

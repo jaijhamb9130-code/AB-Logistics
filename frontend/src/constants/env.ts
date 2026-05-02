@@ -4,6 +4,6 @@
  */
 
 // Empty string = relative URLs → Vercel proxy forwards /api/* to Railway.
-// Override with EXPO_PUBLIC_API_URL for local dev (e.g. http://localhost:3001).
+// Override with EXPO_PUBLIC_API_URL for local dev (e.g. http://localhost:3002).
 export const API_URL =
   process.env.EXPO_PUBLIC_API_URL ?? '';

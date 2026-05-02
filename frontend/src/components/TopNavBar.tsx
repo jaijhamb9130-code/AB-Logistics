@@ -51,19 +51,28 @@ const HIDDEN_FROM_NAV = [...LEDGER_ROUTES, ...REPORTS_ROUTES];
 export function TopNavBar({ state, navigation }: BottomTabBarProps) {
   const { user, logout } = useAuth();
   const [profileOpen, setProfileOpen] = useState(false);
-  const [openDropdown, setOpenDropdown] = useState<null | 'ledger' | 'reports'>(null);
+  const [openDropdown, setOpenDropdown] = useState<null | 'ledger' | 'reports' | 'billing'>(null);
 
   const initials = (user?.username ?? 'AD').slice(0, 2).toUpperCase();
 
   const activeRouteName = state.routes[state.index]?.name ?? '';
   const ledgerActive = LEDGER_ROUTES.includes(activeRouteName);
   const reportsActive = REPORTS_ROUTES.includes(activeRouteName);
+  const billingActive = activeRouteName === 'Billing';
 
   // Which ledger/reports targets exist in the navigator (permission-gated by AppTabs).
   const availableLedgerTargets = state.routes
     .filter((r) => LEDGER_ROUTES.includes(r.name))
     .map((r) => r.name);
   const hasReports = state.routes.some((r) => r.name === 'Reports');
+  const hasBilling = state.routes.some((r) => r.name === 'Billing');
+
+  // Read the active screen inside the nested BillingStack so the dropdown can
+  // highlight whichever sub-item (Add Voucher / Daybook) the user is on.
+  const billingRoute = state.routes.find((r) => r.name === 'Billing');
+  const billingNestedState: any = (billingRoute as any)?.state;
+  const billingActiveScreen: string =
+    billingNestedState?.routes?.[billingNestedState.index]?.name ?? 'VouchersList';
 
   const navigateTo = (routeName: string, params?: object) => {
     const target = state.routes.find((r) => r.name === routeName);
@@ -106,6 +115,32 @@ export function TopNavBar({ state, navigation }: BottomTabBarProps) {
                     label: LABELS[n] ?? n,
                     onPress: () => navigateTo(n),
                   }))}
+                />
+              ) : null;
+            }
+
+            if (name === 'Billing') {
+              return hasBilling ? (
+                <DropdownNavItem
+                  key="billing"
+                  label="Billing"
+                  active={billingActive}
+                  activeKey={billingActive ? billingActiveScreen : ''}
+                  isOpen={openDropdown === 'billing'}
+                  onToggle={() => setOpenDropdown((v) => (v === 'billing' ? null : 'billing'))}
+                  onClose={() => setOpenDropdown(null)}
+                  items={[
+                    {
+                      key: 'VoucherForm',
+                      label: 'Add Voucher',
+                      onPress: () => navigateTo('Billing', { screen: 'VoucherForm' }),
+                    },
+                    {
+                      key: 'Daybook',
+                      label: 'Daybook',
+                      onPress: () => navigateTo('Billing', { screen: 'Daybook' }),
+                    },
+                  ]}
                 />
               ) : null;
             }
@@ -400,7 +435,7 @@ const styles = StyleSheet.create({
     // toggle buttons (Ledger / Reports) — the active red underline already
     // serves as a visual focus indicator.
     ...(Platform.OS === 'web'
-      ? ({ outline: 'none', transition: 'background-color 0.2s ease, box-shadow 0.2s ease' } as any)
+      ? ({ outlineStyle: 'none', transition: 'background-color 0.2s ease, box-shadow 0.2s ease' } as any)
       : {}),
   },
   navItemInnerActive: Platform.OS === 'web' ? {

@@ -20,7 +20,7 @@ import {
 } from 'react-native';
 import { colors, radius, spacing, typography } from '../constants/theme';
 
-export type FieldType = 'text' | 'integer' | 'decimal' | 'email' | 'phone';
+export type FieldType = 'text' | 'integer' | 'decimal' | 'email' | 'phone' | 'letters' | 'alphanumeric' | 'date';
 
 interface Props extends Omit<TextInputProps, 'style'> {
   label: string;
@@ -32,11 +32,14 @@ interface Props extends Omit<TextInputProps, 'style'> {
 }
 
 const KEYBOARD_TYPE: Record<FieldType, TextInputProps['keyboardType']> = {
-  text:    'default',
-  integer: 'number-pad',
-  decimal: 'decimal-pad',
-  email:   'email-address',
-  phone:   'phone-pad',
+  text:         'default',
+  integer:      'number-pad',
+  decimal:      'decimal-pad',
+  email:        'email-address',
+  phone:        'phone-pad',
+  letters:      'default',
+  alphanumeric: 'default',
+  date:         'default',
 };
 
 function filterValue(raw: string, fieldType: FieldType): string {
@@ -47,6 +50,9 @@ function filterValue(raw: string, fieldType: FieldType): string {
     return parts.length > 2 ? `${parts[0]}.${parts.slice(1).join('')}` : cleaned;
   }
   if (fieldType === 'phone') return raw.replace(/\D/g, '').slice(0, 10);
+  if (fieldType === 'letters') return raw.replace(/[^a-zA-Z\s'.\-]/g, '');
+  if (fieldType === 'alphanumeric') return raw.replace(/[^a-zA-Z0-9\s\-_.\/]/g, '');
+  if (fieldType === 'date') return raw.replace(/[^0-9\-]/g, '').slice(0, 10);
   return raw;
 }
 
@@ -86,7 +92,7 @@ export function InputField({
         focused && Platform.OS === 'web' && ({ boxShadow: `0 0 0 3px ${glowColor}` } as any),
       ]}>
         <TextInput
-          style={[styles.input, Platform.OS === 'web' && ({ outline: 'none', border: 'none' } as any)]}
+          style={[styles.input, Platform.OS === 'web' && ({ outlineStyle: 'none', borderWidth: 0 } as any)]}
           value={value}
           onChangeText={handleChange}
           onFocus={() => setFocused(true)}

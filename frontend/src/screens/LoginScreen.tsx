@@ -16,7 +16,7 @@
  * Colors: all sourced from constants/theme.ts (brand palette — red/yellow tones + black).
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -43,6 +43,16 @@ export function LoginScreen() {
   const [errors, setErrors] = useState<LoginErrors>({});
   const [serverError, setServerError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  // Web: pressing Enter anywhere on the login page submits the form.
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Enter') handleSubmit();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  });
 
   const handleSubmit = async () => {
     setServerError(null);
@@ -122,6 +132,8 @@ export function LoginScreen() {
             onChangeText={setPassword}
             error={errors.password}
             testID="login-password"
+            onSubmitEditing={handleSubmit}
+            returnKeyType="go"
           />
 
           <View style={styles.spacer} />

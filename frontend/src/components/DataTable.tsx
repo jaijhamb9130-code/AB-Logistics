@@ -8,12 +8,13 @@
  *  - Alt-row background (colors.background on odd rows)
  *  - Zero hardcoded hex — all colors / spacing / radius / typography imported
  *    from theme.
+ *  - Auto S.No. column (showSerialNo, default true) — sequential 1-based index.
  *
  * Row-action column is NOT part of this primitive; screens that need Edit /
  * Deactivate buttons add a custom `render` on an extra column (plan 02-03).
  */
 
-import React from 'react';
+import React, { useMemo } from 'react';
 import {
   FlatList,
   Platform,
@@ -45,7 +46,11 @@ interface Props<T> {
   stickyHeader?: boolean;
   emptyLabel?: string;
   testID?: string;
+  /** Show an auto-incrementing S.No. column as the first column. Default: true */
+  showSerialNo?: boolean;
 }
+
+const SERIAL_COL_WIDTH = 80;
 
 export function DataTable<T>({
   columns,
@@ -55,12 +60,30 @@ export function DataTable<T>({
   stickyHeader = true,
   emptyLabel = 'No records',
   testID,
+  showSerialNo = true,
 }: Props<T>) {
+  // Build the effective columns list — prepend S.No. when enabled.
+  // The S.No. render receives the row but ignores it; the index is injected at
+  // render-time via a wrapper (see renderRow).
+  const effectiveColumns: Column<T>[] = useMemo(() => {
+    if (!showSerialNo) return columns;
+
+    const serialCol: Column<T> = {
+      key: '__sno__',
+      label: 'S. No.',
+      width: SERIAL_COL_WIDTH,
+      align: 'center',
+      // Placeholder — actual serial number is injected in renderRow.
+      render: () => '',
+    };
+    return [serialCol, ...columns];
+  }, [columns, showSerialNo]);
+
   // ------- Header row -------
-  const lastIndex = columns.length - 1;
+  const lastIndex = effectiveColumns.length - 1;
   const header = (
     <View style={[styles.row, styles.headerRow]}>
-      {columns.map((col, i) => (
+      {effectiveColumns.map((col, i) => (
         <View
           key={col.key}
           style={[
@@ -90,8 +113,10 @@ export function DataTable<T>({
     const alt = index % 2 === 1;
     const content = (
       <View style={[styles.row, alt && styles.altRow]}>
-        {columns.map((col, i) => {
-          const rendered = col.render(item);
+        {effectiveColumns.map((col, i) => {
+          // For the S.No. column, render the 1-based index directly.
+          const isSerial = col.key === '__sno__';
+          const rendered = isSerial ? String(index + 1) : col.render(item);
           return (
             <View
               key={col.key}
@@ -109,6 +134,7 @@ export function DataTable<T>({
                     col.align === 'right' && styles.textRight,
                     col.align === 'right' && styles.mono,
                     col.align === 'center' && styles.textCenter,
+                    isSerial && styles.serialText,
                   ]}
                   numberOfLines={1}
                 >
@@ -245,6 +271,11 @@ const styles = StyleSheet.create({
     ...text.value,
     fontSize: 14,
     lineHeight: 20,
+  },
+  serialText: {
+    fontFamily: typography.mono,
+    color: colors.textMuted,
+    fontWeight: '600',
   },
   mono: {
     fontFamily: typography.mono,

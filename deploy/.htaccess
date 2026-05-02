@@ -1,0 +1,14 @@
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteBase /
+
+    # API Proxy → Node.js on port 3009
+    RewriteCond %{REQUEST_URI} ^/api [NC]
+    RewriteRule ^(api/.*)$ http://127.0.0.1:3009/$1 [P,L]
+
+    # SPA routing → serve index.html for all non-file/non-dir requests
+    RewriteCond %{REQUEST_URI} !^/api [NC]
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteRule ^ /index.html [L]
+</IfModule>

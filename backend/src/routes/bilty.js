@@ -9,8 +9,8 @@ const { CreateBiltySchema } = require('../schemas/bilty.schema');
 
 router.use(authMw);
 
-router.get('/', requirePermission('bilty.read'), ctrl.list);
-router.get('/:id', requirePermission('bilty.read'), ctrl.get);
+router.get('/', requirePermission('bilty.edit'), ctrl.list);
+router.get('/:id', requirePermission('bilty.edit'), ctrl.get);
 router.post('/', requirePermission('bilty.edit'), validate(CreateBiltySchema), ctrl.create);
 router.patch('/:id', requirePermission('bilty.edit'), validate(CreateBiltySchema), ctrl.update);
 

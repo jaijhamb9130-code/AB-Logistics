@@ -237,7 +237,6 @@ export function UsersScreen() {
 
   // ---- Columns (exact keys + order per plan) ----
   const columns: Column<UserListItem>[] = [
-    { key: 'id', label: 'ID', width: 60, align: 'right', render: (r) => r.id },
     { key: 'username', label: 'Username', width: 180, render: (r) => r.username },
     { key: 'role', label: 'Role', width: 80, render: (r) => r.role },
     {

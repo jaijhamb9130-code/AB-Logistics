@@ -6,7 +6,7 @@
  * Save delegates to useBiltyCreate mutation (TanStack Query).
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Controller,
   useFieldArray,
@@ -28,6 +28,11 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { ButtonPrimary } from '../components/ButtonPrimary';
 import { InputField } from '../components/InputField';
 import { Loader } from '../components/Loader';
+import { AutocompleteField } from '../components/AutocompleteField';
+import { partyLedgerService } from '../services/partyLedgerService';
+import { itemMasterService } from '../services/itemMasterService';
+import { vehicleMasterService } from '../services/vehicleMasterService';
+import { destinationService } from '../services/destinationService';
 import { colors, radius, spacing, typography } from '../constants/theme';
 import { useBiltyCreate, useBiltyUpdate } from '../hooks/useBiltyUpdate';
 import { biltyService } from '../services/biltyService';
@@ -85,6 +90,37 @@ export function BiltyFormScreen() {
 
   const [loading, setLoading] = useState<boolean>(isEdit);
   const [loadError, setLoadError] = useState<string | null>(null);
+
+  // Master data — sourced from Ledger pages. Fetched in parallel on mount;
+  // failures are silent (autocomplete just won't have options for that field).
+  const [partyOptions, setPartyOptions] = useState<string[]>([]);
+  const [ownerOptions, setOwnerOptions] = useState<string[]>([]);
+  const [agentOptions, setAgentOptions] = useState<string[]>([]);
+  const [itemOptions, setItemOptions] = useState<string[]>([]);
+  const [vehicleNoOptions, setVehicleNoOptions] = useState<string[]>([]);
+  const [vehicleTypeOptions, setVehicleTypeOptions] = useState<string[]>([]);
+  const [branchOptions, setBranchOptions] = useState<string[]>([]);
+
+  useEffect(() => {
+    Promise.allSettled([
+      partyLedgerService.list(1).then((rs) => setPartyOptions(rs.map((r) => r.name).sort())),
+      partyLedgerService.list(2).then((rs) => setOwnerOptions(rs.map((r) => r.name).sort())),
+      partyLedgerService.list(3).then((rs) => setAgentOptions(rs.map((r) => r.name).sort())),
+      itemMasterService.list().then((rs) => setItemOptions(rs.map((r) => r.name).sort())),
+
+      vehicleMasterService.list().then((rs) => {
+        setVehicleNoOptions(rs.map((r) => r.name).sort());
+        setVehicleTypeOptions(
+          [...new Set(rs.map((r) => r.vehicle_type).filter((v): v is string => Boolean(v)))].sort()
+        );
+      }),
+      destinationService.listBranches().then(setBranchOptions),
+    ]);
+  }, []);
+
+  // Backwards-compat aliases used by existing JSX below.
+  const consignorOptions = partyOptions;
+  const ownerNameOptions = ownerOptions;
 
   const {
     control,
@@ -244,10 +280,12 @@ export function BiltyFormScreen() {
             control={control}
             name="header.consignor"
             render={({ field: { value, onChange } }) => (
-              <InputField
+              <AutocompleteField
                 label="Consignor *"
                 value={value}
+                options={consignorOptions}
                 onChangeText={onChange}
+                placeholder="Type 3 letters to search..."
                 error={errors.header?.consignor?.message ?? null}
                 testID="consignor-input"
               />
@@ -259,7 +297,13 @@ export function BiltyFormScreen() {
             control={control}
             name="header.branch"
             render={({ field: { value, onChange } }) => (
-              <InputField label="Branch" value={value ?? ''} onChangeText={onChange} />
+              <AutocompleteField
+                label="Branch"
+                value={value ?? ''}
+                options={branchOptions}
+                onChangeText={onChange}
+                placeholder="Type 3 letters..."
+              />
             )}
           />
         </View>
@@ -272,6 +316,7 @@ export function BiltyFormScreen() {
                 label="Date"
                 value={value ?? ''}
                 onChangeText={onChange}
+                fieldType="date"
                 placeholder="YYYY-MM-DD"
                 testID="bilty-date-input"
               />
@@ -287,12 +332,13 @@ export function BiltyFormScreen() {
             control={control}
             name="header.truck_no"
             render={({ field: { value, onChange } }) => (
-              <InputField
+              <AutocompleteField
                 label="Truck No *"
-                value={value}
-                onChangeText={onChange}
+                value={value ?? ''}
+                options={vehicleNoOptions}
+                onChangeText={(v) => onChange(v.toUpperCase())}
                 error={errors.header?.truck_no?.message ?? null}
-                autoCapitalize="characters"
+                placeholder="Type 3 letters..."
                 testID="truck-no-input"
               />
             )}
@@ -303,7 +349,13 @@ export function BiltyFormScreen() {
             control={control}
             name="header.truck_type"
             render={({ field: { value, onChange } }) => (
-              <InputField label="Truck Type" value={value ?? ''} onChangeText={onChange} />
+              <AutocompleteField
+                label="Truck Type"
+                value={value ?? ''}
+                options={vehicleTypeOptions}
+                onChangeText={onChange}
+                placeholder="Type 3 letters..."
+              />
             )}
           />
         </View>
@@ -325,7 +377,13 @@ export function BiltyFormScreen() {
             control={control}
             name="header.owner_name"
             render={({ field: { value, onChange } }) => (
-              <InputField label="Owner Name" value={value ?? ''} onChangeText={onChange} />
+              <AutocompleteField
+                label="Owner Name"
+                value={value ?? ''}
+                options={ownerNameOptions}
+                onChangeText={onChange}
+                placeholder="Type 3 letters to search..."
+              />
             )}
           />
         </View>
@@ -334,7 +392,13 @@ export function BiltyFormScreen() {
             control={control}
             name="header.agent_name"
             render={({ field: { value, onChange } }) => (
-              <InputField label="Agent Name" value={value ?? ''} onChangeText={onChange} />
+              <AutocompleteField
+                label="Agent Name"
+                value={value ?? ''}
+                options={agentOptions}
+                onChangeText={onChange}
+                placeholder="Type 3 letters..."
+              />
             )}
           />
         </View>
@@ -343,7 +407,13 @@ export function BiltyFormScreen() {
             control={control}
             name="header.goods_type"
             render={({ field: { value, onChange } }) => (
-              <InputField label="Goods Type" value={value ?? ''} onChangeText={onChange} />
+              <AutocompleteField
+                label="Goods Type"
+                value={value ?? ''}
+                options={itemOptions}
+                onChangeText={onChange}
+                placeholder="Type 3 letters..."
+              />
             )}
           />
         </View>
@@ -375,11 +445,11 @@ export function BiltyFormScreen() {
         </View>
         {itemFields.map((field, i) => (
           <View key={field.id} style={[styles.row, i % 2 === 1 && styles.altRow]}>
-            <Cell w={110}><Controller control={control} name={`items.${i}.challan_no`} render={({ field: f }) => <RowInput value={String(f.value ?? '')} onChangeText={f.onChange} />} /></Cell>
-            <Cell w={110}><Controller control={control} name={`items.${i}.lr_no`} render={({ field: f }) => <RowInput value={String(f.value ?? '')} onChangeText={f.onChange} />} /></Cell>
-            <Cell w={110}><Controller control={control} name={`items.${i}.from_loc`} render={({ field: f }) => <RowInput value={String(f.value ?? '')} onChangeText={f.onChange} />} /></Cell>
-            <Cell w={110}><Controller control={control} name={`items.${i}.to_loc`} render={({ field: f }) => <RowInput value={String(f.value ?? '')} onChangeText={f.onChange} />} /></Cell>
-            <Cell><Controller control={control} name={`items.${i}.consignee`} render={({ field: f }) => <RowInput value={String(f.value ?? '')} onChangeText={f.onChange} />} /></Cell>
+            <Cell w={110}><Controller control={control} name={`items.${i}.challan_no`} render={({ field: f }) => <RowInput value={String(f.value ?? '')} onChangeText={f.onChange} filterFn={filterAlphanumeric} />} /></Cell>
+            <Cell w={110}><Controller control={control} name={`items.${i}.lr_no`} render={({ field: f }) => <RowInput value={String(f.value ?? '')} onChangeText={f.onChange} filterFn={filterAlphanumeric} />} /></Cell>
+            <Cell w={110}><Controller control={control} name={`items.${i}.from_loc`} render={({ field: f }) => <RowInput value={String(f.value ?? '')} onChangeText={f.onChange} filterFn={filterLetters} />} /></Cell>
+            <Cell w={110}><Controller control={control} name={`items.${i}.to_loc`} render={({ field: f }) => <RowInput value={String(f.value ?? '')} onChangeText={f.onChange} filterFn={filterLetters} />} /></Cell>
+            <Cell><Controller control={control} name={`items.${i}.consignee`} render={({ field: f }) => <RowInput value={String(f.value ?? '')} onChangeText={f.onChange} filterFn={filterLetters} />} /></Cell>
             <Cell w={80} align="right">
               <Controller control={control} name={`items.${i}.qty`} render={({ field: f }) => (
                 <RowInput numeric value={String(f.value ?? '')} onChangeText={(v) => f.onChange(v)} testID={`item-qty-${i}`} error={errors.items?.[i]?.qty?.message} />
@@ -414,8 +484,8 @@ export function BiltyFormScreen() {
           <EmptyRow label="No advance rows." />
         ) : advFields.map((field, i) => (
           <View key={field.id} style={[styles.row, i % 2 === 1 && styles.altRow]}>
-            <Cell w={130}><Controller control={control} name={`advances.${i}.adv_date`} render={({ field: f }) => <RowInput placeholder="YYYY-MM-DD" value={String(f.value ?? '')} onChangeText={f.onChange} />} /></Cell>
-            <Cell w={150}><Controller control={control} name={`advances.${i}.adv_from`} render={({ field: f }) => <RowInput value={String(f.value ?? '')} onChangeText={f.onChange} />} /></Cell>
+            <Cell w={130}><Controller control={control} name={`advances.${i}.adv_date`} render={({ field: f }) => <RowInput placeholder="YYYY-MM-DD" value={String(f.value ?? '')} onChangeText={f.onChange} filterFn={filterDate} />} /></Cell>
+            <Cell w={150}><Controller control={control} name={`advances.${i}.adv_from`} render={({ field: f }) => <RowInput value={String(f.value ?? '')} onChangeText={f.onChange} filterFn={filterLetters} />} /></Cell>
             <Cell w={120} align="right"><Controller control={control} name={`advances.${i}.amount`} render={({ field: f }) => <RowInput numeric value={String(f.value ?? '')} onChangeText={(v) => f.onChange(v)} />} /></Cell>
             <Cell><Controller control={control} name={`advances.${i}.narration`} render={({ field: f }) => <RowInput value={String(f.value ?? '')} onChangeText={f.onChange} />} /></Cell>
             <Cell w={40} align="center"><RemoveBtn onPress={() => removeAdv(i)} /></Cell>
@@ -438,10 +508,10 @@ export function BiltyFormScreen() {
           <EmptyRow label="No fuel rows." />
         ) : fuelFields.map((field, i) => (
           <View key={field.id} style={[styles.row, i % 2 === 1 && styles.altRow]}>
-            <Cell w={150}><Controller control={control} name={`fuels.${i}.from_loc`} render={({ field: f }) => <RowInput value={String(f.value ?? '')} onChangeText={f.onChange} />} /></Cell>
+            <Cell w={150}><Controller control={control} name={`fuels.${i}.from_loc`} render={({ field: f }) => <RowInput value={String(f.value ?? '')} onChangeText={f.onChange} filterFn={filterLetters} />} /></Cell>
             <Cell w={120} align="right"><Controller control={control} name={`fuels.${i}.amount`} render={({ field: f }) => <RowInput numeric value={String(f.value ?? '')} onChangeText={(v) => f.onChange(v)} />} /></Cell>
-            <Cell w={140}><Controller control={control} name={`fuels.${i}.doc_no`} render={({ field: f }) => <RowInput value={String(f.value ?? '')} onChangeText={f.onChange} />} /></Cell>
-            <Cell w={140}><Controller control={control} name={`fuels.${i}.doc_date`} render={({ field: f }) => <RowInput placeholder="YYYY-MM-DD" value={String(f.value ?? '')} onChangeText={f.onChange} />} /></Cell>
+            <Cell w={140}><Controller control={control} name={`fuels.${i}.doc_no`} render={({ field: f }) => <RowInput value={String(f.value ?? '')} onChangeText={f.onChange} filterFn={filterAlphanumeric} />} /></Cell>
+            <Cell w={140}><Controller control={control} name={`fuels.${i}.doc_date`} render={({ field: f }) => <RowInput placeholder="YYYY-MM-DD" value={String(f.value ?? '')} onChangeText={f.onChange} filterFn={filterDate} />} /></Cell>
             <Cell />
             <Cell w={40} align="center"><RemoveBtn onPress={() => removeFuel(i)} /></Cell>
           </View>
@@ -517,13 +587,19 @@ function filterDecimal(raw: string): string {
   return parts.length > 2 ? `${parts[0]}.${parts.slice(1).join('')}` : cleaned;
 }
 
-function RowInput({ value, onChangeText, numeric, placeholder, testID, error }: {
+const filterLetters = (v: string) => v.replace(/[^a-zA-Z\s'.\-]/g, '');
+const filterAlphanumeric = (v: string) => v.replace(/[^a-zA-Z0-9\s\-_.\/]/g, '');
+const filterDate = (v: string) => v.replace(/[^0-9\-]/g, '').slice(0, 10);
+
+function RowInput({ value, onChangeText, numeric, placeholder, testID, error, filterFn }: {
   value: string; onChangeText: (v: string) => void; numeric?: boolean;
-  placeholder?: string; testID?: string; error?: string;
+  placeholder?: string; testID?: string; error?: string; filterFn?: (v: string) => string;
 }) {
   const [focused, setFocused] = useState(false);
   const handleChange = (raw: string) => {
-    onChangeText(numeric ? filterDecimal(raw) : raw);
+    if (numeric) onChangeText(filterDecimal(raw));
+    else if (filterFn) onChangeText(filterFn(raw));
+    else onChangeText(raw);
   };
   return (
     <TextInput
@@ -539,7 +615,7 @@ function RowInput({ value, onChangeText, numeric, placeholder, testID, error }: 
         numeric && styles.rowInputRight,
         error ? styles.rowInputError : null,
         focused && styles.rowInputFocused,
-        Platform.OS === 'web' && ({ outline: 'none' } as any),
+        Platform.OS === 'web' && ({ outlineStyle: 'none' } as any),
       ]}
       testID={testID}
     />

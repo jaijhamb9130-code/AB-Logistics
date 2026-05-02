@@ -5,7 +5,7 @@
  *
  * Bearer auth applied router-wide; per-route permission gates follow the
  * read/write split:
- *   - read paths  → freight.read
+ *   - read paths  → freight.access
  *   - generate    → bilty.edit (the side-effect is triggered by a user who
  *                   has write authority over the underlying bilty)
  */
@@ -20,8 +20,8 @@ const { GenerateFreightSchema } = require('../schemas/freight.schema');
 router.use(authMw);
 
 router.post('/generate', requirePermission('bilty.edit'), validate(GenerateFreightSchema), ctrl.generate);
-router.get('/', requirePermission('freight.read'), ctrl.list);
-router.get('/by-bilty/:biltyId', requirePermission('freight.read'), ctrl.getByBiltyId);
-router.get('/:id', requirePermission('freight.read'), ctrl.get);
+router.get('/', requirePermission('freight.access'), ctrl.list);
+router.get('/by-bilty/:biltyId', requirePermission('freight.access'), ctrl.getByBiltyId);
+router.get('/:id', requirePermission('freight.access'), ctrl.get);
 
 module.exports = router;

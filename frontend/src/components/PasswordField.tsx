@@ -19,6 +19,8 @@ interface Props {
   onChangeText: (v: string) => void;
   error?: string | null;
   testID?: string;
+  onSubmitEditing?: () => void;
+  returnKeyType?: 'done' | 'go' | 'next' | 'search' | 'send';
 }
 
 export function PasswordField({
@@ -27,6 +29,8 @@ export function PasswordField({
   onChangeText,
   error,
   testID,
+  onSubmitEditing,
+  returnKeyType = 'go',
 }: Props) {
   const [visible, setVisible] = useState(false);
   return (
@@ -39,6 +43,8 @@ export function PasswordField({
       autoCapitalize="none"
       autoCorrect={false}
       testID={testID}
+      onSubmitEditing={onSubmitEditing}
+      returnKeyType={returnKeyType}
       rightSlot={
         <Pressable
           onPress={() => setVisible((v) => !v)}
