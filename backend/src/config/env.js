@@ -15,4 +15,7 @@ module.exports = {
   JWT_ACCESS_TTL: process.env.JWT_ACCESS_TTL || '15m',
   JWT_REFRESH_TTL: process.env.JWT_REFRESH_TTL || '7d',
   FRONTEND_URL: process.env.FRONTEND_URL || 'http://localhost:8081',
+  // Set COOKIE_SECURE=true ONLY when serving over HTTPS (ALB + ACM cert).
+  // On HTTP, secure cookies are silently dropped by the browser.
+  COOKIE_SECURE: process.env.COOKIE_SECURE === 'true',
 };

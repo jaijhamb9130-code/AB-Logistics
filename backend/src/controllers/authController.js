@@ -12,12 +12,14 @@ const {
 const REFRESH_COOKIE = 'refreshToken';
 const REFRESH_COOKIE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 7d, matches JWT TTL
 
-// T-01-09 mitigation: httpOnly, sameSite=strict, path scoped, secure in prod.
+// T-01-09 mitigation: httpOnly, sameSite=strict, path scoped, secure when configured.
+// COOKIE_SECURE env flag — set to "true" only when HTTPS is in front (ALB+ACM cert).
+// On HTTP-only EB, secure cookies are dropped by the browser, breaking refresh.
 function refreshCookieOptions() {
   return {
     httpOnly: true,
-    sameSite: 'strict',
-    secure: env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    secure: env.COOKIE_SECURE === true,
     path: '/api/auth',
     maxAge: REFRESH_COOKIE_MAX_AGE_MS,
   };
