@@ -1,7 +1,10 @@
 name: Deploy to Elastic Beanstalk
 
 on:
-  workflow_dispatch:  # manual trigger only — run from GitHub Actions tab when AWS is ready
+  push:
+    branches:
+      - master
+  workflow_dispatch:  # also allow manual trigger from Actions tab
 
 jobs:
   deploy:
