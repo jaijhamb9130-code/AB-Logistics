@@ -4,7 +4,11 @@ on:
   push:
     branches:
       - master
-  workflow_dispatch:  # also allow manual trigger from Actions tab
+  workflow_dispatch:
+
+env:
+  BUNDLE_KEY: AB-Logistics-deploy-${{ github.sha }}.zip
+  VERSION_LABEL: AB-Logistics-${{ github.sha }}
 
 jobs:
   deploy:
@@ -29,16 +33,7 @@ jobs:
         run: cd backend && npm install --omit=dev
 
       - name: Create deployment bundle
-        run: |
-          zip -r AB-Logistics-deploy.zip \
-            backend/ \
-            frontend/dist/ \
-            .ebextensions/ \
-            Procfile \
-            package.json \
-            --exclude "backend/node_modules/.cache/*" \
-            --exclude "**/.DS_Store" \
-            --exclude "**/*.log"
+        run: zip -r AB-Logistics-deploy.zip backend frontend/dist .ebextensions Procfile package.json --exclude "backend/node_modules/.cache/*" "**/.DS_Store" "**/*.log"
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -48,26 +43,13 @@ jobs:
           aws-region:            ${{ secrets.AWS_REGION }}
 
       - name: Upload bundle to S3
-        run: |
-          aws s3 cp AB-Logistics-deploy.zip \
-            s3://${{ secrets.EB_S3_BUCKET }}/AB-Logistics-deploy-${{ github.sha }}.zip
+        run: aws s3 cp AB-Logistics-deploy.zip "s3://${{ secrets.EB_S3_BUCKET }}/${{ env.BUNDLE_KEY }}"
 
       - name: Create new EB application version
-        run: |
-          aws elasticbeanstalk create-application-version \
-            --application-name "${{ secrets.EB_APP_NAME }}" \
-            --version-label "AB-Logistics-${{ github.sha }}" \
-            --source-bundle S3Bucket="${{ secrets.EB_S3_BUCKET }}",S3Key="AB-Logistics-deploy-${{ github.sha }}.zip"
+        run: aws elasticbeanstalk create-application-version --application-name "${{ secrets.EB_APP_NAME }}" --version-label "${{ env.VERSION_LABEL }}" --source-bundle S3Bucket="${{ secrets.EB_S3_BUCKET }}",S3Key="${{ env.BUNDLE_KEY }}"
 
       - name: Deploy to EB environment
-        run: |
-          aws elasticbeanstalk update-environment \
-            --application-name "${{ secrets.EB_APP_NAME }}" \
-            --environment-name "${{ secrets.EB_ENV_NAME }}" \
-            --version-label "AB-Logistics-${{ github.sha }}"
+        run: aws elasticbeanstalk update-environment --application-name "${{ secrets.EB_APP_NAME }}" --environment-name "${{ secrets.EB_ENV_NAME }}" --version-label "${{ env.VERSION_LABEL }}"
 
       - name: Wait for deployment to complete
-        run: |
-          aws elasticbeanstalk wait environment-updated \
-            --application-name "${{ secrets.EB_APP_NAME }}" \
-            --environment-names "${{ secrets.EB_ENV_NAME }}"
+        run: aws elasticbeanstalk wait environment-updated --application-name "${{ secrets.EB_APP_NAME }}" --environment-names "${{ secrets.EB_ENV_NAME }}"
