@@ -30,6 +30,12 @@ export const destinationService = {
     await http.put(`${BASE}/${id}`, body);
   },
 
+  // Backend returns 204 on success; 409 { error: 'in_use' } when a downstream
+  // record references the destination.
+  async delete(id: number): Promise<void> {
+    await http.delete(`${BASE}/${id}`);
+  },
+
   // Distinct branch names — feeds Bilty Branch dropdown.
   async listBranches(): Promise<string[]> {
     const { data } = await http.get<string[]>(`${BASE}/branches`);

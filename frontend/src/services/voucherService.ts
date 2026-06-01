@@ -53,8 +53,8 @@ export const voucherService = {
     return data;
   },
 
-  async daybook(date: string): Promise<DaybookEntry[]> {
-    const { data } = await http.get<DaybookEntry[]>(`${BASE}/daybook`, { params: { date } });
+  async daybook(fromDate: string, toDate: string): Promise<DaybookEntry[]> {
+    const { data } = await http.get<DaybookEntry[]>(`${BASE}/daybook`, { params: { date_from: fromDate, date_to: toDate } });
     return data;
   },
 

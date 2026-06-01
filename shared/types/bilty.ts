@@ -6,8 +6,10 @@
 export type Numeric = number | string;
 
 export interface BiltyHeader {
+  bilty_no: string;
   bilty_date?: string | null;
   consignor: string;
+  bill_to?: string | null;
   owner_name?: string | null;
   agent_name?: string | null;
   branch?: string | null;
@@ -30,24 +32,8 @@ export interface BiltyItem {
   inc_rate?: Numeric;
   l_rate?: Numeric;
   e_rate?: Numeric;
-}
-
-export interface AdvanceDetail {
-  id?: number;
-  bilty_id?: number;
-  adv_date?: string | null;
-  adv_from?: string | null;
-  amount: Numeric;
-  narration?: string | null;
-}
-
-export interface FuelDetail {
-  id?: number;
-  bilty_id?: number;
-  from_loc?: string | null;
-  amount: Numeric;
-  doc_no?: string | null;
-  doc_date?: string | null;
+  // Optional logistics tracking field.
+  shipment_no?: string | null;
 }
 
 /** Row shape returned by GET /api/bilty. */
@@ -59,6 +45,7 @@ export interface BiltyListItem {
   truck_no: string;
   item_count: Numeric;
   created_at: string;
+  created_by_username: string | null;
 }
 
 /** Full bilty returned by GET /api/bilty/:id. */
@@ -69,16 +56,12 @@ export interface BiltyDetail extends BiltyHeader {
   created_at: string;
   updated_at: string;
   items: BiltyItem[];
-  advances: AdvanceDetail[];
-  fuels: FuelDetail[];
 }
 
 /** Request body sent to POST /api/bilty. */
 export interface CreateBiltyRequest {
   header: BiltyHeader;
   items: BiltyItem[];
-  advances: AdvanceDetail[];
-  fuels: FuelDetail[];
 }
 
 /** Response body returned by POST /api/bilty (server-generated bilty_no). */

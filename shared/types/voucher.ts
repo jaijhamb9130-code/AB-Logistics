@@ -65,7 +65,7 @@ export interface CreateVoucherRequest {
   vch_type_id?: number | null;
   vch_no?: string | null;
   vch_date?: string | null;          // YYYY-MM-DD
-  party_ledger_id: number;
+  ledger_master_id: number;
   remark?: string | null;
   is_igst?: boolean;
   items?: VoucherItemInput[];
@@ -125,7 +125,7 @@ export interface VoucherBillAllocation {
 
 export interface VoucherDetail extends VoucherListItem {
   vch_type_id: number | null;
-  party_ledger_id: number;
+  ledger_master_id: number;
   deemed_positive: DeemedPositive;
   ledgerEntries: VoucherLedgerEntry[];
   billAllocations: VoucherBillAllocation[];

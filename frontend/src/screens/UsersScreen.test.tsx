@@ -55,7 +55,7 @@ const validRow: UserListItem = {
   id: 42,
   username: 'joe',
   role: 'staff',
-  permissions: ['bilty.read'],
+  permissions: ['bilty.view'],
   is_active: true,
   created_at: '2026-04-18T00:00:00.000Z',
 };
@@ -64,7 +64,7 @@ const validForm = {
   username: 'joe',
   password: 'longenough',
   role: 'staff' as const,
-  permissions: ['bilty.read'] as const,
+  permissions: ['bilty.view'] as const,
 };
 
 function makeCallbacks() {
@@ -123,7 +123,7 @@ describe('handleCreateUserSubmit — happy path', () => {
       username: 'joe', // trimmed
       password: 'longenough',
       role: 'staff',
-      permissions: ['bilty.read'],
+      permissions: ['bilty.view'],
     });
     expect(cb.reloadList).toHaveBeenCalledTimes(1);
     expect(cb.onSuccess).toHaveBeenCalledWith(validRow);
@@ -221,7 +221,7 @@ const staffRow: UserListItem = {
   id: 42,
   username: 'joe',
   role: 'staff',
-  permissions: ['bilty.read'],
+  permissions: ['bilty.view'],
   is_active: true,
   created_at: '2026-04-18T00:00:00.000Z',
 };
@@ -273,14 +273,14 @@ describe('handleEditUserSubmit — empty password means no change', () => {
 
     await handleEditUserSubmit(
       staffRow,
-      { password: '', role: 'staff', permissions: ['bilty.read'] },
+      { password: '', role: 'staff', permissions: ['bilty.view'] },
       cb
     );
 
     expect(userService.update).toHaveBeenCalledTimes(1);
     const [id, body] = userService.update.mock.calls[0];
     expect(id).toBe(42);
-    expect(body).toEqual({ role: 'staff', permissions: ['bilty.read'] });
+    expect(body).toEqual({ role: 'staff', permissions: ['bilty.view'] });
     expect(Object.prototype.hasOwnProperty.call(body, 'password')).toBe(false);
   });
 });
@@ -295,14 +295,14 @@ describe('handleEditUserSubmit — non-empty password is sent', () => {
 
     await handleEditUserSubmit(
       staffRow,
-      { password: 'newpass12', role: 'staff', permissions: ['bilty.read'] },
+      { password: 'newpass12', role: 'staff', permissions: ['bilty.view'] },
       cb
     );
 
     const [, body] = userService.update.mock.calls[0];
     expect(body).toEqual({
       role: 'staff',
-      permissions: ['bilty.read'],
+      permissions: ['bilty.view'],
       password: 'newpass12',
     });
   });
@@ -319,7 +319,7 @@ describe('handleEditUserSubmit — happy path in-place update', () => {
 
     await handleEditUserSubmit(
       staffRow,
-      { password: '', role: 'admin', permissions: ['bilty.read'] },
+      { password: '', role: 'admin', permissions: ['bilty.view'] },
       cb
     );
 
@@ -342,7 +342,7 @@ describe('handleEditUserSubmit — 409 username_taken', () => {
 
     await handleEditUserSubmit(
       staffRow,
-      { password: '', role: 'staff', permissions: ['bilty.read'], username: 'existing' },
+      { password: '', role: 'staff', permissions: ['bilty.view'], username: 'existing' },
       cb
     );
 
@@ -363,7 +363,7 @@ describe('handleEditUserSubmit — invalid password is caught client-side', () =
 
     await handleEditUserSubmit(
       staffRow,
-      { password: 'short', role: 'staff', permissions: ['bilty.read'] },
+      { password: 'short', role: 'staff', permissions: ['bilty.view'] },
       cb
     );
 
@@ -467,7 +467,7 @@ const inactiveRow: UserListItem = {
   id: 42,
   username: 'joe',
   role: 'staff',
-  permissions: ['bilty.read', 'freight.read'],
+  permissions: ['bilty.view', 'freight.view'],
   is_active: false,
   created_at: '2026-04-18T00:00:00.000Z',
 };

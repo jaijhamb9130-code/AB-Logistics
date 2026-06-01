@@ -79,7 +79,7 @@ describe('validatePermissions', () => {
   });
 
   it('returns null for a single permission', () => {
-    expect(validatePermissions(['bilty.read'])).toBeNull();
+    expect(validatePermissions(['bilty.view'])).toBeNull();
   });
 
   it('accepts wildcard', () => {
@@ -92,16 +92,16 @@ describe('validateCreateUser', () => {
     username: 'good',
     password: 'longenough',
     role: 'staff' as const,
-    permissions: ['bilty.read'] as const,
+    permissions: ['bilty.view'] as const,
   };
 
   it('returns empty object for valid input', () => {
-    expect(validateCreateUser({ ...valid, permissions: ['bilty.read'] })).toEqual({});
+    expect(validateCreateUser({ ...valid, permissions: ['bilty.view'] })).toEqual({});
   });
 
   it('flags empty username', () => {
     expect(
-      validateCreateUser({ ...valid, username: '', permissions: ['bilty.read'] })
+      validateCreateUser({ ...valid, username: '', permissions: ['bilty.view'] })
     ).toEqual({ username: 'required' });
   });
 
@@ -113,13 +113,13 @@ describe('validateCreateUser', () => {
 
   it('flags missing role', () => {
     expect(
-      validateCreateUser({ ...valid, role: '', permissions: ['bilty.read'] })
+      validateCreateUser({ ...valid, role: '', permissions: ['bilty.view'] })
     ).toEqual({ role: 'invalid_value' });
   });
 
   it('flags short password', () => {
     expect(
-      validateCreateUser({ ...valid, password: 'short', permissions: ['bilty.read'] })
+      validateCreateUser({ ...valid, password: 'short', permissions: ['bilty.view'] })
     ).toEqual({ password: 'too_short' });
   });
 
@@ -181,7 +181,7 @@ describe('validateUpdateUser', () => {
       validateUpdateUser({
         username: 'ok.user',
         role: 'staff',
-        permissions: ['bilty.read'],
+        permissions: ['bilty.view'],
       })
     ).toEqual({});
   });

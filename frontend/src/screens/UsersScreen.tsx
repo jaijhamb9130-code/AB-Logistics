@@ -35,10 +35,38 @@ import { Modal } from '../components/Modal';
 import { PasswordField } from '../components/PasswordField';
 import { PermissionPicker } from '../components/PermissionPicker';
 import { useAuth } from '../context/AuthContext';
+import { canAccessTab, canDoAction } from '../navigation/guards';
 import {
-  PERMISSION_LABELS,
+  PAGE_LABELS,
+  PERMISSION_PAGES,
   ROLE_OPTIONS,
 } from '../constants/roles';
+
+// Compact permission cell — groups perms by page so "bilty.view + bilty.edit"
+// renders as "Bilty (V,E)" instead of repeating the page name once per action.
+// Page order matches the PermissionPicker (i.e. the order in PERMISSION_PAGES)
+// so the column reads top-to-bottom in the same sequence as the form.
+function formatPermissionsCompact(perms: string[]): string {
+  if (perms.length === 0) return '—';
+  if (perms.includes('*')) return 'All Permissions';
+  // Action → initial in fixed V,C,E,D order.
+  const ACTION_ORDER: Array<{ key: string; initial: string }> = [
+    { key: 'view',   initial: 'V' },
+    { key: 'create', initial: 'C' },
+    { key: 'edit',   initial: 'E' },
+    { key: 'delete', initial: 'D' },
+  ];
+  const granted = new Set(perms);
+  const out: string[] = [];
+  for (const page of PERMISSION_PAGES) {
+    const initials = ACTION_ORDER
+      .filter((a) => granted.has(`${page}.${a.key}`))
+      .map((a) => a.initial)
+      .join(',');
+    if (initials) out.push(`${PAGE_LABELS[page]} (${initials})`);
+  }
+  return out.length > 0 ? out.join(', ') : '—';
+}
 import { colors, radius, spacing, text, typography } from '../constants/theme';
 import { userService } from '../services/userService';
 import {
@@ -77,6 +105,7 @@ const FIELD_ERROR_COPY: Record<string, string> = {
 
 export function UsersScreen() {
   const { user: currentUser } = useAuth();
+  const canAccess = canAccessTab('Users', currentUser);
 
   // ---- List state (null = first-load in flight) ----
   const [rows, setRows] = useState<UserListItem[] | null>(null);
@@ -108,6 +137,10 @@ export function UsersScreen() {
   const [activateTarget, setActivateTarget] = useState<UserListItem | null>(null);
   const [activating, setActivating] = useState(false);
 
+  // ---- Hard delete confirm state ----
+  const [deleteTarget, setDeleteTarget] = useState<UserListItem | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
   // ---- Load / refresh ----
   const load = useCallback(async () => {
     setListError(null);
@@ -121,8 +154,9 @@ export function UsersScreen() {
   }, []);
 
   useEffect(() => {
+    if (!canAccess) return;
     load();
-  }, [load]);
+  }, [load, canAccess]);
 
   // ---- Modal open/close ----
   const openModal = useCallback(() => {
@@ -235,6 +269,42 @@ export function UsersScreen() {
     });
   }, [activateTarget, replaceRow, load]);
 
+  // ---- Hard delete flow ----
+  // Backend gates this on admin role + cannot delete self/admins, and returns
+  // 409 in_use when FK from `created_by` columns prevents deletion. The UI
+  // surfaces both as alerts; suggests deactivate as the alternative.
+  const openDelete = useCallback(
+    (r: UserListItem) => {
+      if (isSelf(currentUser, r)) return;
+      setDeleteTarget(r);
+    },
+    [currentUser],
+  );
+
+  const onDeleteConfirm = useCallback(async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      await userService.delete(deleteTarget.id);
+      setDeleteTarget(null);
+      await load();
+    } catch (err: any) {
+      const code = err?.response?.data?.error;
+      const message =
+        code === 'in_use'
+          ? 'This user has authored records and cannot be deleted. Deactivate the user instead.'
+          : code === 'cannot_delete_admin'
+            ? 'Admin accounts cannot be deleted.'
+            : code === 'self_lockout_forbidden'
+              ? 'You cannot delete your own account.'
+              : 'Could not delete user. Try again.';
+      Alert.alert('Delete failed', message);
+      setDeleteTarget(null);
+    } finally {
+      setDeleting(false);
+    }
+  }, [deleteTarget, load]);
+
   // ---- Columns (exact keys + order per plan) ----
   const columns: Column<UserListItem>[] = [
     { key: 'username', label: 'Username', width: 180, render: (r) => r.username },
@@ -242,10 +312,7 @@ export function UsersScreen() {
     {
       key: 'permissions',
       label: 'Permissions',
-      render: (r) =>
-        r.permissions.length > 0
-          ? r.permissions.map((p) => PERMISSION_LABELS[p]).join(', ')
-          : '—',
+      render: (r) => formatPermissionsCompact(r.permissions),
     },
     {
       key: 'is_active',
@@ -268,50 +335,98 @@ export function UsersScreen() {
     {
       key: 'actions',
       label: '',
-      width: 180,
+      width: 260,
       align: 'right',
       render: (r) => {
         const self = isSelf(currentUser, r);
+        const actorIsAdmin = currentUser?.role === 'admin';
+        const targetIsAdmin = r.role === 'admin';
+        // Only admins can deactivate, and admin accounts can never be deactivated.
+        const deactivateBlocked = self || !actorIsAdmin || targetIsAdmin;
+        const blockedReason = self
+          ? 'You cannot deactivate your own account'
+          : targetIsAdmin
+            ? 'Admin accounts cannot be deactivated'
+            : 'Only admins can deactivate users';
+
+        // Hard delete is admin-only and cannot target self or another admin.
+        const deleteBlocked = self || !actorIsAdmin || targetIsAdmin;
+        const deleteBlockedReason = self
+          ? 'You cannot delete your own account'
+          : targetIsAdmin
+            ? 'Admin accounts cannot be deleted'
+            : 'Only admins can delete users';
+
+        const canEdit = canDoAction(currentUser, 'user', 'edit');
+        // Soft (de/activate) historically reused the `delete` perm; hard delete
+        // also uses it so the button only appears for users with `user.delete`.
+        const canDelete = canDoAction(currentUser, 'user', 'delete');
+
         return (
           <View style={styles.rowActions}>
-            <Pressable
-              onPress={() => openEdit(r)}
-              accessibilityRole="button"
-              accessibilityLabel={`Edit ${r.username}`}
-              testID={`edit-${r.id}`}
-            >
-              <Text style={styles.editAction}>Edit</Text>
-            </Pressable>
-            {r.is_active ? (
+            {canEdit ? (
               <Pressable
-                onPress={() => openDeactivate(r)}
-                disabled={self}
+                onPress={() => openEdit(r)}
+                accessibilityRole="button"
+                accessibilityLabel={`Edit ${r.username}`}
+                testID={`edit-${r.id}`}
+              >
+                <Text style={styles.editAction}>Edit</Text>
+              </Pressable>
+            ) : null}
+            {r.is_active ? (
+              canDelete && (
+                <Pressable
+                  onPress={() => openDeactivate(r)}
+                  disabled={deactivateBlocked}
+                  accessibilityRole="button"
+                  accessibilityLabel={
+                    deactivateBlocked ? blockedReason : `Deactivate ${r.username}`
+                  }
+                  accessibilityState={{ disabled: deactivateBlocked }}
+                  testID={`deactivate-${r.id}`}
+                >
+                  <Text
+                    style={[
+                      styles.deactivateAction,
+                      deactivateBlocked && styles.actionDisabled,
+                    ]}
+                  >
+                    Deactivate
+                  </Text>
+                </Pressable>
+              )
+            ) : (
+              canDelete && (
+                <Pressable
+                  onPress={() => openActivate(r)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Activate ${r.username}`}
+                  testID={`activate-${r.id}`}
+                >
+                  <Text style={styles.activateAction}>Activate</Text>
+                </Pressable>
+              )
+            )}
+            {canDelete && (
+              <Pressable
+                onPress={() => openDelete(r)}
+                disabled={deleteBlocked}
                 accessibilityRole="button"
                 accessibilityLabel={
-                  self
-                    ? 'You cannot deactivate your own account'
-                    : `Deactivate ${r.username}`
+                  deleteBlocked ? deleteBlockedReason : `Delete ${r.username}`
                 }
-                accessibilityState={{ disabled: self }}
-                testID={`deactivate-${r.id}`}
+                accessibilityState={{ disabled: deleteBlocked }}
+                testID={`delete-${r.id}`}
               >
                 <Text
                   style={[
-                    styles.deactivateAction,
-                    self && styles.actionDisabled,
+                    styles.deleteAction,
+                    deleteBlocked && styles.actionDisabled,
                   ]}
                 >
-                  Deactivate
+                  Delete
                 </Text>
-              </Pressable>
-            ) : (
-              <Pressable
-                onPress={() => openActivate(r)}
-                accessibilityRole="button"
-                accessibilityLabel={`Activate ${r.username}`}
-                testID={`activate-${r.id}`}
-              >
-                <Text style={styles.activateAction}>Activate</Text>
               </Pressable>
             )}
           </View>
@@ -321,13 +436,30 @@ export function UsersScreen() {
   ];
 
   // ---- Render ----
+  if (!canAccess) {
+    return (
+      <View style={styles.wrap}>
+        <View style={styles.header}>
+          <Text style={styles.title}>Users</Text>
+        </View>
+        <View style={styles.errorBanner}>
+          <Text style={styles.errorBannerText}>
+            You don't have permission to view this page.
+          </Text>
+        </View>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.wrap}>
       <View style={styles.header}>
         <Text style={styles.title}>Users</Text>
-        <View style={styles.headerBtn}>
-          <ButtonPrimary title="New User" onPress={openModal} testID="new-user-btn" />
-        </View>
+        {canDoAction(currentUser, 'user', 'create') && (
+          <View style={styles.headerBtn}>
+            <ButtonPrimary title="New User" onPress={openModal} testID="new-user-btn" />
+          </View>
+        )}
       </View>
 
       {listError ? (
@@ -467,6 +599,23 @@ export function UsersScreen() {
         onCancel={() => setActivateTarget(null)}
         onConfirm={onActivateConfirm}
         testID="activate-confirm"
+      />
+
+      {/* ----- Hard Delete Confirm Dialog ----- */}
+      <ConfirmDialog
+        visible={!!deleteTarget}
+        title="Delete user"
+        message={
+          deleteTarget
+            ? `Permanently delete ${deleteTarget.username}? This cannot be undone. If they have created records, the delete will be blocked — deactivate instead.`
+            : ''
+        }
+        confirmLabel="Delete"
+        danger
+        loading={deleting}
+        onCancel={() => setDeleteTarget(null)}
+        onConfirm={onDeleteConfirm}
+        testID="delete-confirm"
       />
 
       {/* ----- New User Modal ----- */}
@@ -728,6 +877,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.xs,
     minWidth: 88,
+    textAlign: 'right',
+  },
+  deleteAction: {
+    ...text.action,
+    color: colors.danger,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    minWidth: 60,
     textAlign: 'right',
   },
   actionDisabled: {

@@ -27,16 +27,31 @@ import { AutocompleteField } from '../components/AutocompleteField';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { colors, radius, spacing, text, typography } from '../constants/theme';
 import { ledgerGroupService } from '../services/ledgerGroupService';
+import { ledgerMasterService } from '../services/ledgerMasterService';
 import { validateRequired } from '../utils/masterValidators';
 import type { LedgerGroupItem } from '../../../shared/types/ledgerGroup';
+import { useAuth } from '../context/AuthContext';
+import { canDoAction } from '../navigation/guards';
 
-const SYSTEM_IDS = new Set<number>([1, 2, 3]);
+// Accounting-standard groups that the user shouldn't delete by accident.
+// Compared by name so the protection survives id reshuffles.
+const SYSTEM_GROUP_NAMES = new Set<string>([
+  'Sales Accounts',
+  'Purchase Accounts',
+  'Duties & Taxes',
+  'Indirect Income',
+  'Bank Accounts',
+  'Cash-in-Hand',
+  'Direct Expenses',
+  'Sundry Debtors',
+]);
 
 const EMPTY_FORM = { group_name: '', parent_name: '' };
 type FormState = typeof EMPTY_FORM;
 type FormErrors = Partial<Record<keyof FormState, string>>;
 
 export function LedgerGroupsScreen() {
+  const { user } = useAuth();
   const [rows, setRows] = useState<LedgerGroupItem[] | null>(null);
   const [listError, setListError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
@@ -81,6 +96,20 @@ export function LedgerGroupsScreen() {
       .map((r) => r.group_name)
       .sort();
   }, [rows, editTarget]);
+
+  const [ledgerMasterOptions, setLedgerMasterOptions] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (form.group_name.length >= 3) {
+      ledgerMasterService.search(undefined, form.group_name)
+        .then(res => {
+          setLedgerMasterOptions(res.map(r => r.name));
+        })
+        .catch(() => { });
+    } else {
+      setLedgerMasterOptions([]);
+    }
+  }, [form.group_name]);
 
   const openCreate = useCallback(() => {
     setEditTarget(null);
@@ -148,13 +177,16 @@ export function LedgerGroupsScreen() {
       closeModal();
     } catch (err: any) {
       const code = err?.response?.data?.error;
+      const serverMessage = err?.response?.data?.message;
+      // Prefer the server's specific message when it includes the conflicting
+      // name (e.g. "Group 'Owner' already exists. Pick a different name.").
       const codeMap: Record<string, string> = {
         name_taken: 'A ledger group with that name already exists.',
         invalid_name: 'Ledger name is required.',
         parent_not_found: 'The selected parent group no longer exists.',
         cannot_be_self_parent: 'A group cannot be its own parent.',
       };
-      setFormError(codeMap[code] || 'Could not save. Try again.');
+      setFormError(serverMessage || codeMap[code] || 'Could not save. Try again.');
     } finally {
       setSaving(false);
     }
@@ -198,33 +230,37 @@ export function LedgerGroupsScreen() {
     {
       key: 'actions', label: 'Actions', width: 130, align: 'right',
       render: (r) => {
-        const isSystem = SYSTEM_IDS.has(r.id);
+        const isSystem = SYSTEM_GROUP_NAMES.has(r.group_name);
         return (
           <View style={styles.rowActions}>
-            <Pressable
-              onPress={() => openEdit(r)}
-              accessibilityRole="button"
-              accessibilityLabel={`Edit ${r.group_name}`}
-              testID={`edit-group-${r.id}`}
-            >
-              <Text style={styles.editAction}>Edit</Text>
-            </Pressable>
-            <Pressable
-              onPress={() => !isSystem && setDeleteTarget(r)}
-              disabled={isSystem}
-              accessibilityRole="button"
-              accessibilityLabel={
-                isSystem
-                  ? `${r.group_name} is a system group and cannot be deleted`
-                  : `Delete ${r.group_name}`
-              }
-              accessibilityState={{ disabled: isSystem }}
-              testID={`delete-group-${r.id}`}
-            >
-              <Text style={[styles.deleteAction, isSystem && styles.actionDisabled]}>
-                Delete
-              </Text>
-            </Pressable>
+            {canDoAction(user, 'ledgergroup', 'edit') && (
+              <Pressable
+                onPress={() => openEdit(r)}
+                accessibilityRole="button"
+                accessibilityLabel={`Edit ${r.group_name}`}
+                testID={`edit-group-${r.id}`}
+              >
+                <Text style={styles.editAction}>Edit</Text>
+              </Pressable>
+            )}
+            {canDoAction(user, 'ledgergroup', 'delete') && (
+              <Pressable
+                onPress={() => !isSystem && setDeleteTarget(r)}
+                disabled={isSystem}
+                accessibilityRole="button"
+                accessibilityLabel={
+                  isSystem
+                    ? `${r.group_name} is a system group and cannot be deleted`
+                    : `Delete ${r.group_name}`
+                }
+                accessibilityState={{ disabled: isSystem }}
+                testID={`delete-group-${r.id}`}
+              >
+                <Text style={[styles.deleteAction, isSystem && styles.actionDisabled]}>
+                  Delete
+                </Text>
+              </Pressable>
+            )}
           </View>
         );
       },
@@ -237,13 +273,15 @@ export function LedgerGroupsScreen() {
         <Text style={styles.title}>Ledger Groups</Text>
         <View style={styles.headerActions}>
           <SyncButton onSync={onSync} testID="sync-ledger-groups-btn" />
-          <View style={styles.newBtn}>
-            <ButtonPrimary
-              title="Create Ledger Group"
-              onPress={openCreate}
-              testID="new-ledger-group-btn"
-            />
-          </View>
+          {canDoAction(user, 'ledgergroup', 'create') && (
+            <View style={styles.newBtn}>
+              <ButtonPrimary
+                title="Create Ledger Group"
+                onPress={openCreate}
+                testID="new-ledger-group-btn"
+              />
+            </View>
+          )}
         </View>
       </View>
 
@@ -290,16 +328,17 @@ export function LedgerGroupsScreen() {
         title={editTarget ? 'Edit Ledger Group' : 'Create Ledger Group'}
         testID="ledger-group-modal"
       >
-        <ScrollView style={styles.formScroll} contentContainerStyle={styles.formContent}>
+        <View style={[styles.formScroll, styles.formContent, { zIndex: 10 }]}>
           {formError ? (
             <View style={styles.formError}>
               <Text style={styles.formErrorText}>{formError}</Text>
             </View>
           ) : null}
 
-          <InputField
+          <AutocompleteField
             label="Ledger Name *"
             value={form.group_name}
+            options={ledgerMasterOptions}
             onChangeText={(v) => setForm((f) => ({ ...f, group_name: v }))}
             error={errs.group_name ?? null}
             placeholder="e.g. Sundry Debtors"
@@ -311,7 +350,7 @@ export function LedgerGroupsScreen() {
             value={form.parent_name}
             options={parentOptions}
             onChangeText={(v) => setForm((f) => ({ ...f, parent_name: v }))}
-            placeholder="Type 3 letters... (leave blank for Primary)"
+            placeholder="(leave blank for Primary)"
             testID="ledger-group-parent-input"
           />
 
@@ -328,7 +367,7 @@ export function LedgerGroupsScreen() {
               />
             </View>
           </View>
-        </ScrollView>
+        </View>
       </Modal>
 
       {/* ---- Delete confirm ---- */}

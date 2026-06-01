@@ -3,7 +3,7 @@ export * from './auth';
 export * from './bilty';
 export * from './freight';
 export * from './report';
-export * from './partyLedger';
+export * from './ledgerMaster';
 export * from './ledgerGroup';
 export * from './itemMaster';
 export * from './vehicleMaster';

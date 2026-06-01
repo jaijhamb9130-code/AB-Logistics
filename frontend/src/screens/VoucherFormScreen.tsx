@@ -21,15 +21,16 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
+import { useFocusEffect, useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { ButtonPrimary } from '../components/ButtonPrimary';
 import { Loader } from '../components/Loader';
 import { Modal } from '../components/Modal';
+import { SelectDropdown } from '../components/SelectDropdown';
 import { colors, radius, spacing, text, typography } from '../constants/theme';
 import { voucherService } from '../services/voucherService';
 import { vchTypeService } from '../services/vchTypeService';
-import { partyLedgerService } from '../services/partyLedgerService';
+import { ledgerMasterService } from '../services/ledgerMasterService';
 import { itemMasterService } from '../services/itemMasterService';
 import type {
   CreateVoucherRequest,
@@ -39,8 +40,11 @@ import type {
   VoucherDetail,
 } from '../../../shared/types/voucher';
 import type { ItemMasterItem } from '../../../shared/types/itemMaster';
-import type { PartyLedgerSearchResult } from '../../../shared/types/partyLedger';
+import type { LedgerMasterSearchResult } from '../../../shared/types/ledgerMaster';
 import type { BillingStackParamList } from '../navigation/types';
+import { useAuth } from '../context/AuthContext';
+import { canDoAction } from '../navigation/guards';
+import { useResponsive } from '../hooks/useResponsive';
 
 const HOME_STATE = 'Assam';
 
@@ -125,7 +129,9 @@ function applyGst(line: LineItem, isIgst: boolean): LineItem {
 }
 
 function fmt(n: number): string {
-  return Number.isFinite(n) ? n.toFixed(2) : '0.00';
+  if (!Number.isFinite(n)) return '0';
+  const s = n.toFixed(2);
+  return s.endsWith('.00') ? s.slice(0, -3) : s;
 }
 
 function fmtDateDDMMYYYY(iso: string): string {
@@ -145,10 +151,20 @@ function parseDateDDMMYYYY(s: string): string {
 // ─── Component ──────────────────────────────────────────────────────────────
 
 export function VoucherFormScreen() {
+  const { user: currentUser } = useAuth();
   const navigation = useNavigation<Nav>();
   const route = useRoute<Route>();
   const editId = route.params?.id ?? null;
   const isEdit = editId !== null;
+  const { isMobile } = useResponsive();
+
+  const canSave = isEdit
+    ? canDoAction(currentUser, 'voucher', 'edit')
+    : canDoAction(currentUser, 'voucher', 'create');
+
+  // The voucher's quick-add-party flow creates Sundry Debtors customers,
+  // so gate it on the Customers page permission.
+  const canCreateParty = canDoAction(currentUser, 'customermaster', 'create');
 
   // ── Master data
   const [vchTypes, setVchTypes] = useState<VchType[]>([]);
@@ -169,7 +185,7 @@ export function VoucherFormScreen() {
   const [partyName, setPartyName] = useState('');
   const [partyState, setPartyState] = useState('');
   const [partySearch, setPartySearch] = useState('');
-  const [partySuggestions, setPartySuggestions] = useState<PartyLedgerSearchResult[]>([]);
+  const [partySuggestions, setPartySuggestions] = useState<LedgerMasterSearchResult[]>([]);
   const [partyDropOpen, setPartyDropOpen] = useState(false);
   const [isIgst, setIsIgst] = useState(false);
   const [billByBill, setBillByBill] = useState(false);
@@ -218,6 +234,65 @@ export function VoucherFormScreen() {
       setCommittedVchTypeId(vchTypeId);
     }
   }, [vchTypeId, committedVchTypeId]);
+
+  // Wipe everything the user typed into the form. Called when:
+  //   1. The active VCH TYPE changes (Sales → Purchase etc.) — each type
+  //      should be its own clean form.
+  //   2. The screen regains focus after the user navigated away — unsaved
+  //      drafts shouldn't survive a tab change.
+  // Does NOT touch vchTypeId, vchDate, vchTypes, isEdit-loaded data.
+  const resetVoucherForm = useCallback(() => {
+    setPartyId(null);
+    setPartyName('');
+    setPartyState('');
+    setPartySearch('');
+    setPartySuggestions([]);
+    setPartyDropOpen(false);
+    setIsIgst(false);
+    setBillByBill(false);
+    setLines([emptyLine()]);
+    setLedgerRows([]);
+    setJournalRows([emptyJournalRow(), emptyJournalRow()]);
+    setBillRefs([]);
+    setBillOpen(false);
+    setPendingRefs([]);
+    setBatchLineIdx(null);
+    setBatchDraft([]);
+    setAddPartyOpen(false);
+    setPartyHighlight(0);
+    setRemark('');
+    setVchNo('');
+    setError(null);
+  }, []);
+
+  // Reset the form on EVERY VCH TYPE change (arrow preview OR Enter commit).
+  // Whatever was typed on the previous type is dropped — switching pages and
+  // coming back gives a clean slate every time. Skips the initial seed and
+  // edit mode.
+  const prevVchTypeIdRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (isEdit) {
+      prevVchTypeIdRef.current = vchTypeId;
+      return;
+    }
+    const prev = prevVchTypeIdRef.current;
+    if (prev === null) {
+      prevVchTypeIdRef.current = vchTypeId;
+      return;
+    }
+    if (vchTypeId !== prev) {
+      resetVoucherForm();
+      prevVchTypeIdRef.current = vchTypeId;
+    }
+  }, [vchTypeId, isEdit, resetVoucherForm]);
+
+  // Page-level navigation: leaving the Voucher screen and re-entering wipes
+  // the form so the user comes back to a clean draft.
+  useFocusEffect(
+    useCallback(() => {
+      if (!isEdit) resetVoucherForm();
+    }, [isEdit, resetVoucherForm])
+  );
   // Ref to the hidden <input type="date"> so the visible calendar icon can
   // call showPicker() and pop the native date picker open on tap.
   const dateInputRef = useRef<any>(null);
@@ -286,7 +361,7 @@ export function VoucherFormScreen() {
       setVchDate(iso);
       setVchDateText(fmtDateDDMMYYYY(iso));
       setRemark(v.remark || '');
-      setPartyId(v.party_ledger_id);
+      setPartyId(v.ledger_master_id);
       setPartyName(v.party_name || '');
 
       const dp = v.deemed_positive;
@@ -325,7 +400,7 @@ export function VoucherFormScreen() {
         const taxNames = /^(cgst|sgst|igst|roundoff)$/i;
         const manual = v.ledgerEntries.filter(
           (le) => le.id !== goodsLedId
-            && le.ledger_id !== v.party_ledger_id
+            && le.ledger_id !== v.ledger_master_id
             && !taxNames.test(String(le.ledger_name || ''))
         );
         setLedgerRows(
@@ -360,11 +435,12 @@ export function VoucherFormScreen() {
     return () => { cancelled = true; };
   }, [isEdit, editId]);
 
-  // ── Party autocomplete (debounced 250ms). Inventory mode → Sundry-Debtor only.
+  // ── Ledger autocomplete (debounced 250ms). Searches across ALL ledger
+  // groups so any saved ledger name shows up in the dropdown.
   useEffect(() => {
     if (partySearch.length < 2) { setPartySuggestions([]); return; }
     const t = setTimeout(() => {
-      partyLedgerService.search(1, partySearch)
+      ledgerMasterService.search(undefined, partySearch)
         .then((rows) => setPartySuggestions(rows))
         .catch(() => setPartySuggestions([]));
     }, 250);
@@ -387,7 +463,7 @@ export function VoucherFormScreen() {
   //                  the first form field.
   useEffect(() => {
     if (Platform.OS !== 'web') return;
-    const types = vchTypes.filter((t) => t.is_system);
+    const types = vchTypes.filter((t) => t.is_system && t.name.toLowerCase() !== 'bilty');
     if (types.length === 0) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented) return;
@@ -447,14 +523,14 @@ export function VoucherFormScreen() {
     return () => document.removeEventListener('keydown', onKey, true);
   }, [partyDropOpen, partySuggestions, partyHighlight]);
 
-  const selectParty = async (p: PartyLedgerSearchResult) => {
+  const selectParty = async (p: LedgerMasterSearchResult) => {
     setPartyId(p.id);
     setPartyName(p.name);
     setPartySearch('');
     setPartyDropOpen(false);
     setBillRefs([]);
     try {
-      const full = await partyLedgerService.get(p.id);
+      const full = await ledgerMasterService.get(p.id);
       const st = full.state || '';
       setPartyState(st);
       setIsIgst(st ? st.toLowerCase() !== HOME_STATE.toLowerCase() : false);
@@ -607,7 +683,7 @@ export function VoucherFormScreen() {
         vch_type_id: vchTypeId,
         vch_no: vchNo || null,
         vch_date: vchDate || null,
-        party_ledger_id: anchorId,
+        ledger_master_id: anchorId,
         remark: remark.trim() || null,
         items: [],
         ledgers: valid.map((r) => ({
@@ -626,7 +702,7 @@ export function VoucherFormScreen() {
         vch_type_id: vchTypeId,
         vch_no: vchNo || null,
         vch_date: vchDate || null,
-        party_ledger_id: partyId,
+        ledger_master_id: partyId,
         remark: remark.trim() || null,
         is_igst: isIgst,
         items: validLines.map((l) => ({
@@ -645,10 +721,19 @@ export function VoucherFormScreen() {
     try {
       if (isEdit && editId !== null) {
         await voucherService.update(editId, payload);
+        // Edits go back to wherever the user came from (typically the list).
+        navigation.goBack();
       } else {
         await voucherService.create(payload);
+        // After creating a new voucher, stay on the form with a clean draft
+        // so the user can keep entering vouchers of the same type. Refetch
+        // the next voucher number explicitly — the vchTypeId effect won't
+        // re-run because vchTypeId didn't change.
+        resetVoucherForm();
+        if (vchTypeId !== null) {
+          voucherService.nextNo(vchTypeId).then(setVchNo).catch(() => { /* ignore */ });
+        }
       }
-      navigation.goBack();
     } catch (e: any) {
       setError(e?.response?.data?.message || e?.message || 'Save failed');
     } finally {
@@ -656,12 +741,35 @@ export function VoucherFormScreen() {
     }
   };
 
-  if (loading) return <Loader />;
+  // Hard guard: if the user can't actually use this form (no create perm
+  // when creating, no edit perm when editing), bounce them to a page they
+  // CAN use. Prevents the empty form from being reachable at all.
+  useEffect(() => {
+    if (canSave) return;
+    if (
+      canDoAction(currentUser, 'daybook', 'view') ||
+      canDoAction(currentUser, 'voucher', 'view')
+    ) {
+      navigation.replace('Daybook');
+      return;
+    }
+    // No daybook either — pop back out of the Billing stack entirely.
+    if (navigation.canGoBack()) navigation.goBack();
+  }, [canSave, currentUser, navigation]);
+
+  if (loading || !canSave) return <Loader />;
 
   // ─── Render ────────────────────────────────────────────────────────────────
   return (
     <View style={styles.shell}>
-      <ScrollView style={styles.wrap} contentContainerStyle={styles.content}>
+      <ScrollView
+        style={styles.wrap}
+        contentContainerStyle={[
+          styles.content,
+          isMobile && { paddingRight: spacing.md, paddingLeft: spacing.md, paddingTop: spacing.md },
+        ]}
+      >
+        <View style={styles.formCard}>
         <Text style={styles.pageTitle}>Vouchers</Text>
 
         {/* HEADER — Type dropdown · Voucher No · Voucher Date */}
@@ -687,7 +795,7 @@ export function VoucherFormScreen() {
               <>
                 <Pressable style={styles.menuScrim} onPress={() => setTypeMenuOpen(false)} />
                 <View style={styles.selectMenu}>
-                  {vchTypes.filter((t) => t.is_system).map((t) => {
+                  {vchTypes.filter((t) => t.is_system && t.name.toLowerCase() !== 'bilty').map((t) => {
                     const active = vchTypeId === t.id;
                     return (
                       <Pressable
@@ -711,7 +819,8 @@ export function VoucherFormScreen() {
               onChangeText={setVchNo}
               placeholder="P-001"
               placeholderTextColor={colors.textMuted}
-              style={styles.input}
+              style={[styles.input, !canSave && styles.inputDisabled]}
+              editable={canSave}
             />
           </View>
 
@@ -719,8 +828,37 @@ export function VoucherFormScreen() {
 
           <View style={[styles.field, styles.headerCol]}>
             <Text style={styles.fieldLabel}>Voucher Date</Text>
-            <View style={styles.dateWrap}>
-              {/* Visible field — Pressable so clicks reliably fire openDatePicker(). */}
+            {Platform.OS === 'web' ? (
+              // Real <input type="date"> — browser renders its own calendar
+              // icon at the right edge. The picker only opens via that icon
+              // (or keyboard shortcut), and the date segments accept manual
+              // typing. Same approach the Daybook screen uses.
+              React.createElement('input', {
+                ref: dateInputRef,
+                type: 'date',
+                value: vchDate,
+                disabled: !canSave,
+                onChange: (e: any) => {
+                  const v = e?.target?.value || '';
+                  setVchDate(v);
+                  setVchDateText(fmtDateDDMMYYYY(v));
+                },
+                style: {
+                  width: '100%',
+                  boxSizing: 'border-box' as const,
+                  height: 38,
+                  padding: '0 12px',
+                  fontSize: 14,
+                  fontFamily: 'inherit',
+                  color: '#0F172A',
+                  backgroundColor: canSave ? '#FFFFFF' : colors.background,
+                  border: '1px solid #CBD5E1',
+                  borderRadius: 6,
+                  outline: 'none',
+                  opacity: canSave ? 1 : 0.6,
+                },
+              })
+            ) : (
               <Pressable
                 onPress={openDatePicker}
                 style={[styles.input, styles.dateField]}
@@ -730,47 +868,15 @@ export function VoucherFormScreen() {
                 <Text style={[styles.selectText, !vchDateText && { color: colors.textMuted }]}>
                   {vchDateText || 'DD/MM/YYYY'}
                 </Text>
-                <Text style={styles.dateIcon}>📅</Text>
               </Pressable>
-              {/* Real HTML <input type="date"> rendered via createElement so the
-                  ref is a true HTMLInputElement (RN-Web's TextInput ref isn't).
-                  Tucked off-screen with pointer-events:none so it never blocks
-                  clicks on the visible Pressable. */}
-              {Platform.OS === 'web'
-                ? React.createElement('input', {
-                    ref: dateInputRef,
-                    type: 'date',
-                    value: vchDate,
-                    onChange: (e: any) => {
-                      const v = e?.target?.value || '';
-                      setVchDate(v);
-                      setVchDateText(fmtDateDDMMYYYY(v));
-                    },
-                    'aria-hidden': 'true',
-                    tabIndex: -1,
-                    style: {
-                      position: 'absolute',
-                      left: 0,
-                      top: 0,
-                      width: 1,
-                      height: 1,
-                      opacity: 0,
-                      pointerEvents: 'none',
-                      border: 'none',
-                      padding: 0,
-                      margin: 0,
-                      background: 'transparent',
-                    } as any,
-                  })
-                : null}
-            </View>
+            )}
           </View>
         </View>
 
         {/* PARTY — inventory mode only */}
         {!isJournalType ? (
           <View style={[styles.field, partyDropOpen && styles.fieldOpen]}>
-            <Text style={styles.fieldLabel}>Party Name</Text>
+            <Text style={styles.fieldLabel}>Ledger Name</Text>
             <View style={styles.customerRow}>
               <View style={styles.partyInputWrap}>
                 <TextInput
@@ -781,11 +887,13 @@ export function VoucherFormScreen() {
                     }
                     setPartySearch(v); setPartyDropOpen(true);
                   }}
-                  onFocus={() => setPartyDropOpen(true)}
+                  // No onFocus open: tabbing in does not reveal the list.
+                  // Typing (onChangeText above) is the only path that opens it.
                   onBlur={() => setTimeout(() => setPartyDropOpen(false), 200)}
-                  placeholder="Type to search party..."
+                  placeholder="Type to search ledger..."
                   placeholderTextColor={colors.textMuted}
-                  style={[styles.input, partyId !== null && styles.inputBound]}
+                  style={[styles.input, partyId !== null && styles.inputBound, !canSave && styles.inputDisabled]}
+                  editable={canSave}
                 />
                 {partyDropOpen && partySuggestions.length > 0 ? (
                   <View style={styles.dropdown}>
@@ -809,13 +917,15 @@ export function VoucherFormScreen() {
                   </View>
                 ) : null}
               </View>
-              <Pressable
-                onPress={() => setAddPartyOpen(true)}
-                style={styles.customerAddBtn}
-                accessibilityLabel="Add new party"
-              >
-                <Text style={styles.customerAddBtnText}>+</Text>
-              </Pressable>
+              {canCreateParty ? (
+                <Pressable
+                  onPress={() => setAddPartyOpen(true)}
+                  style={styles.customerAddBtn}
+                  accessibilityLabel="Add new ledger"
+                >
+                  <Text style={styles.customerAddBtnText}>+</Text>
+                </Pressable>
+              ) : null}
             </View>
           </View>
         ) : null}
@@ -838,11 +948,14 @@ export function VoucherFormScreen() {
                 idx={idx}
                 onChange={(patch) => setJournalRows((p) => p.map((r) => r.id === row.id ? { ...r, ...patch } : r))}
                 onRemove={() => setJournalRows((p) => p.length > 2 ? p.filter((r) => r.id !== row.id) : p)}
+                editable={canSave}
               />
             ))}
-            <Pressable onPress={() => setJournalRows((p) => [...p, emptyJournalRow()])} style={styles.addLink}>
-              <Text style={styles.addLinkText}>+ Add Row</Text>
-            </Pressable>
+            {canSave && (
+              <Pressable onPress={() => setJournalRows((p) => [...p, emptyJournalRow()])} style={styles.addLink}>
+                <Text style={styles.addLinkText}>+ Add Row</Text>
+              </Pressable>
+            )}
             <View style={styles.grandTotalRow}>
               <Text style={styles.grandTotalLabel}>Grand Total</Text>
               <View style={styles.grandTotalDualWrap}>
@@ -875,13 +988,16 @@ export function VoucherFormScreen() {
                 items={items}
                 onChange={(patch) => updateLine(idx, patch)}
                 onRemove={() => removeLine(idx)}
-                canRemove={lines.length > 1}
+                canRemove={lines.length > 1 && canSave}
                 onOpenBatch={() => openBatch(idx)}
+                editable={canSave}
               />
             ))}
-            <Pressable onPress={addLine} style={styles.addLink}>
-              <Text style={styles.addLinkText}>+ Add Item</Text>
-            </Pressable>
+            {canSave && (
+              <Pressable onPress={addLine} style={styles.addLink}>
+                <Text style={styles.addLinkText}>+ Add Item</Text>
+              </Pressable>
+            )}
 
             <View style={styles.itemTotalRow}>
               <Text style={styles.itemTotalLabel}>ITEM TOTAL</Text>
@@ -897,17 +1013,17 @@ export function VoucherFormScreen() {
                       {row.auto ? (
                         <Text style={text.value}>{row.ledger_name} <Text style={text.meta}>(auto)</Text></Text>
                       ) : (
-                        <LedgerPickerInline row={row} ledgers={otherLedgers} onChange={(patch) => setLedgerRows((p) => p.map((r) => r.id === row.id ? { ...r, ...patch } : r))} />
+                        <LedgerPickerInline row={row} ledgers={otherLedgers} onChange={(patch) => setLedgerRows((p) => p.map((r) => r.id === row.id ? { ...r, ...patch } : r))} editable={canSave} />
                       )}
                     </View>
                     <TextInput
                       value={row.amount ? String(row.amount) : ''}
                       onChangeText={(v) => setLedgerRows((p) => p.map((r) => r.id === row.id ? { ...r, amount: Number(v) || 0 } : r))}
-                      editable={!row.auto}
+                      editable={!row.auto && canSave}
                       keyboardType="decimal-pad"
-                      style={[styles.input, styles.amountInput, row.auto && styles.inputDisabled]}
+                      style={[styles.input, styles.amountInput, (!row.auto && canSave) ? null : styles.inputDisabled]}
                     />
-                    <Pressable onPress={() => removeLedgerRow(row.id)} disabled={row.auto} style={[styles.removeBtn, row.auto && { opacity: 0.3 }]}>
+                    <Pressable onPress={() => removeLedgerRow(row.id)} disabled={row.auto || !canSave} style={[styles.removeBtn, (row.auto || !canSave) && { opacity: 0.3 }]}>
                       <Text style={styles.removeBtnText}>×</Text>
                     </Pressable>
                   </View>
@@ -915,9 +1031,11 @@ export function VoucherFormScreen() {
               </View>
             ) : null}
 
-            <Pressable onPress={addLedgerRow} style={styles.addLink}>
-              <Text style={styles.addLinkText}>+ Add Ledger</Text>
-            </Pressable>
+            {canSave && (
+              <Pressable onPress={addLedgerRow} style={styles.addLink}>
+                <Text style={styles.addLinkText}>+ Add Ledger</Text>
+              </Pressable>
+            )}
 
             <View style={styles.grandTotalRow}>
               <Text style={styles.grandTotalLabel}>Grand Total</Text>
@@ -940,7 +1058,8 @@ export function VoucherFormScreen() {
           onChangeText={setRemark}
           placeholder="Remark (optional)"
           placeholderTextColor={colors.textMuted}
-          style={[styles.input, styles.remarkInput]}
+          style={[styles.input, styles.remarkInput, !canSave && styles.inputDisabled]}
+          editable={canSave}
         />
 
         {error ? (
@@ -950,19 +1069,26 @@ export function VoucherFormScreen() {
         ) : null}
 
         <View style={styles.actions}>
-          <ButtonPrimary
-            title={isEdit ? 'Update Voucher' : '💾  Save Voucher'}
-            onPress={handleSubmit}
-            loading={submitting}
-          />
+          {canSave ? (
+            <ButtonPrimary
+              title={isEdit ? 'Update Voucher' : '💾  Save Voucher'}
+              onPress={handleSubmit}
+              loading={submitting}
+            />
+          ) : (
+            <Text style={[text.meta, { color: colors.danger }]}>
+              You don't have permission to {isEdit ? 'edit' : 'create'} vouchers.
+            </Text>
+          )}
+        </View>
         </View>
       </ScrollView>
 
-      {/* RIGHT RAIL — VCH TYPES */}
-      {Platform.OS === 'web' ? (
+      {/* RIGHT RAIL — VCH TYPES — desktop only; mobile uses the form's type dropdown. */}
+      {Platform.OS === 'web' && !isMobile ? (
         <View style={styles.sideRail}>
           <Text style={styles.sideRailTitle}>VCH TYPES</Text>
-          {vchTypes.filter((t) => t.is_system).map((t, idx) => {
+          {vchTypes.filter((t) => t.is_system && t.name.toLowerCase() !== 'bilty').map((t, idx) => {
             // Red = committed (Enter / click). Grey = highlighted by arrow.
             const active = committedVchTypeId === t.id;
             const focused = railIdx === idx;
@@ -996,45 +1122,70 @@ export function VoucherFormScreen() {
       ) : null}
 
       {/* BILL ALLOCATION MODAL */}
-      <Modal visible={billOpen} onClose={() => setBillOpen(false)} title={`Bill Allocation — ${partyName}`} maxWidth={620}>
-        <View style={{ padding: spacing.md }}>
-          <View style={styles.tableHeader}>
-            <Text style={[styles.th, { width: 30 }]}>#</Text>
-            <Text style={[styles.th, { width: 100 }]}>Type</Text>
-            <Text style={[styles.th, { flex: 1 }]}>Ref / Bill No.</Text>
-            <Text style={[styles.th, styles.thRight, { width: 110 }]}>Amount</Text>
-            <Text style={[styles.th, { width: 60, textAlign: 'center' }]}>Dr/Cr</Text>
-            <View style={{ width: 30 }} />
+      <Modal visible={billOpen} onClose={() => setBillOpen(false)} title={`Bill Allocation — ${partyName}`} maxWidth={680}>
+        <View style={{ padding: spacing.lg, gap: spacing.md }}>
+          {/* Table card — header + rows wrapped in a single bordered surface */}
+          <View style={styles.billCard}>
+            <View style={styles.billHeaderRow}>
+              <Text style={[styles.billTh, { width: 32, flexShrink: 0 }]}>#</Text>
+              <Text style={[styles.billTh, { width: 130, flexShrink: 0 }]}>Type</Text>
+              <Text style={[styles.billTh, { flex: 1 }]}>Ref / Bill No.</Text>
+              <Text style={[styles.billTh, styles.thRight, { width: 130, flexShrink: 0 }]}>Amount</Text>
+              <Text style={[styles.billTh, { width: 64, textAlign: 'center', flexShrink: 0 }]}>Dr/Cr</Text>
+              <View style={{ width: 32, flexShrink: 0 }} />
+            </View>
+            {billRefs.map((row, idx) => (
+              <BillRefRowEditor
+                key={row.id}
+                row={row}
+                idx={idx}
+                pending={pendingRefs}
+                onChange={(patch) => setBillRefs((p) => p.map((r) => r.id === row.id ? { ...r, ...patch } : r))}
+                onRemove={() => setBillRefs((p) => p.length > 1 ? p.filter((r) => r.id !== row.id) : p)}
+                editable={canSave}
+              />
+            ))}
+            {canSave && (
+              <Pressable
+                onPress={() => {
+                  const used = billRefs.reduce((s, r) => s + (r.direction === 'Cr' ? -r.amount : r.amount), 0);
+                  const remaining = +(signedTotal - used).toFixed(2);
+                  const dir: 'Dr' | 'Cr' = remaining >= 0 ? 'Dr' : 'Cr';
+                  setBillRefs((p) => [...p, { id: uid(), type: 'New', refno: '', amount: Math.abs(remaining), direction: dir }]);
+                }}
+                style={styles.billAddBtn}
+              >
+                <Text style={styles.billAddText}>+ Add Reference</Text>
+              </Pressable>
+            )}
           </View>
-          {billRefs.map((row, idx) => (
-            <BillRefRowEditor
-              key={row.id}
-              row={row}
-              idx={idx}
-              pending={pendingRefs}
-              onChange={(patch) => setBillRefs((p) => p.map((r) => r.id === row.id ? { ...r, ...patch } : r))}
-              onRemove={() => setBillRefs((p) => p.length > 1 ? p.filter((r) => r.id !== row.id) : p)}
-            />
-          ))}
-          <Pressable
-            onPress={() => {
-              const used = billRefs.reduce((s, r) => s + (r.direction === 'Cr' ? -r.amount : r.amount), 0);
-              const remaining = +(signedTotal - used).toFixed(2);
-              const dir: 'Dr' | 'Cr' = remaining >= 0 ? 'Dr' : 'Cr';
-              setBillRefs((p) => [...p, { id: uid(), type: 'New', refno: '', amount: Math.abs(remaining), direction: dir }]);
-            }}
-            style={styles.addLink}
-          >
-            <Text style={styles.addLinkText}>+ Add Reference</Text>
-          </Pressable>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: spacing.sm }}>
-            <Text style={text.label}>Total ₹{fmt(effectiveTotal)} ({partyDirection})</Text>
-            <Text style={[text.numeric, { color: billBalanced ? colors.success : colors.warning }]}>
-              Allocated ₹{fmt(Math.abs(billAllocSigned))}  ·  Balance ₹{fmt(Math.abs(billBalance))} {billBalanced ? '✓' : ''}
-            </Text>
+
+          {/* Totals strip — three labelled chunks */}
+          <View style={styles.billTotalsCard}>
+            <View style={styles.billTotalCell}>
+              <Text style={styles.billTotalLabel}>Total</Text>
+              <Text style={styles.billTotalValue}>
+                ₹{fmt(effectiveTotal)} <Text style={styles.billTotalDir}>({partyDirection})</Text>
+              </Text>
+            </View>
+            <View style={styles.billTotalDivider} />
+            <View style={styles.billTotalCell}>
+              <Text style={styles.billTotalLabel}>Allocated</Text>
+              <Text style={[styles.billTotalValue, { color: billBalanced ? colors.success : colors.warning }]}>
+                ₹{fmt(Math.abs(billAllocSigned))}
+              </Text>
+            </View>
+            <View style={styles.billTotalDivider} />
+            <View style={styles.billTotalCell}>
+              <Text style={styles.billTotalLabel}>Balance</Text>
+              <Text style={[styles.billTotalValue, { color: billBalanced ? colors.success : colors.warning }]}>
+                ₹{fmt(Math.abs(billBalance))} {billBalanced ? '✓' : ''}
+              </Text>
+            </View>
           </View>
-          <View style={{ marginTop: spacing.md }}>
-            <ButtonPrimary title="Done" onPress={() => setBillOpen(false)} disabled={!billBalanced} />
+
+          <View>
+            <ButtonPrimary title="Done" onPress={() => setBillOpen(false)} />
           </View>
         </View>
       </Modal>
@@ -1142,7 +1293,7 @@ export function VoucherFormScreen() {
 
 // ─── Sub-components ─────────────────────────────────────────────────────────
 
-function ItemRowEditor({ line, idx, items, onChange, onRemove, canRemove, onOpenBatch }: {
+function ItemRowEditor({ line, idx, items, onChange, onRemove, canRemove, onOpenBatch, editable }: {
   line: LineItem;
   idx: number;
   items: ItemMasterItem[];
@@ -1150,22 +1301,59 @@ function ItemRowEditor({ line, idx, items, onChange, onRemove, canRemove, onOpen
   onRemove: () => void;
   canRemove: boolean;
   onOpenBatch: () => void;
+  editable: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState(line.item_name);
+  const [highlight, setHighlight] = useState(0);
   useEffect(() => { setSearch(line.item_name); }, [line.item_name]);
   const filtered = items.filter((i) => !search || i.name.toLowerCase().includes(search.toLowerCase())).slice(0, 12);
   const selectedItem = items.find((i) => i.id === line.item_id) as (ItemMasterItem & { batch?: 'Yes' | 'No' }) | undefined;
   const isBatch = selectedItem?.batch === 'Yes';
   const batchCount = line.batch_rows?.length ?? 0;
 
+  useEffect(() => { setHighlight(0); }, [filtered.length, search]);
+
+  // Keyboard nav inside the open item dropdown — ↑/↓ to move, Enter to pick,
+  // Esc to close. Capture-phase listener so the search TextInput doesn't
+  // swallow the keys.
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (filtered.length === 0) {
+        if (e.key === 'Escape') { e.preventDefault(); setOpen(false); }
+        return;
+      }
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setHighlight((i) => (i + 1) % filtered.length);
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setHighlight((i) => (i - 1 + filtered.length) % filtered.length);
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        const pick = filtered[highlight];
+        if (pick) {
+          onChange({ item_id: pick.id, item_name: pick.name });
+          setSearch(pick.name);
+          setOpen(false);
+        }
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        setOpen(false);
+      }
+    };
+    document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
+  }, [open, filtered, highlight, onChange]);
+
   return (
     <View style={[styles.tableRow, open && styles.tableRowOpen]}>
       <Text style={[styles.cellMeta, { width: 36 }]}>{idx + 1}</Text>
       <View style={{ flex: 2, minWidth: 200 }}>
         <Pressable
-          onPress={() => setOpen((v) => !v)}
-          style={styles.selectField}
+          onPress={() => editable && setOpen((v) => !v)}
+          style={[styles.selectField, !editable && styles.inputDisabled]}
           accessibilityRole="button"
           accessibilityLabel="Select item"
         >
@@ -1186,12 +1374,13 @@ function ItemRowEditor({ line, idx, items, onChange, onRemove, canRemove, onOpen
                 autoFocus
                 style={[styles.input, { marginBottom: 4 }]}
               />
-              {filtered.map((i) => (
+              {filtered.map((i, idx) => (
                 <Pressable
                   key={i.id}
                   // mousedown fires before the search input's onBlur — guarantees the click lands.
                   onPressIn={() => { onChange({ item_id: i.id, item_name: i.name }); setSearch(i.name); setOpen(false); }}
-                  style={styles.dropdownRow}
+                  onMouseEnter={Platform.OS === 'web' ? (() => setHighlight(idx)) as any : undefined}
+                  style={[styles.dropdownRow, idx === highlight && styles.dropdownRowHi]}
                 >
                   <Text style={text.value}>{i.name}</Text>
                   {i.gst_rate ? <Text style={text.meta}>GST {i.gst_rate}%</Text> : null}
@@ -1215,53 +1404,101 @@ function ItemRowEditor({ line, idx, items, onChange, onRemove, canRemove, onOpen
         value={line.qty ? String(line.qty) : ''}
         onChangeText={(v) => onChange({ qty: Number(v) || 0 })}
         keyboardType="decimal-pad"
-        style={[styles.input, { width: 80, textAlign: 'right' }]}
+        style={[styles.input, { width: 80, textAlign: 'right' }, !editable && styles.inputDisabled]}
+        editable={editable}
       />
       <TextInput
         value={line.rate ? String(line.rate) : ''}
         onChangeText={(v) => onChange({ rate: Number(v) || 0 })}
         keyboardType="decimal-pad"
-        style={[styles.input, { width: 110, textAlign: 'right' }]}
+        style={[styles.input, { width: 110, textAlign: 'right' }, !editable && styles.inputDisabled]}
+        editable={editable}
       />
       <TextInput
         value={line.amount ? String(line.amount) : ''}
         editable={false}
         style={[styles.input, styles.inputDisabled, { width: 130, textAlign: 'right' }]}
       />
-      <Pressable onPress={onRemove} disabled={!canRemove} style={[styles.removeBtn, !canRemove && { opacity: 0.3 }]}>
-        <Text style={styles.removeBtnText}>×</Text>
-      </Pressable>
+      {editable && (
+        <Pressable onPress={onRemove} disabled={!canRemove} style={[styles.removeBtn, !canRemove && { opacity: 0.3 }]}>
+          <Text style={styles.removeBtnText}>×</Text>
+        </Pressable>
+      )}
     </View>
   );
 }
 
-function LedgerPickerInline({ row, ledgers, onChange }: {
+function LedgerPickerInline({ row, ledgers, onChange, editable }: {
   row: LedgerRow;
   ledgers: OtherLedger[];
   onChange: (patch: Partial<LedgerRow>) => void;
+  editable: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  // Same UX as JournalRowEditor: list opens only when typing, never on focus.
+  const [suppressDrop, setSuppressDrop] = useState(false);
+  const [highlight, setHighlight] = useState(0);
+
   const filtered = ledgers
     .filter((l) => !row.search || l.name.toLowerCase().includes(row.search.toLowerCase()))
     .slice(0, 12);
+
+  const open =
+    !suppressDrop &&
+    row.ledger_id === null &&
+    row.search.length >= 2 &&
+    filtered.length > 0;
+
+  useEffect(() => { setHighlight(0); }, [filtered.length, row.search]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setHighlight((i) => (i + 1) % filtered.length);
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setHighlight((i) => (i - 1 + filtered.length) % filtered.length);
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        const pick = filtered[highlight];
+        if (pick) {
+          onChange({ ledger_id: pick.id, ledger_name: pick.name, search: pick.name });
+          setSuppressDrop(true);
+        }
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        setSuppressDrop(true);
+      }
+    };
+    document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
+  }, [open, filtered, highlight, onChange]);
+
   return (
     <View>
       <TextInput
         value={row.search}
-        onChangeText={(v) => { onChange({ search: v, ledger_id: null, ledger_name: '' }); setOpen(true); }}
-        onFocus={() => setOpen(true)}
-        onBlur={() => setTimeout(() => setOpen(false), 200)}
+        onChangeText={(v) => {
+          onChange({ search: v, ledger_id: null, ledger_name: '' });
+          setSuppressDrop(false);
+        }}
         placeholder="Pick ledger…"
         placeholderTextColor={colors.textMuted}
-        style={[styles.input, row.ledger_id !== null && styles.inputBound]}
+        style={[styles.input, row.ledger_id !== null && styles.inputBound, !editable && styles.inputDisabled]}
+        editable={editable}
       />
-      {open && filtered.length > 0 ? (
+      {open ? (
         <View style={styles.dropdown}>
-          {filtered.map((l) => (
+          {filtered.map((l, i) => (
             <Pressable
               key={l.id}
-              onPressIn={() => { onChange({ ledger_id: l.id, ledger_name: l.name, search: l.name }); setOpen(false); }}
-              style={styles.dropdownRow}
+              onMouseEnter={Platform.OS === 'web' ? (() => setHighlight(i)) as any : undefined}
+              onPressIn={() => {
+                onChange({ ledger_id: l.id, ledger_name: l.name, search: l.name });
+                setSuppressDrop(true);
+              }}
+              style={[styles.dropdownRow, i === highlight && styles.dropdownRowHi]}
             >
               <Text style={text.value}>{l.name}</Text>
               {l.ledger_group_name ? <Text style={text.meta}>{l.ledger_group_name}</Text> : null}
@@ -1273,15 +1510,22 @@ function LedgerPickerInline({ row, ledgers, onChange }: {
   );
 }
 
-function JournalRowEditor({ row, idx, onChange, onRemove }: {
+function JournalRowEditor({ row, idx, onChange, onRemove, editable }: {
   row: JournalRow;
   idx: number;
   onChange: (patch: Partial<JournalRow>) => void;
   onRemove: () => void;
+  editable: boolean;
 }) {
-  const [open, setOpen] = useState(false);
   const [typeOpen, setTypeOpen] = useState(false);
   const [results, setResults] = useState<OtherLedger[]>([]);
+  // Suppress the dropdown after the user picks an option (so tabbing back into
+  // the field doesn't immediately reopen it).
+  const [suppressDrop, setSuppressDrop] = useState(false);
+  // Keyboard highlight index for the open dropdown.
+  const [highlight, setHighlight] = useState(0);
+
+  // Debounced ledger search — only fires after 2+ chars typed.
   useEffect(() => {
     if (row.search.length < 2) { setResults([]); return; }
     const t = setTimeout(() => {
@@ -1289,13 +1533,53 @@ function JournalRowEditor({ row, idx, onChange, onRemove }: {
     }, 200);
     return () => clearTimeout(t);
   }, [row.search]);
+
+  // The list opens ONLY when the user is actively typing (search has 2+
+  // chars, hasn't selected yet, and isn't suppressed by a recent pick).
+  // Tabbing into / clicking the field does NOT open it.
+  const open =
+    !suppressDrop &&
+    row.ledger_id === null &&
+    row.search.length >= 2 &&
+    results.length > 0;
+
+  // Reset highlight whenever the visible results change.
+  useEffect(() => { setHighlight(0); }, [results.length, row.search]);
+
+  // Web keyboard nav — capture-phase so the input doesn't swallow ↑/↓/Enter/Esc.
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setHighlight((i) => (i + 1) % Math.min(results.length, 12));
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        const max = Math.min(results.length, 12);
+        setHighlight((i) => (i - 1 + max) % max);
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        const pick = results[highlight];
+        if (pick) {
+          onChange({ ledger_id: pick.id, ledger_name: pick.name, search: pick.name });
+          setSuppressDrop(true);
+        }
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        setSuppressDrop(true);
+      }
+    };
+    document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
+  }, [open, results, highlight, onChange]);
+
   return (
     <View style={[styles.tableRow, (open || typeOpen) && styles.tableRowOpen]}>
       <Text style={[styles.cellMeta, { width: 36 }]}>{idx + 1}</Text>
       <View style={{ width: 70 }}>
         <Pressable
-          onPress={() => setTypeOpen((v) => !v)}
-          style={styles.selectField}
+          onPress={() => editable && setTypeOpen((v) => !v)}
+          style={[styles.selectField, !editable && styles.inputDisabled]}
           accessibilityRole="button"
           accessibilityLabel="Dr or Cr"
         >
@@ -1322,20 +1606,27 @@ function JournalRowEditor({ row, idx, onChange, onRemove }: {
       <View style={{ flex: 1 }}>
         <TextInput
           value={row.search}
-          onChangeText={(v) => { onChange({ search: v, ledger_id: null, ledger_name: '' }); setOpen(true); }}
-          onFocus={() => setOpen(true)}
-          onBlur={() => setTimeout(() => setOpen(false), 200)}
+          onChangeText={(v) => {
+            // Re-typing invalidates the previous selection and re-arms the dropdown.
+            onChange({ search: v, ledger_id: null, ledger_name: '' });
+            setSuppressDrop(false);
+          }}
           placeholder="Search ledger..."
           placeholderTextColor={colors.textMuted}
-          style={[styles.input, row.ledger_id !== null && styles.inputBound]}
+          style={[styles.input, row.ledger_id !== null && styles.inputBound, !editable && styles.inputDisabled]}
+          editable={editable}
         />
-        {open && results.length > 0 ? (
+        {open ? (
           <View style={styles.dropdown}>
-            {results.slice(0, 12).map((l) => (
+            {results.slice(0, 12).map((l, i) => (
               <Pressable
                 key={l.id}
-                onPressIn={() => { onChange({ ledger_id: l.id, ledger_name: l.name, search: l.name }); setOpen(false); }}
-                style={styles.dropdownRow}
+                onMouseEnter={Platform.OS === 'web' ? (() => setHighlight(i)) as any : undefined}
+                onPressIn={() => {
+                  onChange({ ledger_id: l.id, ledger_name: l.name, search: l.name });
+                  setSuppressDrop(true);
+                }}
+                style={[styles.dropdownRow, i === highlight && styles.dropdownRowHi]}
               >
                 <Text style={text.value}>{l.name}</Text>
                 {l.ledger_group_name ? <Text style={text.meta}>{l.ledger_group_name}</Text> : null}
@@ -1349,7 +1640,8 @@ function JournalRowEditor({ row, idx, onChange, onRemove }: {
           value={row.amount ? String(row.amount) : ''}
           onChangeText={(v) => onChange({ amount: Number(v) || 0 })}
           keyboardType="decimal-pad"
-          style={[styles.input, { width: 130, textAlign: 'right' }]}
+          style={[styles.input, { width: 130, textAlign: 'right' }, !editable && styles.inputDisabled]}
+          editable={editable}
         />
       ) : (
         <View style={[styles.input, styles.inputDisabled, { width: 130, alignItems: 'flex-end', justifyContent: 'center' }]}>
@@ -1361,71 +1653,115 @@ function JournalRowEditor({ row, idx, onChange, onRemove }: {
           value={row.amount ? String(row.amount) : ''}
           onChangeText={(v) => onChange({ amount: Number(v) || 0 })}
           keyboardType="decimal-pad"
-          style={[styles.input, { width: 130, textAlign: 'right' }]}
+          style={[styles.input, { width: 130, textAlign: 'right' }, !editable && styles.inputDisabled]}
+          editable={editable}
         />
       ) : (
         <View style={[styles.input, styles.inputDisabled, { width: 130, alignItems: 'flex-end', justifyContent: 'center' }]}>
           <Text style={{ color: colors.textMuted }}>—</Text>
         </View>
       )}
-      <Pressable onPress={onRemove} style={styles.removeBtn}>
-        <Text style={styles.removeBtnText}>×</Text>
-      </Pressable>
+      {editable && (
+        <Pressable onPress={onRemove} style={styles.removeBtn}>
+          <Text style={styles.removeBtnText}>×</Text>
+        </Pressable>
+      )}
     </View>
   );
 }
 
-function BillRefRowEditor({ row, idx, pending, onChange, onRemove }: {
+function BillRefRowEditor({ row, idx, pending, onChange, onRemove, editable }: {
   row: BillRefRow;
   idx: number;
   pending: PendingRef[];
   onChange: (patch: Partial<BillRefRow>) => void;
   onRemove: () => void;
+  editable: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  // Same UX as JournalRowEditor: list opens only when typing, never on focus.
+  const [suppressDrop, setSuppressDrop] = useState(false);
+  const [highlight, setHighlight] = useState(0);
+
+  const filtered = pending
+    .filter((p) => !row.refno || p.billname.toLowerCase().includes(row.refno.toLowerCase()))
+    .slice(0, 10);
+  const open =
+    row.type === 'Agr.' &&
+    !suppressDrop &&
+    row.refno.length >= 1 &&
+    filtered.length > 0;
+
+  useEffect(() => { setHighlight(0); }, [filtered.length, row.refno]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setHighlight((i) => (i + 1) % filtered.length);
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setHighlight((i) => (i - 1 + filtered.length) % filtered.length);
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        const p = filtered[highlight];
+        if (p) {
+          const settle: 'Dr' | 'Cr' = p.direction === 'Dr' ? 'Cr' : 'Dr';
+          onChange({ refno: p.billname, amount: Number(p.amount), direction: settle });
+          setSuppressDrop(true);
+        }
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        setSuppressDrop(true);
+      }
+    };
+    document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
+  }, [open, filtered, highlight, onChange]);
+
   return (
-    <View style={styles.tableRow}>
-      <Text style={[styles.cellMeta, { width: 30 }]}>{idx + 1}</Text>
-      <View style={{ width: 100 }}>
-        <Pressable
-          onPress={() => {
-            const next: BillRefRow['type'] = row.type === 'New' ? 'Agr.' : row.type === 'Agr.' ? 'On Account' : 'New';
-            onChange({ type: next });
-          }}
-          style={styles.typeToggle}
-        >
-          <Text style={text.value}>{row.type}</Text>
-        </Pressable>
+    <View style={styles.billBodyRow}>
+      <Text style={[styles.cellMeta, { width: 32 }]}>{idx + 1}</Text>
+      <View style={{ width: 130, flexShrink: 0 }}>
+        <SelectDropdown
+          label=""
+          value={row.type}
+          options={['New', 'Agr.', 'On Account']}
+          onSelect={(v) => editable && onChange({ type: v as BillRefRow['type'] })}
+          placeholder="Select…"
+          compact
+          disabled={!editable}
+        />
       </View>
       {row.type === 'On Account' ? (
-        <View style={{ flex: 1, paddingHorizontal: spacing.sm }}>
+        <View style={{ flex: 1, paddingHorizontal: spacing.md, justifyContent: 'center', minHeight: 38 }}>
           <Text style={text.meta}>—</Text>
         </View>
       ) : row.type === 'Agr.' ? (
         <View style={{ flex: 1 }}>
           <TextInput
             value={row.refno}
-            onChangeText={(v) => { onChange({ refno: v }); setOpen(true); }}
-            onFocus={() => setOpen(true)}
-            onBlur={() => setTimeout(() => setOpen(false), 200)}
+            onChangeText={(v) => {
+              onChange({ refno: v });
+              setSuppressDrop(false);
+            }}
             placeholder="Pick pending bill…"
             placeholderTextColor={colors.textMuted}
-            style={styles.input}
+            style={[styles.input, { flex: 1 }, !editable && styles.inputDisabled]}
+            editable={editable}
           />
-          {open && pending.length > 0 ? (
+          {open ? (
             <View style={styles.dropdown}>
-              {pending
-                .filter((p) => !row.refno || p.billname.toLowerCase().includes(row.refno.toLowerCase()))
-                .slice(0, 10)
-                .map((p) => (
+              {filtered.map((p, i) => (
                 <Pressable
                   key={p.billname}
+                  onMouseEnter={Platform.OS === 'web' ? (() => setHighlight(i)) as any : undefined}
                   onPressIn={() => {
                     const settle: 'Dr' | 'Cr' = p.direction === 'Dr' ? 'Cr' : 'Dr';
                     onChange({ refno: p.billname, amount: Number(p.amount), direction: settle });
-                    setOpen(false);
+                    setSuppressDrop(true);
                   }}
-                  style={styles.dropdownRow}
+                  style={[styles.dropdownRow, i === highlight && styles.dropdownRowHi]}
                 >
                   <Text style={text.value}>{p.billname}</Text>
                   <Text style={text.meta}>₹{fmt(Number(p.amount))} · {p.direction}</Text>
@@ -1440,24 +1776,28 @@ function BillRefRowEditor({ row, idx, pending, onChange, onRemove }: {
           onChangeText={(v) => onChange({ refno: v })}
           placeholder="Reference / Bill No."
           placeholderTextColor={colors.textMuted}
-          style={[styles.input, { flex: 1 }]}
+          style={[styles.input, { flex: 1 }, !editable && styles.inputDisabled]}
+          editable={editable}
         />
       )}
       <TextInput
         value={row.amount ? String(row.amount) : ''}
         onChangeText={(v) => onChange({ amount: Number(v) || 0 })}
         keyboardType="decimal-pad"
-        style={[styles.input, { width: 110, textAlign: 'right' }]}
+        style={[styles.input, { width: 130, textAlign: 'right', flexShrink: 0 }, !editable && styles.inputDisabled]}
+        editable={editable}
       />
       <Pressable
-        onPress={() => onChange({ direction: row.direction === 'Dr' ? 'Cr' : 'Dr' })}
-        style={[styles.drCrPill, row.direction === 'Dr' ? styles.drPill : styles.crPill, { width: 60, alignItems: 'center' }]}
+        onPress={() => editable && onChange({ direction: row.direction === 'Dr' ? 'Cr' : 'Dr' })}
+        style={[styles.drCrPill, row.direction === 'Dr' ? styles.drPill : styles.crPill, { width: 64, alignItems: 'center', flexShrink: 0 }, !editable && { opacity: 0.6 }]}
       >
         <Text style={[styles.drCrText, { color: row.direction === 'Dr' ? colors.success : colors.brandRed }]}>{row.direction}</Text>
       </Pressable>
-      <Pressable onPress={onRemove} style={styles.removeBtn}>
-        <Text style={styles.removeBtnText}>×</Text>
-      </Pressable>
+      {editable && (
+        <Pressable onPress={onRemove} style={[styles.removeBtn, { width: 32, flexShrink: 0 }]}>
+          <Text style={styles.removeBtnText}>×</Text>
+        </Pressable>
+      )}
     </View>
   );
 }
@@ -1465,7 +1805,7 @@ function BillRefRowEditor({ row, idx, pending, onChange, onRemove }: {
 function AddPartyModal({ visible, onClose, onCreated }: {
   visible: boolean;
   onClose: () => void;
-  onCreated: (p: PartyLedgerSearchResult) => void;
+  onCreated: (p: LedgerMasterSearchResult) => void;
 }) {
   const [name, setName] = useState('');
   const [gstNo, setGstNo] = useState('');
@@ -1489,10 +1829,10 @@ function AddPartyModal({ visible, onClose, onCreated }: {
 
   const onSave = async () => {
     setErr(null);
-    if (!name.trim()) { setErr('Party name is required.'); return; }
+    if (!name.trim()) { setErr('Ledger name is required.'); return; }
     setSaving(true);
     try {
-      const res = await partyLedgerService.create({
+      const res = await ledgerMasterService.create({
         ledger_group_id: 1, // Sundry Debtors — voucher form party context
         name: name.trim(),
         gst_no: gstNo.trim() || null,
@@ -1518,10 +1858,10 @@ function AddPartyModal({ visible, onClose, onCreated }: {
   };
 
   return (
-    <Modal visible={visible} onClose={onClose} title="New Party" maxWidth={560}>
+    <Modal visible={visible} onClose={onClose} title="New Ledger" maxWidth={560}>
       <View style={{ padding: spacing.lg, gap: spacing.md }}>
         <View style={{ gap: 4 }}>
-          <Text style={styles.fieldLabel}>Party Name *</Text>
+          <Text style={styles.fieldLabel}>Ledger Name *</Text>
           <TextInput value={name} onChangeText={setName} autoFocus style={styles.input} />
         </View>
 
@@ -1593,7 +1933,9 @@ function AddPartyModal({ visible, onClose, onCreated }: {
   );
 }
 
-const RAIL_WIDTH = 170;
+// Rail width tuned to fit "Credit Note" / "Debit Note" text + tight padding
+// instead of stretching to ~170px and wasting horizontal real estate.
+const RAIL_WIDTH = 120;
 const CUSTOMER_ADD_GREEN = '#16A34A';
 
 const styles = StyleSheet.create({
@@ -1603,14 +1945,29 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
     paddingBottom: spacing.xxl,
     paddingRight: Platform.OS === 'web' ? RAIL_WIDTH + spacing.lg : spacing.lg,
-    gap: spacing.md,
   },
+
+  // Single parent card that wraps the entire voucher form. Replaces the
+  // sprawling top-level layout with a contained surface — cleaner edges,
+  // tighter internal spacing, and a clear separation from the page bg.
+  formCard: {
+    backgroundColor: colors.card,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    padding: spacing.lg,
+    gap: spacing.sm,
+    ...(Platform.OS === 'web'
+      ? ({ boxShadow: '0 1px 3px rgba(15,23,42,0.06)' } as any)
+      : { shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 6, shadowOffset: { width: 0, height: 1 } }),
+  },
+
   pageTitle: {
     fontSize: 22,
     fontFamily: typography.uiHeavy,
     color: colors.textStrong,
     letterSpacing: 0.2,
-    marginBottom: spacing.xs,
+    marginBottom: 0,
   },
 
   // ── Header row
@@ -2049,5 +2406,83 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     marginTop: 2,
     alignItems: 'center',
+  },
+
+  // ── Bill Allocation modal ───────────────────────────────────────────────
+  billCard: {
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: radius.md,
+    backgroundColor: colors.card,
+    overflow: 'hidden',
+  },
+  billHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    backgroundColor: '#F8FAFC',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+  },
+  billTh: {
+    fontSize: 11,
+    color: colors.textMuted,
+    fontFamily: typography.uiBold,
+    letterSpacing: 1,
+  },
+  billBodyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  billAddBtn: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  billAddText: {
+    color: '#16A34A',
+    fontFamily: typography.uiBold,
+    fontSize: 13,
+  },
+  billTotalsCard: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: radius.md,
+    backgroundColor: '#F8FAFC',
+    overflow: 'hidden',
+  },
+  billTotalCell: {
+    flex: 1,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    gap: 2,
+  },
+  billTotalLabel: {
+    fontSize: 11,
+    color: colors.textMuted,
+    fontFamily: typography.uiBold,
+    letterSpacing: 1,
+  },
+  billTotalValue: {
+    fontSize: 15,
+    color: colors.text,
+    fontFamily: typography.uiBold,
+  },
+  billTotalDir: {
+    fontSize: 12,
+    color: colors.textMuted,
+    fontFamily: typography.uiMedium,
+  },
+  billTotalDivider: {
+    width: 1,
+    backgroundColor: '#E2E8F0',
   },
 });

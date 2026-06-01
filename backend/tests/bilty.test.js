@@ -107,12 +107,6 @@ const VALID_BODY = {
     { challan_no: 'C1', lr_no: 'L1', from_loc: 'A', to_loc: 'B',
       consignee: 'X', qty: 10, rate: 100, inc_rate: 0, l_rate: 0, e_rate: 0 },
   ],
-  advances: [
-    { adv_date: '2026-04-18', adv_from: 'Cash', amount: 500, narration: 'n/a' },
-  ],
-  fuels: [
-    { from_loc: 'PumpA', amount: 200, doc_no: 'D1', doc_date: '2026-04-18' },
-  ],
 };
 
 // ---- tests -----------------------------------------------------------------
@@ -163,8 +157,6 @@ describe('bilty — POST /api/bilty (create)', () => {
     expect(arg.header.consignor).toBe('Acme Corp');
     expect(arg.header.truck_no).toBe('DL-01-AB-1234');
     expect(arg.items).toHaveLength(1);
-    expect(arg.advances).toHaveLength(1);
-    expect(arg.fuels).toHaveLength(1);
     expect(arg.userId).toBe(1);
   });
 
@@ -235,13 +227,11 @@ describe('bilty — GET /api/bilty (list)', () => {
 });
 
 describe('bilty — GET /api/bilty/:id', () => {
-  test('200 returns header + items/advances/fuels arrays', async () => {
+  test('200 returns header + items array', async () => {
     const token = adminAuth();
     biltyModel.findById.mockResolvedValueOnce({
       id: 5, bilty_no: 'BL-2026-000005', consignor: 'Acme', truck_no: 'DL-01',
       items: [{ id: 1, bilty_id: 5, qty: 10, rate: 100 }],
-      advances: [{ id: 1, bilty_id: 5, amount: 500 }],
-      fuels: [{ id: 1, bilty_id: 5, amount: 200 }],
     });
 
     const res = await request(app)
@@ -251,8 +241,6 @@ describe('bilty — GET /api/bilty/:id', () => {
     expect(res.status).toBe(200);
     expect(res.body.id).toBe(5);
     expect(Array.isArray(res.body.items)).toBe(true);
-    expect(Array.isArray(res.body.advances)).toBe(true);
-    expect(Array.isArray(res.body.fuels)).toBe(true);
   });
 
   test('404 bilty_not_found on unknown id', async () => {

@@ -1,7 +1,7 @@
 -- AB Logistics — Clean schema import for phpMyAdmin
--- Generated: 2026-05-02
+-- Generated: 2026-05-05
 -- Import this file into an EMPTY database named `ab_logistics`
--- All 18 tables, seed data only (no transaction records).
+-- All 20 tables, seed data only (no transaction records).
 -- Login after import: admin / Admin@1234
 
 SET FOREIGN_KEY_CHECKS = 0;
@@ -16,14 +16,14 @@ DROP TABLE IF EXISTS `ledger_entries`;
 DROP TABLE IF EXISTS `vch_details`;
 DROP TABLE IF EXISTS `audit_logs`;
 DROP TABLE IF EXISTS `freight_memo`;
-DROP TABLE IF EXISTS `fuel_details`;
-DROP TABLE IF EXISTS `advance_details`;
 DROP TABLE IF EXISTS `bilty_items`;
 DROP TABLE IF EXISTS `bilty`;
 DROP TABLE IF EXISTS `vehicle_master`;
 DROP TABLE IF EXISTS `destination_master`;
-DROP TABLE IF EXISTS `party_ledger`;
 DROP TABLE IF EXISTS `item_master`;
+DROP TABLE IF EXISTS `item_group`;
+DROP TABLE IF EXISTS `item_category`;
+DROP TABLE IF EXISTS `ledger_master`;
 DROP TABLE IF EXISTS `vchtype`;
 DROP TABLE IF EXISTS `ledger_group`;
 DROP TABLE IF EXISTS `users`;
@@ -54,7 +54,31 @@ CREATE TABLE `ledger_group` (
   CONSTRAINT `fk_ledger_group_parent` FOREIGN KEY (`parent_id`) REFERENCES `ledger_group` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
--- ─── 3. vchtype ───────────────────────────────────────────────────────────────
+-- ─── 3. item_category ─────────────────────────────────────────────────────────
+CREATE TABLE `item_category` (
+  `id` int unsigned NOT NULL AUTO_INCREMENT,
+  `category_name` varchar(64) NOT NULL,
+  `parent_id` int unsigned DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_item_category_name` (`category_name`),
+  KEY `idx_item_category_parent` (`parent_id`),
+  CONSTRAINT `fk_item_category_parent` FOREIGN KEY (`parent_id`) REFERENCES `item_category` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- ─── 4. item_group ────────────────────────────────────────────────────────────
+CREATE TABLE `item_group` (
+  `id` int unsigned NOT NULL AUTO_INCREMENT,
+  `group_name` varchar(64) NOT NULL,
+  `parent_id` int unsigned DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_item_group_name` (`group_name`),
+  KEY `idx_item_group_parent` (`parent_id`),
+  CONSTRAINT `fk_item_group_parent` FOREIGN KEY (`parent_id`) REFERENCES `item_group` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- ─── 5. vchtype ───────────────────────────────────────────────────────────────
 CREATE TABLE `vchtype` (
   `id` int unsigned NOT NULL AUTO_INCREMENT,
   `name` varchar(255) NOT NULL,
@@ -68,10 +92,12 @@ CREATE TABLE `vchtype` (
   KEY `idx_vchtype_parent` (`parent_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
--- ─── 4. item_master ───────────────────────────────────────────────────────────
+-- ─── 6. item_master ───────────────────────────────────────────────────────────
 CREATE TABLE `item_master` (
   `id` int unsigned NOT NULL AUTO_INCREMENT,
   `name` varchar(255) NOT NULL,
+  `item_group_id` int unsigned DEFAULT NULL,
+  `item_category_id` int unsigned DEFAULT NULL,
   `hsn_code` varchar(20) DEFAULT NULL,
   `gst_rate` decimal(5,2) DEFAULT NULL,
   `tally_master_id` varchar(64) DEFAULT NULL,
@@ -83,11 +109,15 @@ CREATE TABLE `item_master` (
   KEY `idx_item_master_name` (`name`),
   KEY `idx_item_master_tally` (`tally_master_id`),
   KEY `fk_item_master_created_by` (`created_by`),
-  CONSTRAINT `fk_item_master_created_by` FOREIGN KEY (`created_by`) REFERENCES `users` (`id`) ON DELETE SET NULL
+  KEY `idx_item_master_group` (`item_group_id`),
+  KEY `idx_item_master_category` (`item_category_id`),
+  CONSTRAINT `fk_item_master_category` FOREIGN KEY (`item_category_id`) REFERENCES `item_category` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `fk_item_master_created_by` FOREIGN KEY (`created_by`) REFERENCES `users` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `fk_item_master_group` FOREIGN KEY (`item_group_id`) REFERENCES `item_group` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
--- ─── 5. party_ledger ──────────────────────────────────────────────────────────
-CREATE TABLE `party_ledger` (
+-- ─── 7. ledger_master ──────────────────────────────────────────────────────────
+CREATE TABLE `ledger_master` (
   `id` int unsigned NOT NULL AUTO_INCREMENT,
   `ledger_group_id` int unsigned NOT NULL,
   `billbybill` enum('Yes','No') NOT NULL DEFAULT 'No',
@@ -106,15 +136,15 @@ CREATE TABLE `party_ledger` (
   `opening_balance` decimal(14,2) NOT NULL DEFAULT '0.00',
   `opening_balance_type` enum('Dr','Cr') NOT NULL DEFAULT 'Dr',
   PRIMARY KEY (`id`),
-  KEY `idx_party_ledger_group` (`ledger_group_id`),
-  KEY `idx_party_ledger_name` (`name`),
-  KEY `idx_party_ledger_tally` (`tally_master_id`),
-  KEY `fk_party_ledger_created_by` (`created_by`),
-  CONSTRAINT `fk_party_ledger_created_by` FOREIGN KEY (`created_by`) REFERENCES `users` (`id`) ON DELETE SET NULL,
-  CONSTRAINT `fk_party_ledger_to_ledger_group` FOREIGN KEY (`ledger_group_id`) REFERENCES `ledger_group` (`id`) ON DELETE RESTRICT
+  KEY `idx_ledger_master_group` (`ledger_group_id`),
+  KEY `idx_ledger_master_name` (`name`),
+  KEY `idx_ledger_master_tally` (`tally_master_id`),
+  KEY `fk_ledger_master_created_by` (`created_by`),
+  CONSTRAINT `fk_ledger_master_created_by` FOREIGN KEY (`created_by`) REFERENCES `users` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `fk_ledger_master_to_ledger_group` FOREIGN KEY (`ledger_group_id`) REFERENCES `ledger_group` (`id`) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
--- ─── 6. vehicle_master ────────────────────────────────────────────────────────
+-- ─── 8. vehicle_master ────────────────────────────────────────────────────────
 CREATE TABLE `vehicle_master` (
   `id` int unsigned NOT NULL AUTO_INCREMENT,
   `name` varchar(64) NOT NULL,
@@ -139,7 +169,7 @@ CREATE TABLE `vehicle_master` (
   CONSTRAINT `fk_vehicle_master_created_by` FOREIGN KEY (`created_by`) REFERENCES `users` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
--- ─── 7. destination_master ────────────────────────────────────────────────────
+-- ─── 9. destination_master ────────────────────────────────────────────────────
 CREATE TABLE `destination_master` (
   `id` int unsigned NOT NULL AUTO_INCREMENT,
   `branch` varchar(255) DEFAULT NULL,
@@ -159,12 +189,13 @@ CREATE TABLE `destination_master` (
   CONSTRAINT `fk_destination_master_created_by` FOREIGN KEY (`created_by`) REFERENCES `users` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
--- ─── 8. bilty ─────────────────────────────────────────────────────────────────
+-- ─── 10. bilty ─────────────────────────────────────────────────────────────────
 CREATE TABLE `bilty` (
   `id` int unsigned NOT NULL AUTO_INCREMENT,
   `bilty_no` varchar(32) NOT NULL,
   `bilty_date` date DEFAULT NULL,
   `consignor` varchar(255) NOT NULL,
+  `bill_to` varchar(255) DEFAULT NULL,
   `owner_name` varchar(255) DEFAULT NULL,
   `agent_name` varchar(255) DEFAULT NULL,
   `branch` varchar(128) DEFAULT NULL,
@@ -183,7 +214,7 @@ CREATE TABLE `bilty` (
   CONSTRAINT `fk_bilty_created_by` FOREIGN KEY (`created_by`) REFERENCES `users` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
--- ─── 9. bilty_items ───────────────────────────────────────────────────────────
+-- ─── 11. bilty_items ───────────────────────────────────────────────────────────
 CREATE TABLE `bilty_items` (
   `id` int unsigned NOT NULL AUTO_INCREMENT,
   `bilty_id` int unsigned NOT NULL,
@@ -197,35 +228,10 @@ CREATE TABLE `bilty_items` (
   `inc_rate` decimal(12,2) NOT NULL DEFAULT '0.00',
   `l_rate` decimal(12,2) NOT NULL DEFAULT '0.00',
   `e_rate` decimal(12,2) NOT NULL DEFAULT '0.00',
+  `shipment_no` varchar(64) DEFAULT NULL,
   PRIMARY KEY (`id`),
   KEY `idx_bilty_items_bilty_id` (`bilty_id`),
   CONSTRAINT `fk_bilty_items_bilty` FOREIGN KEY (`bilty_id`) REFERENCES `bilty` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
-
--- ─── 10. advance_details ──────────────────────────────────────────────────────
-CREATE TABLE `advance_details` (
-  `id` int unsigned NOT NULL AUTO_INCREMENT,
-  `bilty_id` int unsigned NOT NULL,
-  `adv_date` date DEFAULT NULL,
-  `adv_from` varchar(128) DEFAULT NULL,
-  `amount` decimal(12,2) NOT NULL DEFAULT '0.00',
-  `narration` varchar(255) DEFAULT NULL,
-  PRIMARY KEY (`id`),
-  KEY `idx_advance_details_bilty_id` (`bilty_id`),
-  CONSTRAINT `fk_advance_details_bilty` FOREIGN KEY (`bilty_id`) REFERENCES `bilty` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
-
--- ─── 11. fuel_details ─────────────────────────────────────────────────────────
-CREATE TABLE `fuel_details` (
-  `id` int unsigned NOT NULL AUTO_INCREMENT,
-  `bilty_id` int unsigned NOT NULL,
-  `from_loc` varchar(128) DEFAULT NULL,
-  `amount` decimal(12,2) NOT NULL DEFAULT '0.00',
-  `doc_no` varchar(64) DEFAULT NULL,
-  `doc_date` date DEFAULT NULL,
-  PRIMARY KEY (`id`),
-  KEY `idx_fuel_details_bilty_id` (`bilty_id`),
-  CONSTRAINT `fk_fuel_details_bilty` FOREIGN KEY (`bilty_id`) REFERENCES `bilty` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- ─── 12. freight_memo ─────────────────────────────────────────────────────────
@@ -235,8 +241,6 @@ CREATE TABLE `freight_memo` (
   `bilty_id` int unsigned NOT NULL,
   `memo_date` date DEFAULT NULL,
   `freight_total` decimal(12,2) NOT NULL DEFAULT '0.00',
-  `advance_total` decimal(12,2) NOT NULL DEFAULT '0.00',
-  `fuel_total` decimal(12,2) NOT NULL DEFAULT '0.00',
   `net_payable` decimal(12,2) NOT NULL DEFAULT '0.00',
   `generated_by` int unsigned DEFAULT NULL,
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -253,7 +257,7 @@ CREATE TABLE `freight_memo` (
   CONSTRAINT `fk_freight_memo_generated_by` FOREIGN KEY (`generated_by`) REFERENCES `users` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
--- ─── 13. audit_logs ───────────────────────────────────────────────────────────
+-- ─── 15. audit_logs ───────────────────────────────────────────────────────────
 CREATE TABLE `audit_logs` (
   `id` bigint unsigned NOT NULL AUTO_INCREMENT,
   `action` enum('CREATE','UPDATE','DELETE','GENERATE') NOT NULL,
@@ -271,13 +275,13 @@ CREATE TABLE `audit_logs` (
   CONSTRAINT `fk_audit_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
--- ─── 14. vch_details ──────────────────────────────────────────────────────────
+-- ─── 16. vch_details ──────────────────────────────────────────────────────────
 CREATE TABLE `vch_details` (
   `id` int unsigned NOT NULL AUTO_INCREMENT,
   `vch_type_id` int unsigned DEFAULT NULL,
   `vch_no` varchar(100) DEFAULT NULL,
   `vch_date` date DEFAULT NULL,
-  `party_ledger_id` int unsigned NOT NULL,
+  `ledger_master_id` int unsigned NOT NULL,
   `amount` decimal(14,2) NOT NULL DEFAULT '0.00',
   `remark` text,
   `created_by` int unsigned DEFAULT NULL,
@@ -286,14 +290,14 @@ CREATE TABLE `vch_details` (
   PRIMARY KEY (`id`),
   KEY `idx_vch_details_type` (`vch_type_id`),
   KEY `idx_vch_details_date` (`vch_date`),
-  KEY `idx_vch_details_party` (`party_ledger_id`),
+  KEY `idx_vch_details_ledger` (`ledger_master_id`),
   KEY `fk_vch_details_created_by` (`created_by`),
   CONSTRAINT `fk_vch_details_created_by` FOREIGN KEY (`created_by`) REFERENCES `users` (`id`) ON DELETE SET NULL,
-  CONSTRAINT `fk_vch_details_party` FOREIGN KEY (`party_ledger_id`) REFERENCES `party_ledger` (`id`),
+  CONSTRAINT `fk_vch_details_ledger` FOREIGN KEY (`ledger_master_id`) REFERENCES `ledger_master` (`id`),
   CONSTRAINT `fk_vch_details_type` FOREIGN KEY (`vch_type_id`) REFERENCES `vchtype` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
--- ─── 15. ledger_entries ───────────────────────────────────────────────────────
+-- ─── 17. ledger_entries ───────────────────────────────────────────────────────
 CREATE TABLE `ledger_entries` (
   `id` int unsigned NOT NULL AUTO_INCREMENT,
   `vch_id` int unsigned NOT NULL,
@@ -303,11 +307,11 @@ CREATE TABLE `ledger_entries` (
   PRIMARY KEY (`id`),
   KEY `idx_ledger_entries_vch` (`vch_id`),
   KEY `idx_ledger_entries_ledger` (`ledger_id`),
-  CONSTRAINT `fk_ledger_entries_ledger` FOREIGN KEY (`ledger_id`) REFERENCES `party_ledger` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `fk_ledger_entries_ledger` FOREIGN KEY (`ledger_id`) REFERENCES `ledger_master` (`id`) ON DELETE SET NULL,
   CONSTRAINT `fk_ledger_entries_vch` FOREIGN KEY (`vch_id`) REFERENCES `vch_details` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
--- ─── 16. inventory_entries ────────────────────────────────────────────────────
+-- ─── 18. inventory_entries ────────────────────────────────────────────────────
 CREATE TABLE `inventory_entries` (
   `id` int unsigned NOT NULL AUTO_INCREMENT,
   `led_id` int unsigned NOT NULL,
@@ -324,7 +328,7 @@ CREATE TABLE `inventory_entries` (
   CONSTRAINT `fk_inventory_entries_led` FOREIGN KEY (`led_id`) REFERENCES `ledger_entries` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
--- ─── 17. batch ────────────────────────────────────────────────────────────────
+-- ─── 19. batch ────────────────────────────────────────────────────────────────
 CREATE TABLE `batch` (
   `id` int unsigned NOT NULL AUTO_INCREMENT,
   `vch_id` int unsigned NOT NULL,
@@ -344,7 +348,7 @@ CREATE TABLE `batch` (
   CONSTRAINT `fk_batch_vch` FOREIGN KEY (`vch_id`) REFERENCES `vch_details` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
--- ─── 18. bill_allocation ──────────────────────────────────────────────────────
+-- ─── 20. bill_allocation ──────────────────────────────────────────────────────
 CREATE TABLE `bill_allocation` (
   `id` int unsigned NOT NULL AUTO_INCREMENT,
   `vchid` int unsigned NOT NULL,
@@ -359,7 +363,7 @@ CREATE TABLE `bill_allocation` (
   KEY `idx_bill_allocation_billname` (`billname`),
   KEY `idx_bill_allocation_ledger` (`ledger`),
   CONSTRAINT `fk_bill_allocation_ledentry` FOREIGN KEY (`ledentry_id`) REFERENCES `ledger_entries` (`id`) ON DELETE SET NULL,
-  CONSTRAINT `fk_bill_allocation_ledger` FOREIGN KEY (`ledger`) REFERENCES `party_ledger` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `fk_bill_allocation_ledger` FOREIGN KEY (`ledger`) REFERENCES `ledger_master` (`id`) ON DELETE SET NULL,
   CONSTRAINT `fk_bill_allocation_vch` FOREIGN KEY (`vchid`) REFERENCES `vch_details` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
@@ -392,8 +396,8 @@ INSERT INTO `vchtype` (`id`, `name`, `parent_id`, `deemed_positive`, `is_system`
 (7, 'Debit Note',  7, 'YES', 1),
 (8, 'Credit Note', 8, 'NO',  1);
 
--- ─── Seed: system party_ledger entries ───────────────────────────────────────
-INSERT INTO `party_ledger` (`ledger_group_id`, `billbybill`, `name`) VALUES
+-- ─── Seed: system ledger_master entries ───────────────────────────────────────
+INSERT INTO `ledger_master` (`ledger_group_id`, `billbybill`, `name`) VALUES
 (4, 'No', 'Sales'),
 (5, 'No', 'Purchase'),
 (6, 'No', 'CGST'),
@@ -402,8 +406,3 @@ INSERT INTO `party_ledger` (`ledger_group_id`, `billbybill`, `name`) VALUES
 (7, 'No', 'Roundoff');
 
 SET FOREIGN_KEY_CHECKS = 1;
-
--- ─── Summary ──────────────────────────────────────────────────────────────────
--- 18 tables created
--- Seed: 1 admin user | 11 ledger groups | 8 voucher types | 6 system ledgers
--- Login: admin / Admin@1234

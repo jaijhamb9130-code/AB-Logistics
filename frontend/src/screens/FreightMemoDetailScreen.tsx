@@ -4,8 +4,8 @@
  * Layout (FREIGHT-04, FREIGHT-05, FREIGHT-06):
  *   • Company header ("AB LOGISTICS") + memo_no + memo_date
  *   • Bilty reference block (bilty_no, consignor, truck_no, date)
- *   • Ledger table: Debit (items qty × rate) | Credit (advances + fuels)
- *   • Totals row + highlighted Net Payable
+ *   • Items list (qty × rate) with Freight Total
+ *   • Highlighted Net Payable
  *
  * No edit controls anywhere. The only action is Print (web only, Ctrl+P via
  * window.print()) and Back.
@@ -28,6 +28,8 @@ import { freightService } from '../services/freightService';
 import { toNum } from '../utils/biltyValidation';
 import type { FreightMemoDetail } from '../../../shared/types/freight';
 import type { FreightStackParamList } from '../navigation/types';
+import { useAuth } from '../context/AuthContext';
+import { canDoAction } from '../navigation/guards';
 
 type Nav = NativeStackNavigationProp<FreightStackParamList, 'FreightDetail'>;
 type Rt = RouteProp<FreightStackParamList, 'FreightDetail'>;
@@ -36,6 +38,7 @@ const COMPANY_NAME = 'AB LOGISTICS';
 const COMPANY_TAGLINE = 'Freight Memo';
 
 export function FreightMemoDetailScreen() {
+  const { user } = useAuth();
   const navigation = useNavigation<Nav>();
   const route = useRoute<Rt>();
   const { id } = route.params;
@@ -75,49 +78,30 @@ export function FreightMemoDetailScreen() {
     );
   }
 
+  const canRead = canDoAction(user, 'freight', 'view');
+  if (!canRead) {
+    return (
+      <View style={styles.wrap}>
+        <Text style={styles.title}>Freight Memo</Text>
+        <View style={styles.errorBanner}>
+          <Text style={styles.errorBannerText}>You don't have permission to view this memo.</Text>
+        </View>
+      </View>
+    );
+  }
+
   if (!data) return <Loader />;
 
   const bilty = data.bilty;
   const items = bilty?.items || [];
-  const advances = bilty?.advances || [];
-  const fuels = bilty?.fuels || [];
 
-  const debitRows = items.map((it, i) => ({
-    key: `d-${it.id ?? i}`,
+  const itemRows = items.map((it, i) => ({
+    key: `i-${it.id ?? i}`,
     label: debitLabel(it, i),
     amount: toNum(it.qty) * toNum(it.rate),
   }));
-  const creditRows = [
-    ...advances.map((a, i) => ({
-      key: `c-a-${a.id ?? i}`,
-      label: `Advance — ${a.adv_from ?? 'cash'}${a.narration ? ` (${a.narration})` : ''}`,
-      amount: toNum(a.amount),
-    })),
-    ...fuels.map((f, i) => ({
-      key: `c-f-${f.id ?? i}`,
-      label: `Fuel — ${f.from_loc ?? 'pump'}${f.doc_no ? ` · ${f.doc_no}` : ''}`,
-      amount: toNum(f.amount),
-    })),
-  ];
-
-  const ledgerRows: Array<{
-    key: string;
-    left: { label: string; amount: number } | null;
-    right: { label: string; amount: number } | null;
-  }> = [];
-  const rowCount = Math.max(debitRows.length, creditRows.length);
-  for (let i = 0; i < rowCount; i += 1) {
-    ledgerRows.push({
-      key: `r-${i}`,
-      left: debitRows[i] ?? null,
-      right: creditRows[i] ?? null,
-    });
-  }
 
   const freightTotal = toNum(data.freight_total);
-  const advanceTotal = toNum(data.advance_total);
-  const fuelTotal = toNum(data.fuel_total);
-  const creditTotal = advanceTotal + fuelTotal;
   const netPayable = toNum(data.net_payable);
 
   return (
@@ -173,31 +157,23 @@ export function FreightMemoDetailScreen() {
         )}
 
         <View style={styles.ledgerHead}>
-          <Text style={styles.ledgerHeadText}>Debit</Text>
-          <Text style={styles.ledgerHeadText}>Credit</Text>
+          <Text style={styles.ledgerHeadText}>Items</Text>
         </View>
         <View style={styles.ledgerSubHead}>
           <View style={styles.ledgerCell}>
             <Text style={styles.subHeadLabel}>Particulars</Text>
             <Text style={styles.subHeadAmt}>Amount</Text>
           </View>
-          <View style={styles.ledgerDividerCol} />
-          <View style={styles.ledgerCell}>
-            <Text style={styles.subHeadLabel}>Particulars</Text>
-            <Text style={styles.subHeadAmt}>Amount</Text>
-          </View>
         </View>
 
-        {ledgerRows.length === 0 ? (
+        {itemRows.length === 0 ? (
           <View style={styles.ledgerEmpty}>
             <Text style={styles.mutedText}>No entries.</Text>
           </View>
         ) : (
-          ledgerRows.map((row) => (
+          itemRows.map((row) => (
             <View key={row.key} style={styles.ledgerRow}>
-              <LedgerCell entry={row.left} testPrefix="debit" />
-              <View style={styles.ledgerDividerCol} />
-              <LedgerCell entry={row.right} testPrefix="credit" />
+              <LedgerCell entry={row} testPrefix="debit" />
             </View>
           ))
         )}
@@ -207,16 +183,6 @@ export function FreightMemoDetailScreen() {
             <Text style={styles.totalLabel}>Freight Total</Text>
             <Text style={styles.totalAmt} testID="freight-total">{fmt(freightTotal)}</Text>
           </View>
-          <View style={styles.ledgerDividerCol} />
-          <View style={styles.ledgerCell}>
-            <Text style={styles.totalLabel}>Advance + Fuel</Text>
-            <Text style={styles.totalAmt} testID="credit-total">{fmt(creditTotal)}</Text>
-          </View>
-        </View>
-
-        <View style={styles.totalsSplit}>
-          <KV label="Advance Total" value={fmt(advanceTotal)} mono />
-          <KV label="Fuel Total" value={fmt(fuelTotal)} mono />
         </View>
 
         <View style={styles.netBox}>
@@ -296,7 +262,8 @@ function debitLabel(it: import('../../../shared/types/bilty').BiltyItem, i: numb
 }
 
 function fmt(n: unknown): string {
-  return toNum(n).toFixed(2);
+  const s = toNum(n).toFixed(2);
+  return s.endsWith('.00') ? s.slice(0, -3) : s;
 }
 
 function shortDate(iso: string | null | undefined): string {
@@ -318,7 +285,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     alignSelf: 'stretch',
-    maxWidth: 820,
     width: '100%',
     marginBottom: spacing.lg,
   },

@@ -1,6 +1,10 @@
 /**
  * VehicleMasterScreen — one row per truck. `name` = registration number (plate);
  * UNIQUE in DB so each truck appears once in Bilty Truck No autocomplete.
+ *
+ * Vehicles live as ledger_master rows in the dedicated "Vehicles" sub-group
+ * of Sundry Creditors; optional metadata (vehicle_type, owner) sits in
+ * `vehicle_meta` keyed by the ledger id.
  */
 
 import React, { useCallback, useEffect, useState } from 'react';
@@ -16,27 +20,25 @@ import { useAutoRefresh } from '../hooks/useAutoRefresh';
 import { ButtonPrimary } from '../components/ButtonPrimary';
 import { DataTable, type Column } from '../components/DataTable';
 import { InputField } from '../components/InputField';
+import { AutocompleteField } from '../components/AutocompleteField';
 import { Loader } from '../components/Loader';
 import { Modal } from '../components/Modal';
 import { SyncButton } from '../components/SyncButton';
 import { colors, radius, spacing, text } from '../constants/theme';
 import { vehicleMasterService } from '../services/vehicleMasterService';
-import {
-  validateDate, validateMobile, validatePAN, validateRequired,
-} from '../utils/masterValidators';
+import { ownerService } from '../services/ownerService';
+import { validateRequired } from '../utils/masterValidators';
 import type { VehicleMasterItem } from '../../../shared/types/vehicleMaster';
+import { useAuth } from '../context/AuthContext';
+import { canDoAction } from '../navigation/guards';
 
-const EMPTY_FORM = {
-  name: '', vehicle_type: '',
-  owner_name: '', owner_mobile: '', owner_pan: '',
-  chassis_no: '', permit_no: '', validity_date: '',
-  driver_name: '', driver_mobile: '',
-};
+const EMPTY_FORM = { name: '', vehicle_type: '', owner_name: '' };
 
 type FormState = typeof EMPTY_FORM;
 type FormErrors = Partial<Record<keyof FormState, string>>;
 
 export function VehicleMasterScreen() {
+  const { user } = useAuth();
   const [rows, setRows] = useState<VehicleMasterItem[] | null>(null);
   const [listError, setListError] = useState<string | null>(null);
 
@@ -46,6 +48,14 @@ export function VehicleMasterScreen() {
   const [errs, setErrs] = useState<FormErrors>({});
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [ownerOptions, setOwnerOptions] = useState<string[]>([]);
+
+  // Pull Owner Master rows for the autocomplete. Reused on every modal open.
+  useEffect(() => {
+    ownerService.list()
+      .then((rs) => setOwnerOptions(rs.map((r) => r.name).sort()))
+      .catch(() => setOwnerOptions([]));
+  }, []);
 
   const load = useCallback(async () => {
     setListError(null);
@@ -72,14 +82,7 @@ export function VehicleMasterScreen() {
     setForm({
       name: row.name ?? '',
       vehicle_type: row.vehicle_type ?? '',
-      owner_name: row.owner_name ?? '',
-      owner_mobile: row.owner_mobile ?? '',
-      owner_pan: row.owner_pan ?? '',
-      chassis_no: row.chassis_no ?? '',
-      permit_no: row.permit_no ?? '',
-      validity_date: row.validity_date ? String(row.validity_date).slice(0, 10) : '',
-      driver_name: row.driver_name ?? '',
-      driver_mobile: row.driver_mobile ?? '',
+      owner_name: (row as any).owner_name ?? '',
     });
     setErrs({});
     setFormError(null);
@@ -95,14 +98,6 @@ export function VehicleMasterScreen() {
     const e: FormErrors = {};
     const nameErr = validateRequired(s.name, 'Registration number');
     if (nameErr) e.name = nameErr;
-    const ownerMobErr = validateMobile(s.owner_mobile);
-    if (ownerMobErr) e.owner_mobile = ownerMobErr;
-    const ownerPanErr = validatePAN(s.owner_pan);
-    if (ownerPanErr) e.owner_pan = ownerPanErr;
-    const drvMobErr = validateMobile(s.driver_mobile);
-    if (drvMobErr) e.driver_mobile = drvMobErr;
-    const dateErr = validateDate(s.validity_date);
-    if (dateErr) e.validity_date = dateErr;
     return e;
   };
 
@@ -118,13 +113,6 @@ export function VehicleMasterScreen() {
         name: form.name.trim().toUpperCase(),
         vehicle_type: form.vehicle_type.trim() || null,
         owner_name: form.owner_name.trim() || null,
-        owner_mobile: form.owner_mobile.trim() || null,
-        owner_pan: form.owner_pan.trim().toUpperCase() || null,
-        chassis_no: form.chassis_no.trim().toUpperCase() || null,
-        permit_no: form.permit_no.trim() || null,
-        validity_date: form.validity_date.trim() || null,
-        driver_name: form.driver_name.trim() || null,
-        driver_mobile: form.driver_mobile.trim() || null,
       };
       if (editTarget) await vehicleMasterService.update(editTarget.id, payload);
       else await vehicleMasterService.create(payload);
@@ -145,21 +133,52 @@ export function VehicleMasterScreen() {
     await load();
   };
 
-  const columns: Column<VehicleMasterItem>[] = [
-    { key: 'name', label: 'Reg No', width: 150, render: (r) => r.name },
-    { key: 'vehicle_type', label: 'Type', width: 120, render: (r) => r.vehicle_type || '—' },
-    { key: 'owner_name', label: 'Owner', render: (r) => r.owner_name || '—' },
-    { key: 'driver_name', label: 'Driver', width: 160, render: (r) => r.driver_name || '—' },
-    {
-      key: 'validity_date', label: 'Validity', width: 120,
-      render: (r) => (r.validity_date ? String(r.validity_date).slice(0, 10) : '—'),
+  // Hard delete with native confirm + 409 in_use fallback.
+  const onDelete = useCallback(
+    async (row: VehicleMasterItem) => {
+      const ok =
+        typeof window !== 'undefined' && typeof window.confirm === 'function'
+          ? window.confirm(`Delete "${row.name}"? This cannot be undone.`)
+          : true;
+      if (!ok) return;
+      try {
+        await vehicleMasterService.delete(row.id);
+        await load();
+      } catch (err: any) {
+        const code = err?.response?.data?.error;
+        const message =
+          code === 'in_use'
+            ? 'Cannot delete — vehicle is referenced by an existing record.'
+            : 'Could not delete vehicle. Try again.';
+        if (typeof window !== 'undefined' && typeof window.alert === 'function') {
+          window.alert(message);
+        } else {
+          Alert.alert('Delete failed', message);
+        }
+      }
     },
+    [load],
+  );
+
+  const columns: Column<VehicleMasterItem>[] = [
+    { key: 'name', label: 'Reg No', render: (r) => r.name },
+    { key: 'vehicle_type', label: 'Type', render: (r) => r.vehicle_type || '—' },
+    { key: 'owner_name', label: 'Owner', render: (r) => (r as any).owner_name || '—' },
     {
-      key: 'actions', label: '', width: 80, align: 'right',
+      key: 'actions', label: '', width: 140, align: 'right',
       render: (r) => (
-        <Pressable onPress={() => openEdit(r)} accessibilityRole="button" testID={`edit-vehicle-${r.id}`}>
-          <Text style={styles.editAction}>Edit</Text>
-        </Pressable>
+        <View style={styles.actionsCell}>
+          {canDoAction(user, 'vehiclemaster', 'edit') && (
+            <Pressable onPress={() => openEdit(r)} accessibilityRole="button" testID={`edit-vehicle-${r.id}`}>
+              <Text style={styles.editAction}>Edit</Text>
+            </Pressable>
+          )}
+          {canDoAction(user, 'vehiclemaster', 'delete') && (
+            <Pressable onPress={() => onDelete(r)} accessibilityRole="button" testID={`delete-vehicle-${r.id}`}>
+              <Text style={styles.deleteAction}>Delete</Text>
+            </Pressable>
+          )}
+        </View>
       ),
     },
   ];
@@ -170,9 +189,11 @@ export function VehicleMasterScreen() {
         <Text style={styles.title}>Vehicle Master</Text>
         <View style={styles.headerActions}>
           <SyncButton onSync={onSync} testID="sync-vehicle-btn" />
-          <View style={styles.newBtn}>
-            <ButtonPrimary title="New Vehicle" onPress={openCreate} testID="new-vehicle-btn" />
-          </View>
+          {canDoAction(user, 'vehiclemaster', 'create') && (
+            <View style={styles.newBtn}>
+              <ButtonPrimary title="New Vehicle" onPress={openCreate} testID="new-vehicle-btn" />
+            </View>
+          )}
         </View>
       </View>
 
@@ -233,93 +254,14 @@ export function VehicleMasterScreen() {
             </View>
           </View>
 
-          <Text style={styles.sectionLabel}>Owner</Text>
-          <InputField
-            label="Owner Name"
+          <AutocompleteField
+            label="Owner"
             value={form.owner_name}
+            options={ownerOptions}
             onChangeText={(v) => setForm((f) => ({ ...f, owner_name: v }))}
-            fieldType="letters"
-            testID="vehicle-owner-name-input"
+            placeholder="Pick from Owner Master"
+            testID="vehicle-owner-input"
           />
-          <View style={styles.row}>
-            <View style={styles.rowHalf}>
-              <InputField
-                label="Owner Mobile"
-                value={form.owner_mobile}
-                onChangeText={(v) => setForm((f) => ({ ...f, owner_mobile: v }))}
-                error={errs.owner_mobile ?? null}
-                fieldType="phone"
-                testID="vehicle-owner-mobile-input"
-              />
-            </View>
-            <View style={styles.rowHalf}>
-              <InputField
-                label="Owner PAN"
-                value={form.owner_pan}
-                onChangeText={(v) => setForm((f) => ({ ...f, owner_pan: v.toUpperCase() }))}
-                error={errs.owner_pan ?? null}
-                fieldType="alphanumeric"
-                autoCapitalize="characters"
-                placeholder="AAAAA0000A"
-                testID="vehicle-owner-pan-input"
-              />
-            </View>
-          </View>
-
-          <Text style={styles.sectionLabel}>Documents</Text>
-          <View style={styles.row}>
-            <View style={styles.rowHalf}>
-              <InputField
-                label="Chassis No"
-                value={form.chassis_no}
-                onChangeText={(v) => setForm((f) => ({ ...f, chassis_no: v.toUpperCase() }))}
-                fieldType="alphanumeric"
-                autoCapitalize="characters"
-                testID="vehicle-chassis-input"
-              />
-            </View>
-            <View style={styles.rowHalf}>
-              <InputField
-                label="Permit No"
-                value={form.permit_no}
-                onChangeText={(v) => setForm((f) => ({ ...f, permit_no: v }))}
-                fieldType="alphanumeric"
-                testID="vehicle-permit-input"
-              />
-            </View>
-          </View>
-          <InputField
-            label="Validity Date"
-            value={form.validity_date}
-            onChangeText={(v) => setForm((f) => ({ ...f, validity_date: v }))}
-            error={errs.validity_date ?? null}
-            fieldType="date"
-            placeholder="YYYY-MM-DD"
-            testID="vehicle-validity-input"
-          />
-
-          <Text style={styles.sectionLabel}>Driver</Text>
-          <View style={styles.row}>
-            <View style={styles.rowHalf}>
-              <InputField
-                label="Driver Name"
-                value={form.driver_name}
-                onChangeText={(v) => setForm((f) => ({ ...f, driver_name: v }))}
-                fieldType="letters"
-                testID="vehicle-driver-name-input"
-              />
-            </View>
-            <View style={styles.rowHalf}>
-              <InputField
-                label="Driver Mobile"
-                value={form.driver_mobile}
-                onChangeText={(v) => setForm((f) => ({ ...f, driver_mobile: v }))}
-                error={errs.driver_mobile ?? null}
-                fieldType="phone"
-                testID="vehicle-driver-mobile-input"
-              />
-            </View>
-          </View>
 
           <View style={styles.actions}>
             <Pressable onPress={closeModal} style={styles.cancelBtn} testID="vehicle-cancel-btn">
@@ -364,12 +306,6 @@ const styles = StyleSheet.create({
   formErrorText: { ...text.label, color: colors.danger },
   row: { flexDirection: 'row', gap: spacing.sm },
   rowHalf: { flex: 1 },
-  sectionLabel: {
-    ...text.label,
-    fontSize: 13, color: colors.textMuted,
-    marginTop: spacing.sm, marginBottom: 4,
-    textTransform: 'uppercase', letterSpacing: 0.5,
-  },
   actions: {
     flexDirection: 'row', alignItems: 'center',
     justifyContent: 'flex-end', marginTop: spacing.md, gap: spacing.sm,
@@ -380,5 +316,13 @@ const styles = StyleSheet.create({
   editAction: {
     ...text.action, color: colors.primary,
     paddingHorizontal: spacing.sm, paddingVertical: spacing.xs,
+  },
+  deleteAction: {
+    ...text.action, color: colors.danger,
+    paddingHorizontal: spacing.sm, paddingVertical: spacing.xs,
+  },
+  actionsCell: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end',
+    gap: spacing.xs,
   },
 });

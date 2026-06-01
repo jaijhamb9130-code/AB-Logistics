@@ -29,10 +29,13 @@ import { toNum } from '../utils/biltyValidation';
 import type { FreightMemoListItem } from '../../../shared/types/freight';
 import type { BiltyListItem } from '../../../shared/types/bilty';
 import type { FreightStackParamList } from '../navigation/types';
+import { useAuth } from '../context/AuthContext';
+import { canDoAction } from '../navigation/guards';
 
 type Nav = NativeStackNavigationProp<FreightStackParamList, 'FreightList'>;
 
 export function FreightMemoScreen() {
+  const { user } = useAuth();
   const navigation = useNavigation<Nav>();
   const [rows, setRows] = useState<FreightMemoListItem[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -150,11 +153,13 @@ export function FreightMemoScreen() {
       <View style={styles.header}>
         <Text style={styles.title}>Freight Memos</Text>
         <View style={styles.headerBtn}>
-          <ButtonPrimary
-            title="Generate from Bilty"
-            onPress={openPicker}
-            testID="generate-memo-btn"
-          />
+          {canDoAction(user, 'freight', 'create') && (
+            <ButtonPrimary
+              title="Generate from Bilty"
+              onPress={openPicker}
+              testID="generate-memo-btn"
+            />
+          )}
         </View>
       </View>
 
@@ -172,7 +177,11 @@ export function FreightMemoScreen() {
             columns={columns}
             rows={rows}
             keyExtractor={(r) => r.id}
-            onRowPress={(r) => navigation.navigate('FreightDetail', { id: r.id })}
+            onRowPress={(r) => {
+              if (canDoAction(user, 'freight', 'view')) {
+                navigation.navigate('FreightDetail', { id: r.id });
+              }
+            }}
             emptyLabel="No freight memos yet — click Generate from Bilty."
             testID="freight-table"
           />
@@ -215,7 +224,8 @@ export function FreightMemoScreen() {
 }
 
 function fmt(n: unknown): string {
-  return toNum(n).toFixed(2);
+  const s = toNum(n).toFixed(2);
+  return s.endsWith('.00') ? s.slice(0, -3) : s;
 }
 
 function shortDate(iso: string | null | undefined): string {

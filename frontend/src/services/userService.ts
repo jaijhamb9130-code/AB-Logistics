@@ -50,4 +50,11 @@ export const userService = {
     const { data } = await http.post<UserListItem>(`/api/users/${id}/activate`);
     return data;
   },
+
+  // Hard delete. Admin-only on the backend. Returns 204 on success;
+  // 409 { error: 'in_use' } when the user authored records (FK from
+  // created_by columns) — caller should prompt to deactivate instead.
+  async delete(id: number): Promise<void> {
+    await http.delete(`/api/users/${id}`);
+  },
 };

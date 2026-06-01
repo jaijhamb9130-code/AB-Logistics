@@ -5,18 +5,14 @@
  */
 
 import type {
-  AdvanceDetail,
   BiltyDetail,
   BiltyItem,
-  FuelDetail,
   Numeric,
 } from './bilty';
 
 /** Base totals computed from bilty — same shape in list, detail, create. */
 export interface FreightTotals {
   freight_total: Numeric;
-  advance_total: Numeric;
-  fuel_total: Numeric;
   net_payable: Numeric;
 }
 
@@ -75,4 +71,4 @@ export interface FreightMemoByBilty extends FreightTotals {
 }
 
 // Re-export the bilty child shapes so the detail screen has one import surface.
-export type { AdvanceDetail, BiltyDetail, BiltyItem, FuelDetail };
+export type { BiltyDetail, BiltyItem };

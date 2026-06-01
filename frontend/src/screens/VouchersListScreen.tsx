@@ -21,6 +21,8 @@ import { voucherService } from '../services/voucherService';
 import { useAutoRefresh } from '../hooks/useAutoRefresh';
 import type { VoucherListItem } from '../../../shared/types/voucher';
 import type { BillingStackParamList } from '../navigation/types';
+import { useAuth } from '../context/AuthContext';
+import { canDoAction } from '../navigation/guards';
 
 type Nav = NativeStackNavigationProp<BillingStackParamList, 'VouchersList'>;
 
@@ -39,6 +41,7 @@ function fmtDate(iso: string | null): string {
 }
 
 export function VouchersListScreen() {
+  const { user } = useAuth();
   const navigation = useNavigation<Nav>();
   const [rows, setRows] = useState<VoucherListItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -92,7 +95,7 @@ export function VouchersListScreen() {
     },
     {
       key: 'party_name',
-      label: 'Party',
+      label: 'Ledger',
       render: (r) => <Text style={text.value} numberOfLines={1}>{r.party_name || '—'}</Text>,
     },
     {
@@ -111,16 +114,20 @@ export function VouchersListScreen() {
       <View style={styles.header}>
         <Text style={text.heading}>Billing — Vouchers</Text>
         <View style={styles.headerActions}>
-          <Pressable
-            style={styles.daybookBtn}
-            onPress={() => navigation.navigate('Daybook', { date: new Date().toISOString().slice(0, 10) })}
-          >
-            <Text style={[text.action, { color: colors.text }]}>Daybook</Text>
-          </Pressable>
-          <ButtonPrimary
-            title="+ New Voucher"
-            onPress={() => navigation.navigate('VoucherForm', undefined)}
-          />
+          {canDoAction(user, 'voucher', 'view') && (
+            <Pressable
+              style={styles.daybookBtn}
+              onPress={() => navigation.navigate('Daybook', { date: new Date().toISOString().slice(0, 10) })}
+            >
+              <Text style={[text.action, { color: colors.text }]}>Daybook</Text>
+            </Pressable>
+          )}
+          {canDoAction(user, 'voucher', 'create') && (
+            <ButtonPrimary
+              title="+ New Voucher"
+              onPress={() => navigation.navigate('VoucherForm', undefined)}
+            />
+          )}
         </View>
       </View>
 
@@ -170,7 +177,11 @@ export function VouchersListScreen() {
             columns={columns}
             rows={rows}
             keyExtractor={(r) => r.id}
-            onRowPress={(r) => navigation.navigate('VoucherForm', { id: r.id })}
+            onRowPress={(r) => {
+              if (canDoAction(user, 'voucher', 'view')) {
+                navigation.navigate('VoucherForm', { id: r.id });
+              }
+            }}
             emptyLabel="No vouchers yet — create one with + New Voucher"
             showSerialNo={false}
           />

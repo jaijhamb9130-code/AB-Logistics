@@ -104,9 +104,7 @@ describe('freight — POST /api/freight/generate', () => {
       bilty_id: 5,
       memo_date: '2026-04-18',
       freight_total: 1000,
-      advance_total: 500,
-      fuel_total: 200,
-      net_payable: 300,
+      net_payable: 1000,
     });
 
     const res = await request(app)
@@ -120,9 +118,7 @@ describe('freight — POST /api/freight/generate', () => {
       memo_no: 'FM-2026-000001',
       bilty_id: 5,
       freight_total: 1000,
-      advance_total: 500,
-      fuel_total: 200,
-      net_payable: 300,
+      net_payable: 1000,
     }));
     expect(freightModel.generateFromBilty).toHaveBeenCalledWith(5, 1);
   });
@@ -186,8 +182,8 @@ describe('freight — GET /api/freight (list)', () => {
       {
         id: 1, memo_no: 'FM-2026-000001', bilty_id: 5, bilty_no: 'BL-2026-000005',
         consignor: 'Acme', truck_no: 'DL-01',
-        freight_total: '1000.00', advance_total: '500.00', fuel_total: '200.00',
-        net_payable: '300.00', created_at: '2026-04-18T00:00:00.000Z',
+        freight_total: '1000.00', net_payable: '1000.00',
+        created_at: '2026-04-18T00:00:00.000Z',
       },
     ]);
 
@@ -216,13 +212,10 @@ describe('freight — GET /api/freight/:id and /by-bilty/:biltyId', () => {
     const token = adminAuth();
     freightModel.findById.mockResolvedValueOnce({
       id: 1, memo_no: 'FM-2026-000001', bilty_id: 5,
-      freight_total: '1000.00', advance_total: '500.00',
-      fuel_total: '200.00', net_payable: '300.00',
+      freight_total: '1000.00', net_payable: '1000.00',
       bilty: {
         id: 5, bilty_no: 'BL-2026-000005', consignor: 'Acme', truck_no: 'DL-01',
         items: [{ qty: 10, rate: 100 }],
-        advances: [{ amount: 500 }],
-        fuels: [{ amount: 200 }],
       },
     });
 
@@ -262,36 +255,29 @@ describe('freight — computeTotals math (FREIGHT-02, FREIGHT-03)', () => {
   // Exercise the real function directly so the math rule is pinned.
   const { computeTotals } = jest.requireActual('../src/models/freightModel');
 
-  test('freight_total = SUM(qty × rate); net_payable = freight − (adv + fuel)', () => {
+  test('freight_total = SUM(qty × rate); net_payable = freight_total', () => {
     const t = computeTotals({
       items: [
         { qty: 10, rate: 100 },    //  1,000
         { qty: '5', rate: '20' },  //    100
         { qty: 3, rate: 250 },     //    750
       ],
-      advances: [{ amount: 500 }, { amount: 250 }], // 750
-      fuels: [{ amount: 200 }, { amount: 100 }],    // 300
     });
     expect(t.freight_total).toBe(1850);
-    expect(t.advance_total).toBe(750);
-    expect(t.fuel_total).toBe(300);
-    expect(t.net_payable).toBe(800);
+    expect(t.net_payable).toBe(1850);
   });
 
-  test('handles empty arrays — all totals 0', () => {
-    expect(computeTotals({ items: [], advances: [], fuels: [] })).toEqual({
-      freight_total: 0, advance_total: 0, fuel_total: 0, net_payable: 0,
+  test('handles empty items array — all totals 0', () => {
+    expect(computeTotals({ items: [] })).toEqual({
+      freight_total: 0, net_payable: 0,
     });
   });
 
   test('rounds to 2dp to match DECIMAL(12,2) storage', () => {
     const t = computeTotals({
       items: [{ qty: 3, rate: 33.33 }],        // 99.99
-      advances: [{ amount: 10.005 }],          // 10.01 after round
-      fuels: [],
     });
     expect(t.freight_total).toBe(99.99);
-    expect(t.advance_total).toBe(10.01);
-    expect(t.net_payable).toBe(89.98);
+    expect(t.net_payable).toBe(99.99);
   });
 });

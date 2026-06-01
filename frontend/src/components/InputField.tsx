@@ -29,6 +29,8 @@ interface Props extends Omit<TextInputProps, 'style'> {
   rightSlot?: React.ReactNode;
   testID?: string;
   fieldType?: FieldType;
+  /** When true, render with mobile-form compact dimensions (38px input, 11px uppercase label, no marginBottom). */
+  compact?: boolean;
 }
 
 const KEYBOARD_TYPE: Record<FieldType, TextInputProps['keyboardType']> = {
@@ -65,35 +67,56 @@ export function InputField({
   onChangeText,
   testID,
   fieldType = 'text',
+  compact,
   ...rest
 }: Props) {
   const [focused, setFocused] = useState(false);
+  // Focus ring is a calm slate-blue, not the brand red — bright red on a
+  // focused field reads as a validation error to users (it isn't).
   const borderColor = error
     ? colors.danger
     : focused
-      ? colors.brandRed
+      ? '#2563EB'
       : '#CBD5E1';
 
   const glowColor = error
     ? 'rgba(239, 68, 68, 0.15)'
-    : 'rgba(247, 72, 61, 0.15)';
+    : 'rgba(37, 99, 235, 0.12)';
+
+  const isNumeric = fieldType === 'integer' || fieldType === 'decimal';
+
+  // For numeric fields: hide leading zeros so the user can start typing
+  // immediately, and store "0" when the field is left blank so form state
+  // remains a valid number.
+  const isZeroish =
+    isNumeric && (value === '' || value === '0' || value === '0.0' || Number(value) === 0);
+  const displayValue = isZeroish ? '' : value;
 
   const handleChange = (raw: string) => {
     if (!onChangeText) return;
+    if (isNumeric && raw === '') {
+      onChangeText('0');
+      return;
+    }
     onChangeText(filterValue(raw, fieldType));
   };
 
   return (
-    <View style={styles.wrap}>
-      <Text style={styles.label}>{label}</Text>
+    <View style={[styles.wrap, compact && styles.wrapCompact]}>
+      <Text style={[styles.label, compact && styles.labelCompact]}>{label}</Text>
       <View style={[
         styles.row,
         { borderColor },
+        compact && styles.rowCompact,
         focused && Platform.OS === 'web' && ({ boxShadow: `0 0 0 3px ${glowColor}` } as any),
       ]}>
         <TextInput
-          style={[styles.input, Platform.OS === 'web' && ({ outlineStyle: 'none', borderWidth: 0 } as any)]}
-          value={value}
+          style={[
+            styles.input,
+            compact && styles.inputCompact,
+            Platform.OS === 'web' && ({ outlineStyle: 'none', borderWidth: 0 } as any),
+          ]}
+          value={displayValue}
           onChangeText={handleChange}
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
@@ -113,12 +136,12 @@ export function InputField({
 
 const styles = StyleSheet.create({
   wrap: {
-    marginBottom: spacing.sm,
+    marginBottom: 4,
   },
   label: {
     fontSize: 12,
     color: colors.textLabel,
-    marginBottom: 3,
+    marginBottom: 2,
     fontFamily: typography.uiBold,
     letterSpacing: 0.2,
   },
@@ -128,12 +151,12 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     borderWidth: 1,
     backgroundColor: colors.card,
-    paddingHorizontal: spacing.md,
+    paddingHorizontal: 10,
   },
   input: {
     flex: 1,
-    paddingVertical: spacing.sm,
-    fontSize: 14,
+    paddingVertical: 6,
+    fontSize: 13,
     color: colors.text,
     fontFamily: typography.ui,
   },
@@ -148,5 +171,26 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: colors.danger,
     fontFamily: typography.ui,
+  },
+
+  // Compact variant — used by mobile bilty wizard for tight, balanced rows.
+  wrapCompact: { marginBottom: 0 },
+  labelCompact: {
+    fontSize: 10,
+    color: colors.textMuted,
+    fontFamily: typography.uiHeavy,
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+    marginBottom: 3,
+  },
+  rowCompact: {
+    paddingHorizontal: 10,
+    minHeight: 38,
+  },
+  inputCompact: {
+    paddingVertical: 0,
+    height: 36,
+    fontSize: 13,
+    fontFamily: typography.uiMedium,
   },
 });

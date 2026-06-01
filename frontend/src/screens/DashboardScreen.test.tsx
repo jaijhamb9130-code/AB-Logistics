@@ -8,7 +8,6 @@
 jest.mock('../services/reportService', () => ({
   reportService: {
     getSummary: jest.fn(),
-    getHistory: jest.fn(),
   },
 }));
 
@@ -16,7 +15,6 @@ jest.mock('../services/reportService', () => ({
 const { reportService } = require('../services/reportService') as {
   reportService: {
     getSummary: jest.Mock;
-    getHistory: jest.Mock;
   };
 };
 
@@ -25,9 +23,8 @@ beforeEach(() => {
 });
 
 describe('reportService — shape', () => {
-  it('exposes getSummary / getHistory', () => {
+  it('exposes getSummary', () => {
     expect(typeof reportService.getSummary).toBe('function');
-    expect(typeof reportService.getHistory).toBe('function');
   });
 });
 
@@ -39,7 +36,7 @@ describe('reportService.getSummary (contract)', () => {
       ledger_groups: 3,
       active_users: 3,
       permissions: {
-        bilty: true, freight: true, report: true, ledgergroup: true,
+        bilty: true, freight: true, daybook: true, ledgergroup: true, user: true,
       },
     });
     const s = await reportService.getSummary();
@@ -48,7 +45,8 @@ describe('reportService.getSummary (contract)', () => {
     expect(s.ledger_groups).toBe(3);
     expect(s.active_users).toBe(3);
     expect(s.permissions.bilty).toBe(true);
-    expect(s.permissions.report).toBe(true);
+    expect(s.permissions.daybook).toBe(true);
+    expect(s.permissions.user).toBe(true);
   });
 
   it('staff payload has false flags for unpermitted stats — UI hides these cards', async () => {
@@ -58,13 +56,14 @@ describe('reportService.getSummary (contract)', () => {
       ledger_groups: 0,
       active_users: 0,
       permissions: {
-        bilty: true, freight: true, report: false, ledgergroup: false,
+        bilty: true, freight: true, daybook: false, ledgergroup: false, user: false,
       },
     });
     const s = await reportService.getSummary();
     expect(s.permissions.bilty).toBe(true);
-    expect(s.permissions.report).toBe(false);
+    expect(s.permissions.daybook).toBe(false);
     expect(s.permissions.ledgergroup).toBe(false);
+    expect(s.permissions.user).toBe(false);
     // Unpermitted stats are zero-valued server-side; UI renders "—" when !visible
     expect(s.ledger_groups).toBe(0);
     expect(s.active_users).toBe(0);

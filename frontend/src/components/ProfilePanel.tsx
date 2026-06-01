@@ -6,15 +6,18 @@ import {
   StyleSheet,
   Text,
   View,
+  useWindowDimensions,
 } from 'react-native';
 import { colors, spacing, typography } from '../constants/theme';
 import { reportService } from '../services/reportService';
 import type { ReportSummary } from '../../../shared/types/report';
+import { canAccessTab } from '../navigation/guards';
+import type { Role } from '../../../shared/types/user';
 
 interface Props {
   visible: boolean;
   onClose: () => void;
-  user: { username: string; role: string } | null;
+  user: { username: string; role: string; permissions?: string[] } | null;
   logout: () => void;
   onNavigate?: (tab: string) => void;
 }
@@ -22,7 +25,11 @@ interface Props {
 const PANEL_WIDTH = 320;
 
 export function ProfilePanel({ visible, onClose, user, logout, onNavigate }: Props) {
-  const slideAnim = useRef(new Animated.Value(PANEL_WIDTH)).current;
+  const { width: screenWidth } = useWindowDimensions();
+  // On small screens use almost the full width, capped at 360 for tablet ergonomics.
+  const panelWidth =
+    screenWidth < 768 ? Math.min(360, screenWidth - 32) : PANEL_WIDTH;
+  const slideAnim = useRef(new Animated.Value(panelWidth)).current;
   const overlayAnim = useRef(new Animated.Value(0)).current;
   const [mounted, setMounted] = useState(false);
   const [summary, setSummary] = useState<ReportSummary | null>(null);
@@ -60,7 +67,7 @@ export function ProfilePanel({ visible, onClose, user, logout, onNavigate }: Pro
     } else {
       Animated.parallel([
         Animated.timing(slideAnim, {
-          toValue: PANEL_WIDTH,
+          toValue: panelWidth,
           duration: 200,
           useNativeDriver: true,
         }),
@@ -71,7 +78,7 @@ export function ProfilePanel({ visible, onClose, user, logout, onNavigate }: Pro
         }),
       ]).start(() => setMounted(false));
     }
-  }, [visible, slideAnim, overlayAnim, loadStats]);
+  }, [visible, slideAnim, overlayAnim, loadStats, panelWidth]);
 
   if (!mounted) return null;
 
@@ -90,7 +97,10 @@ export function ProfilePanel({ visible, onClose, user, logout, onNavigate }: Pro
 
       {/* Panel */}
       <Animated.View
-        style={[styles.panel, { transform: [{ translateX: slideAnim }] }]}
+        style={[
+          styles.panel,
+          { width: panelWidth, transform: [{ translateX: slideAnim }] },
+        ]}
       >
         <ScrollView
           showsVerticalScrollIndicator={false}
@@ -120,31 +130,55 @@ export function ProfilePanel({ visible, onClose, user, logout, onNavigate }: Pro
           {/* Divider */}
           <View style={styles.divider} />
 
-          {/* Stats */}
-          <Text style={styles.sectionLabel}>YOUR ACTIVITY</Text>
-          <View style={styles.statsGrid}>
-            <StatCard
-              label="Bilties"
-              value={summary?.bilties ?? null}
-              loading={loadingStats}
-              accent="#FFCC3D"
-              onPress={onNavigate ? () => onNavigate('Bilty') : undefined}
-            />
-            <StatCard
-              label="Freight Memos"
-              value={summary?.freight_memos ?? null}
-              loading={loadingStats}
-              accent="#F7483D"
-              onPress={onNavigate ? () => onNavigate('Freight') : undefined}
-            />
-            <StatCard
-              label="Ledger Groups"
-              value={summary?.ledger_groups ?? null}
-              loading={loadingStats}
-              accent="#60A5FA"
-              onPress={onNavigate ? () => onNavigate('LedgerGroups') : undefined}
-            />
-          </View>
+          {/* Stats — gated by tab permissions so staff only see what they can open */}
+          {(() => {
+            const guardUser = user
+              ? { role: user.role as Role, permissions: user.permissions }
+              : null;
+            const canBilty = canAccessTab('Bilty', guardUser);
+            const canFreight = canAccessTab('Freight', guardUser);
+            const canLedgerGroups = canAccessTab('LedgerGroups', guardUser);
+            const canUsers = canAccessTab('Users', guardUser);
+            const anyVisible = canBilty || canFreight || canLedgerGroups || canUsers;
+            if (!anyVisible) return null;
+            return (
+              <>
+                <Text style={styles.sectionLabel}>YOUR ACTIVITY</Text>
+                <View style={styles.statsGrid}>
+                  {canBilty ? (
+                    <StatCard
+                      label="Bilties"
+                      value={summary?.bilties ?? null}
+                      loading={loadingStats}
+                      accent="#FFCC3D"
+                      onPress={onNavigate ? () => onNavigate('Bilty') : undefined}
+                    />
+                  ) : null}
+                  {canFreight ? (
+                    <StatCard
+                      label="Freight Memos"
+                      value={summary?.freight_memos ?? null}
+                      loading={loadingStats}
+                      accent="#F7483D"
+                      onPress={onNavigate ? () => onNavigate('Freight') : undefined}
+                    />
+                  ) : null}
+                  {canLedgerGroups ? (
+                    <StatCard
+                      label="Ledger Groups"
+                      value={summary?.ledger_groups ?? null}
+                      loading={loadingStats}
+                      accent="#60A5FA"
+                      onPress={onNavigate ? () => onNavigate('LedgerGroups') : undefined}
+                    />
+                  ) : null}
+                  {canUsers && onNavigate ? (
+                    <NavCard label="Users" accent="#8B5CF6" onPress={() => onNavigate('Users')} />
+                  ) : null}
+                </View>
+              </>
+            );
+          })()}
 
           {/* Divider */}
           <View style={styles.divider} />
@@ -194,6 +228,41 @@ function StatCard({
         </Text>
         <Text style={styles.statLabel}>{label}</Text>
         {onPress ? <Text style={styles.statArrow}>→</Text> : null}
+      </Animated.View>
+    </Pressable>
+  );
+}
+
+function NavCard({
+  label,
+  accent,
+  onPress,
+}: {
+  label: string;
+  accent: string;
+  onPress: () => void;
+}) {
+  const scaleAnim = useRef(new Animated.Value(1)).current;
+
+  const onPressIn = () =>
+    Animated.spring(scaleAnim, { toValue: 0.97, useNativeDriver: true, speed: 50 }).start();
+  const onPressOut = () =>
+    Animated.spring(scaleAnim, { toValue: 1, useNativeDriver: true, speed: 30 }).start();
+
+  return (
+    <Pressable
+      onPress={onPress}
+      onPressIn={onPressIn}
+      onPressOut={onPressOut}
+      accessibilityRole="button"
+      style={{ cursor: 'pointer' } as any}
+    >
+      <Animated.View
+        style={[styles.statCard, { transform: [{ scale: scaleAnim }] }]}
+      >
+        <View style={[styles.statAccentLine, { backgroundColor: accent }]} />
+        <Text style={[styles.statLabel, styles.navCardLabel]}>{label}</Text>
+        <Text style={styles.statArrow}>→</Text>
       </Animated.View>
     </Pressable>
   );
@@ -377,6 +446,12 @@ const styles = StyleSheet.create({
     fontFamily: typography.ui,
     fontSize: 13,
     flex: 1,
+  },
+  navCardLabel: {
+    marginLeft: 14,
+    color: '#0F172A',
+    fontFamily: typography.uiBold,
+    fontSize: 14,
   },
   statArrow: {
     color: '#CBD5E1',

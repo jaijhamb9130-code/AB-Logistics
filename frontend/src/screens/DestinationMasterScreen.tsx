@@ -1,10 +1,10 @@
 /**
  * DestinationMasterScreen — flat single table.
- * Branch field is an AutocompleteField fed by distinct branches in the same
- * table; user can pick an existing branch or type a new one.
+ * Only the destination name is captured here; `branch`, `city`, `state`, and
+ * `pincode` columns still exist in the DB schema but are written as null.
  */
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   Alert,
   Pressable,
@@ -20,17 +20,19 @@ import { InputField } from '../components/InputField';
 import { Loader } from '../components/Loader';
 import { Modal } from '../components/Modal';
 import { SyncButton } from '../components/SyncButton';
-import { AutocompleteField } from '../components/AutocompleteField';
 import { colors, radius, spacing, text } from '../constants/theme';
 import { destinationService } from '../services/destinationService';
-import { validatePincode, validateRequired } from '../utils/masterValidators';
+import { validateRequired } from '../utils/masterValidators';
 import type { DestinationMasterItem } from '../../../shared/types/destinationMaster';
+import { useAuth } from '../context/AuthContext';
+import { canDoAction } from '../navigation/guards';
 
-const EMPTY_FORM = { branch: '', name: '', city: '', state: '', pincode: '' };
+const EMPTY_FORM = { name: '' };
 type FormState = typeof EMPTY_FORM;
 type FormErrors = Partial<Record<keyof FormState, string>>;
 
 export function DestinationMasterScreen() {
+  const { user } = useAuth();
   const [rows, setRows] = useState<DestinationMasterItem[] | null>(null);
   const [listError, setListError] = useState<string | null>(null);
 
@@ -53,13 +55,6 @@ export function DestinationMasterScreen() {
 
   useAutoRefresh(load);
 
-  // Distinct branches feed the branch autocomplete inside the form.
-  const branchOptions = useMemo(
-    () =>
-      [...new Set((rows ?? []).map((r) => r.branch).filter((v): v is string => Boolean(v)))].sort(),
-    [rows]
-  );
-
   const openCreate = useCallback(() => {
     setEditTarget(null);
     setForm(EMPTY_FORM);
@@ -70,13 +65,7 @@ export function DestinationMasterScreen() {
 
   const openEdit = useCallback((row: DestinationMasterItem) => {
     setEditTarget(row);
-    setForm({
-      branch: row.branch ?? '',
-      name: row.name ?? '',
-      city: row.city ?? '',
-      state: row.state ?? '',
-      pincode: row.pincode ?? '',
-    });
+    setForm({ name: row.name ?? '' });
     setErrs({});
     setFormError(null);
     setModalOpen(true);
@@ -91,8 +80,6 @@ export function DestinationMasterScreen() {
     const e: FormErrors = {};
     const nameErr = validateRequired(s.name, 'Destination name');
     if (nameErr) e.name = nameErr;
-    const pinErr = validatePincode(s.pincode);
-    if (pinErr) e.pincode = pinErr;
     return e;
   };
 
@@ -105,11 +92,11 @@ export function DestinationMasterScreen() {
     setFormError(null);
     try {
       const payload = {
-        branch: form.branch.trim() || null,
+        branch: null,
         name: form.name.trim(),
-        city: form.city.trim() || null,
-        state: form.state.trim() || null,
-        pincode: form.pincode.trim() || null,
+        city: null,
+        state: null,
+        pincode: null,
       };
       if (editTarget) await destinationService.update(editTarget.id, payload);
       else await destinationService.create(payload);
@@ -128,20 +115,50 @@ export function DestinationMasterScreen() {
     await load();
   };
 
+  // Hard delete with native confirm + 409 in_use fallback.
+  const onDelete = useCallback(
+    async (row: DestinationMasterItem) => {
+      const ok =
+        typeof window !== 'undefined' && typeof window.confirm === 'function'
+          ? window.confirm(`Delete "${row.name}"? This cannot be undone.`)
+          : true;
+      if (!ok) return;
+      try {
+        await destinationService.delete(row.id);
+        await load();
+      } catch (err: any) {
+        const code = err?.response?.data?.error;
+        const message =
+          code === 'in_use'
+            ? 'Cannot delete — destination is referenced by an existing record.'
+            : 'Could not delete destination. Try again.';
+        if (typeof window !== 'undefined' && typeof window.alert === 'function') {
+          window.alert(message);
+        } else {
+          Alert.alert('Delete failed', message);
+        }
+      }
+    },
+    [load],
+  );
+
   const columns: Column<DestinationMasterItem>[] = [
-    { key: 'branch', label: 'Branch', width: 180, render: (r) => r.branch || '—' },
     { key: 'name', label: 'Destination', render: (r) => r.name },
     {
-      key: 'city', label: 'City / State', width: 220,
-      render: (r) => [r.city, r.state].filter(Boolean).join(', ') || '—',
-    },
-    { key: 'pincode', label: 'Pincode', width: 100, render: (r) => r.pincode || '—' },
-    {
-      key: 'actions', label: '', width: 80, align: 'right',
+      key: 'actions', label: '', width: 140, align: 'right',
       render: (r) => (
-        <Pressable onPress={() => openEdit(r)} accessibilityRole="button" testID={`edit-dest-${r.id}`}>
-          <Text style={styles.editAction}>Edit</Text>
-        </Pressable>
+        <View style={styles.actionsCell}>
+          {canDoAction(user, 'destinationmaster', 'edit') && (
+            <Pressable onPress={() => openEdit(r)} accessibilityRole="button" testID={`edit-dest-${r.id}`}>
+              <Text style={styles.editAction}>Edit</Text>
+            </Pressable>
+          )}
+          {canDoAction(user, 'destinationmaster', 'delete') && (
+            <Pressable onPress={() => onDelete(r)} accessibilityRole="button" testID={`delete-dest-${r.id}`}>
+              <Text style={styles.deleteAction}>Delete</Text>
+            </Pressable>
+          )}
+        </View>
       ),
     },
   ];
@@ -152,9 +169,11 @@ export function DestinationMasterScreen() {
         <Text style={styles.title}>Destination Master</Text>
         <View style={styles.headerActions}>
           <SyncButton onSync={onSync} testID="sync-dest-btn" />
-          <View style={styles.newBtn}>
-            <ButtonPrimary title="New Destination" onPress={openCreate} testID="new-dest-btn" />
-          </View>
+          {canDoAction(user, 'destinationmaster', 'create') && (
+            <View style={styles.newBtn}>
+              <ButtonPrimary title="New Destination" onPress={openCreate} testID="new-dest-btn" />
+            </View>
+          )}
         </View>
       </View>
 
@@ -191,14 +210,6 @@ export function DestinationMasterScreen() {
             </View>
           ) : null}
 
-          <AutocompleteField
-            label="Branch"
-            value={form.branch}
-            options={branchOptions}
-            onChangeText={(v) => setForm((f) => ({ ...f, branch: v }))}
-            placeholder="Type branch name (or leave blank)"
-            testID="dest-branch-input"
-          />
           <InputField
             label="Destination Name *"
             value={form.name}
@@ -206,34 +217,6 @@ export function DestinationMasterScreen() {
             error={errs.name ?? null}
             fieldType="letters"
             testID="dest-name-input"
-          />
-          <View style={styles.row}>
-            <View style={styles.rowHalf}>
-              <InputField
-                label="City"
-                value={form.city}
-                onChangeText={(v) => setForm((f) => ({ ...f, city: v }))}
-                fieldType="letters"
-                testID="dest-city-input"
-              />
-            </View>
-            <View style={styles.rowHalf}>
-              <InputField
-                label="State"
-                value={form.state}
-                onChangeText={(v) => setForm((f) => ({ ...f, state: v }))}
-                fieldType="letters"
-                testID="dest-state-input"
-              />
-            </View>
-          </View>
-          <InputField
-            label="Pincode"
-            value={form.pincode}
-            onChangeText={(v) => setForm((f) => ({ ...f, pincode: v }))}
-            error={errs.pincode ?? null}
-            fieldType="integer"
-            testID="dest-pincode-input"
           />
 
           <View style={styles.actions}>
@@ -289,5 +272,13 @@ const styles = StyleSheet.create({
   editAction: {
     ...text.action, color: colors.primary,
     paddingHorizontal: spacing.sm, paddingVertical: spacing.xs,
+  },
+  deleteAction: {
+    ...text.action, color: colors.danger,
+    paddingHorizontal: spacing.sm, paddingVertical: spacing.xs,
+  },
+  actionsCell: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end',
+    gap: spacing.xs,
   },
 });

@@ -161,7 +161,7 @@ export function DashboardScreen() {
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
   const perms = summary?.permissions ?? {
-    bilty: false, freight: false, report: false, ledgergroup: false,
+    bilty: false, freight: false, daybook: false, ledgergroup: false, user: false,
   };
 
   return (
@@ -207,12 +207,14 @@ export function DashboardScreen() {
             testID="stat-freight"
           />
           <StatCard
-            label="Reports"
+            label="Daybook"
             value={summary?.bilties ?? 0}
-            visible={perms.report}
+            visible={perms.daybook}
             accent={colors.brandYellow}
-            onPress={() => navigation.navigate('Reports')}
-            testID="stat-reports"
+            onPress={() =>
+              (navigation as any).navigate('Billing', { screen: 'Daybook' })
+            }
+            testID="stat-daybook"
           />
           <StatCard
             label="Ledger Groups"
@@ -225,7 +227,7 @@ export function DashboardScreen() {
           <StatCard
             label="Active Users"
             value={summary?.active_users ?? 0}
-            visible={perms.report}
+            visible={perms.user}
             accent="#3B82F6"
             onPress={() => navigation.navigate('Users')}
             testID="stat-users"

@@ -60,8 +60,6 @@ describe('biltyService.create (contract)', () => {
     const payload = {
       header: { consignor: 'Acme', truck_no: 'DL-01' } as any,
       items: [{ qty: 10, rate: 100 } as any],
-      advances: [],
-      fuels: [],
     };
     const res = await biltyService.create(payload);
     expect(res).toEqual({ id: 5, bilty_no: 'BL-2026-000005' });
@@ -77,13 +75,9 @@ describe('biltyService.get (contract)', () => {
       consignor: 'Acme',
       truck_no: 'DL-01',
       items: [{ id: 1, qty: 10, rate: 100 }],
-      advances: [],
-      fuels: [],
     });
     const d = await biltyService.get(5);
     expect(d.id).toBe(5);
     expect(Array.isArray(d.items)).toBe(true);
-    expect(Array.isArray(d.advances)).toBe(true);
-    expect(Array.isArray(d.fuels)).toBe(true);
   });
 });

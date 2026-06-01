@@ -12,7 +12,7 @@ import { colors, radius, spacing, typography } from '../constants/theme';
 
 const ITEM_HEIGHT = 42;
 const VISIBLE_ITEMS = 7;
-const MIN_CHARS = 3;
+const MIN_CHARS = 2;
 
 interface Props {
   label: string;
@@ -22,6 +22,8 @@ interface Props {
   placeholder?: string;
   error?: string | null;
   testID?: string;
+  /** When true, render with mobile-form compact dimensions (38px input, 11px uppercase label, no marginBottom). */
+  compact?: boolean;
 }
 
 export function AutocompleteField({
@@ -32,6 +34,7 @@ export function AutocompleteField({
   placeholder,
   error,
   testID,
+  compact,
 }: Props) {
   const [focused, setFocused] = useState(false);
   // Whether the dropdown should be visible. Decoupled from `focused` because
@@ -42,6 +45,11 @@ export function AutocompleteField({
   // Reset to 0 whenever the filtered list changes so the user always starts
   // on the first match.
   const [highlightIndex, setHighlightIndex] = useState(0);
+  // Whether the dropdown should open ABOVE the input. Computed from the
+  // input's distance to the viewport bottom — keeps the popover inside the
+  // viewport so the browser never auto-scrolls the page on focus.
+  const [openUp, setOpenUp] = useState(false);
+  const inputRef = useRef<any>(null);
   // Tracks whether a press is currently in progress on a dropdown item.
   // On web, the TextInput's onBlur fires synchronously when you click a
   // sibling element — so without this guard, the list would unmount before
@@ -49,9 +57,15 @@ export function AutocompleteField({
   // fires on mousedown, BEFORE blur) and clear it after the selection commits.
   const pressingRef = useRef(false);
 
-  const filtered =
-    value.length >= MIN_CHARS
-      ? options.filter((o) => o.toLowerCase().includes(value.toLowerCase()))
+  // Exact match → show every option so user can switch. Below MIN_CHARS the
+  // list stays closed; otherwise filter by case-insensitive substring.
+  const valTrim = value.trim();
+  const valLower = valTrim.toLowerCase();
+  const exactMatch = valTrim !== '' && options.some((o) => o.toLowerCase() === valLower);
+  const filtered = exactMatch
+    ? options
+    : valTrim.length >= MIN_CHARS
+      ? options.filter((o) => o.toLowerCase().includes(valLower))
       : [];
 
   const showList = focused && listOpen && filtered.length > 0;
@@ -71,10 +85,27 @@ export function AutocompleteField({
     setListOpen(true);
   };
 
-  // Reset highlight to the first match whenever the filtered list shifts.
+  // Highlight the currently selected option when the list opens; otherwise
+  // fall back to the first match.
   useEffect(() => {
-    setHighlightIndex(0);
+    const idx = filtered.findIndex((o) => o.toLowerCase() === valLower);
+    setHighlightIndex(idx >= 0 ? idx : 0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filtered.length, value]);
+
+  // Decide whether the dropdown should open above the input rather than below.
+  // Recomputed each time the list opens so the popover stays inside the
+  // viewport — that's what keeps the browser from auto-scrolling the page.
+  React.useLayoutEffect(() => {
+    if (Platform.OS !== 'web' || !showList || !inputRef.current) return;
+    const el: any = inputRef.current;
+    if (el && typeof el.getBoundingClientRect === 'function') {
+      const rect = el.getBoundingClientRect();
+      const popoverH = ITEM_HEIGHT * Math.min(filtered.length, VISIBLE_ITEMS) + 4;
+      const spaceBelow = window.innerHeight - rect.bottom;
+      setOpenUp(spaceBelow < popoverH && rect.top > popoverH);
+    }
+  }, [showList, filtered.length]);
 
   // Keyboard navigation on web — attach a real DOM listener while the list
   // is open. This is the only reliable way to capture arrow / Enter / Escape
@@ -121,12 +152,17 @@ export function AutocompleteField({
   };
 
   return (
-    <View style={styles.wrap}>
-      <Text style={styles.label}>{label}</Text>
+    <View style={[
+      styles.wrap,
+      compact && styles.wrapCompact,
+      showList && { zIndex: 9999, ...(Platform.OS === 'web' ? ({ position: 'relative' } as any) : {}) },
+    ]}>
+      <Text style={[styles.label, compact && styles.labelCompact]}>{label}</Text>
       <TextInput
+        ref={inputRef}
         value={value}
         onChangeText={handleChangeText}
-        onFocus={() => setFocused(true)}
+        onFocus={() => { setFocused(true); setListOpen(true); }}
         onBlur={() => {
           // Skip closing if user is currently pressing a dropdown item — the
           // press handler will close the list itself once the selection commits.
@@ -141,10 +177,11 @@ export function AutocompleteField({
         onKeyPress={handleKeyPress}
         style={[
           styles.field,
+          compact && styles.fieldCompact,
           error ? styles.fieldError : null,
           focused && !showList && styles.fieldFocused,
-          showList && styles.fieldOpen,
-          Platform.OS === 'web' && ({ outlineStyle: 'none' } as any),
+          showList && (openUp ? styles.fieldOpenUp : styles.fieldOpen),
+          Platform.OS === 'web' && ({ outlineStyle: 'none', scrollMarginBlock: '120px' } as any),
         ]}
         testID={testID}
       />
@@ -152,7 +189,7 @@ export function AutocompleteField({
 
       {showList ? (
         <View
-          style={styles.listWrap}
+          style={[styles.listWrap, openUp ? styles.listWrapAbove : styles.listWrapBelow]}
           // On web: preventDefault on mousedown stops the TextInput from
           // blurring at all while the user clicks an option — so the click
           // completes cleanly on the Pressable. This is the standard fix for
@@ -190,7 +227,7 @@ export function AutocompleteField({
                 ]}
                 accessibilityRole="menuitem"
               >
-                <Text style={[styles.itemText, opt === value && styles.itemTextActive]}>
+                <Text style={[styles.itemText, (i === highlightIndex || opt === value) && styles.itemTextActive]}>
                   {opt}
                 </Text>
               </Pressable>
@@ -203,35 +240,31 @@ export function AutocompleteField({
 }
 
 const styles = StyleSheet.create({
-  wrap: { marginBottom: spacing.sm },
+  wrap: { marginBottom: 4, position: 'relative' as const, zIndex: 1 },
   label: {
-    fontSize: 13,
-    lineHeight: 18,
+    fontSize: 12,
+    lineHeight: 16,
     color: colors.textMuted,
     fontFamily: typography.uiBold,
-    marginBottom: 4,
+    marginBottom: 2,
     letterSpacing: 0.2,
   },
   field: {
-    height: 44,
-    paddingHorizontal: spacing.md,
+    height: 34,
+    paddingHorizontal: 10,
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: radius.md,
     backgroundColor: colors.card,
-    fontSize: 14,
-    lineHeight: 20,
+    fontSize: 13,
+    lineHeight: 18,
     color: colors.text,
     fontFamily: typography.ui,
   },
   fieldError: { borderColor: colors.danger },
-  fieldFocused: { borderColor: colors.brandRed, borderWidth: 2 },
-  fieldOpen: {
-    borderColor: colors.brandRed,
-    borderWidth: 2,
-    borderBottomLeftRadius: 0,
-    borderBottomRightRadius: 0,
-  },
+  fieldFocused: { borderColor: '#94A3B8' },
+  fieldOpen: { borderColor: '#94A3B8' },
+  fieldOpenUp: { borderColor: '#94A3B8' },
   errText: {
     color: colors.danger,
     fontSize: 12,
@@ -240,24 +273,41 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   listWrap: {
-    borderWidth: 2,
-    borderTopWidth: 0,
-    borderColor: colors.brandRed,
-    borderBottomLeftRadius: radius.md,
-    borderBottomRightRadius: radius.md,
+    position: 'absolute' as const,
+    left: 0,
+    right: 0,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: radius.md,
     backgroundColor: colors.card,
+    paddingVertical: 4,
     overflow: 'hidden',
+    zIndex: 99999,
+    elevation: 24,
+    ...(Platform.OS === 'web'
+      ? ({ boxShadow: '0 12px 28px rgba(15,23,42,0.14), 0 4px 10px rgba(15,23,42,0.08)' } as any)
+      : {
+          shadowColor: '#000',
+          shadowOpacity: 0.16,
+          shadowRadius: 18,
+          shadowOffset: { width: 0, height: 8 },
+        }),
+  },
+  listWrapBelow: {
+    top: '100%' as any,
+    marginTop: 4,
+  },
+  listWrapAbove: {
+    bottom: '100%' as any,
+    marginBottom: 4,
   },
   item: {
     paddingHorizontal: spacing.md,
     justifyContent: 'center',
-    borderBottomWidth: 1,
-    borderBottomColor: '#F1F5F9',
   },
-  itemActive: { backgroundColor: '#FEF2F2' },
-  itemPressed: { backgroundColor: '#F5F7FA' },
-  // Highlighted via keyboard arrows or mouse hover — light grey background.
-  itemHighlight: { backgroundColor: '#EEF2F7' },
+  itemActive: { backgroundColor: '#2563EB' },
+  itemPressed: { backgroundColor: '#1D4ED8' },
+  itemHighlight: { backgroundColor: '#2563EB' },
   itemText: {
     fontSize: 14,
     lineHeight: 20,
@@ -265,7 +315,24 @@ const styles = StyleSheet.create({
     fontFamily: typography.ui,
   },
   itemTextActive: {
-    color: colors.brandRed,
+    color: '#FFFFFF',
     fontFamily: typography.uiBold,
+  },
+
+  // Compact variant — used by mobile bilty wizard for tight, balanced rows.
+  wrapCompact: { marginBottom: 0 },
+  labelCompact: {
+    fontSize: 10,
+    color: colors.textMuted,
+    fontFamily: typography.uiHeavy,
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+    marginBottom: 3,
+  },
+  fieldCompact: {
+    height: 38,
+    paddingHorizontal: 10,
+    fontSize: 13,
+    fontFamily: typography.uiMedium,
   },
 });

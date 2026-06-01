@@ -7,10 +7,8 @@
  */
 
 import type {
-  AdvanceDetail,
   BiltyHeader,
   BiltyItem,
-  FuelDetail,
 } from '../../../shared/types/bilty';
 
 export type BiltyFormErrors = {
@@ -59,18 +57,6 @@ export function itemsTotal(items: BiltyItem[]): number {
   );
 }
 
-export function advanceTotal(advances: AdvanceDetail[]): number {
-  return (advances || []).reduce((s, a) => s + toNum(a.amount), 0);
-}
-
-export function fuelTotal(fuels: FuelDetail[]): number {
-  return (fuels || []).reduce((s, f) => s + toNum(f.amount), 0);
-}
-
-export function netPayable(
-  items: BiltyItem[],
-  advances: AdvanceDetail[],
-  fuels: FuelDetail[]
-): number {
-  return itemsTotal(items) - advanceTotal(advances) - fuelTotal(fuels);
+export function netPayable(items: BiltyItem[]): number {
+  return itemsTotal(items);
 }

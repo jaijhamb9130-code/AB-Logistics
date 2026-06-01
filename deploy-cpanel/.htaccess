@@ -1,0 +1,48 @@
+RewriteEngine On
+
+# No directory listings anywhere — never reveal contents of folders.
+Options -Indexes
+
+# 0) HARD BLOCK: /backend/ folder holds Node source + .env secrets.
+#    Apache must return 403 for every path under /backend/ regardless of
+#    file existence. Place this FIRST so nothing below can re-expose it.
+RewriteRule ^backend(/.*)?$ - [F,L]
+
+# Belt-and-suspenders: deny any .env file anywhere under document root.
+<FilesMatch "(^\.env|\.env\..*)">
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+  <IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+  </IfModule>
+</FilesMatch>
+
+# 1) Proxy /api/* to the PM2-managed Node backend on localhost:3009.
+#    Requires mod_proxy + mod_proxy_http (standard on cPanel/LiteSpeed).
+RewriteRule ^api/(.*)$ http://127.0.0.1:3009/api/$1 [P,L]
+
+# 2) Single-page app fallback — let React Navigation handle the path on
+#    any request that isn't a real file or directory under document root.
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^ index.html [L]
+
+# 3) Long-cache the hashed Expo bundle assets, never cache the entry HTML.
+<FilesMatch "\.(js|css|woff2?|ttf|otf|png|jpe?g|gif|svg|webp|ico)$">
+  Header set Cache-Control "public, max-age=31536000, immutable"
+</FilesMatch>
+<FilesMatch "^(index\.html|metadata\.json)$">
+  Header set Cache-Control "no-cache, no-store, must-revalidate"
+</FilesMatch>
+
+# 4) MIME for fonts in case server defaults are stale.
+AddType font/ttf  .ttf
+AddType font/woff2 .woff2
+AddType application/javascript .mjs
+
+# 5) Compress text payloads — helps the 1.4 MB JS bundle a lot.
+<IfModule mod_deflate.c>
+  AddOutputFilterByType DEFLATE text/html text/css application/javascript application/json image/svg+xml
+</IfModule>

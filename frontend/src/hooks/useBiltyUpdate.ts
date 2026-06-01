@@ -1,18 +1,15 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import axios from 'axios';
-import type { CreateBiltyRequest, CreateBiltyResponse } from '@ablog/shared';
+import type { CreateBiltyRequest } from '@ablog/shared';
 import { biltyService } from '../services/biltyService';
-
-async function createBilty(payload: CreateBiltyRequest): Promise<CreateBiltyResponse> {
-  const res = await axios.post('/api/bilty', payload);
-  return res.data;
-}
 
 export function useBiltyCreate() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: createBilty,
+    // Route through the shared http client (auth bearer + baseURL + refresh
+    // interceptor are all wired there). The previous raw axios call was hitting
+    // the dev origin instead of API_URL and skipping auth.
+    mutationFn: (payload: CreateBiltyRequest) => biltyService.create(payload),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['bilty', 'list'] });
     },

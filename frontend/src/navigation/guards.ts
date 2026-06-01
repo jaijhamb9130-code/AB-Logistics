@@ -1,20 +1,28 @@
 /**
  * Route-guard helpers — single source of truth for "which tabs does THIS user
- * see?". AppTabs calls `canAccessTab(tab, user)` at render time and only mounts
- * tabs that pass.
+ * see?" and "which actions can THIS user perform on a given page?".
  *
- * Rules:
- *   - Admins see everything (role === 'admin' OR perms include '*').
- *   - Staff see a tab only if their permissions include the tab's required
- *     permission listed in TAB_PERMISSIONS.
- *   - Tabs not in TAB_PERMISSIONS are visible to everyone (e.g. Dashboard).
+ * AppTabs calls `canAccessTab(tab, user)` at render time and only mounts
+ * tabs that pass. Screens call `canDoAction(user, page, action)` to gate
+ * the New / Edit / Delete buttons.
  *
- * Backend roleMiddleware is the actual security boundary — hiding tabs here
- * is UX (no broken pages) plus surface-reduction.
+ * Permission model (per-page CRUD):
+ *   - `<page>.view`     — see the tab and its data
+ *   - `<page>.create`   — show the New / + button
+ *   - `<page>.edit`     — show the Edit action
+ *   - `<page>.delete`   — show the Delete action
+ *   - `*` wildcard      — grants everything (non-admin "super staff")
+ *   - role = 'admin'    — bypasses all checks
+ *
+ * Backend roleMiddleware is the actual security boundary — hiding tabs / UI
+ * here is UX (no broken pages) plus surface-reduction.
  */
 
-import type { Permission, Role } from '../../../shared/types/user';
+import type {
+  Permission, PermissionAction, PermissionPage, Role,
+} from '../../../shared/types/user';
 import type { TabName } from './types';
+import { permKey } from '../constants/roles';
 
 /**
  * Tabs that ONLY admins (or wildcard) ever see — regardless of any
@@ -24,26 +32,41 @@ import type { TabName } from './types';
 const ADMIN_ONLY_TABS: TabName[] = ['Dashboard'];
 
 /**
- * Per-tab permission requirement for staff users. Admin always passes.
- * A tab not listed here AND not in ADMIN_ONLY_TABS = visible to all
- * authenticated users.
+ * Maps a tab to the PermissionPage that gates its `.view` permission.
+ * A tab not in this map is visible to all authenticated users (not in use
+ * today — every page goes through this mapping).
  *
- * Convention: editable pages use `<entity>.edit` (implies full access).
- * View-only pages use `<entity>.access`. Users page uses `user.manage`.
+ * Notes:
+ *   - LedgerMaster + OtherLedgers share `ledgermaster` (same all-groups view).
+ *   - Customers, OwnerMaster, AgentMaster have their own page keys so an
+ *     admin can grant access to one ledger sub-page but not the others.
+ *   - ItemMaster / ItemGroup / ItemCategory each have their own page key
+ *     for the same reason.
+ *   - Billing maps to `voucher`.
+ *
+ * The backend `/api/ledger-master` routes accept ANY of
+ * { ledgermaster | customermaster | ownermaster | agentmaster }.<action>
+ * so users only need the perm for the sub-page they actually visit.
  */
-const TAB_PERMISSIONS: Partial<Record<TabName, Permission>> = {
-  Bilty: 'bilty.edit',
-  Freight: 'freight.access',
-  Billing: 'voucher.edit',
-  Reports: 'report.access',
-  PartyMaster: 'partymaster.edit',
-  OwnerMaster: 'ownermaster.edit',
-  AgentMaster: 'agentmaster.edit',
-  ItemMaster: 'itemmaster.edit',
-  VehicleMaster: 'vehiclemaster.edit',
-  DestinationMaster: 'destinationmaster.edit',
-  LedgerGroups: 'ledgergroup.edit',
-  Users: 'user.manage',
+const TAB_TO_PAGE: Partial<Record<TabName, PermissionPage>> = {
+  Bilty: 'bilty',
+  Freight: 'freight',
+  // Billing tab handled specially below — visible if user has any voucher.*
+  // perm OR daybook.view (so daybook-only users can still reach the daybook).
+  LedgerMaster: 'ledgermaster',
+  Customers: 'customermaster',
+  OtherLedgers: 'ledgermaster', // Other ledgers sharing the general ledger master perm
+  OwnerMaster: 'ownermaster',
+  AgentMaster: 'agentmaster',
+  ItemMaster: 'itemmaster',
+  ItemGroup: 'itemgroup',
+  ItemCategory: 'itemcategory',
+  VehicleMaster: 'vehiclemaster',
+  DestinationMaster: 'destinationmaster',
+  BranchMaster: 'branchmaster',
+  ZoneMaster: 'zonemaster',
+  LedgerGroups: 'ledgergroup',
+  Users: 'user',
 };
 
 function isAdmin(user: { role: Role; permissions?: string[] }): boolean {
@@ -61,31 +84,81 @@ export function canAccessTab(
   user: { role: Role; permissions?: string[] } | null
 ): boolean {
   if (!user) return false;
-
-  // Admin / wildcard sees everything.
   if (isAdmin(user)) return true;
-
-  // Admin-only tabs are off-limits to staff regardless of permissions.
   if (ADMIN_ONLY_TABS.includes(tab)) return false;
 
-  // If the tab requires a specific permission, check it.
-  const required = TAB_PERMISSIONS[tab];
-  if (required) return hasPerm(user, required);
+  // Billing groups Vouchers + Daybook. Either route's view perm grants the
+  // tab so a daybook-only user can still reach the daybook page.
+  if (tab === 'Billing') {
+    return hasPerm(user, 'voucher.view') || hasPerm(user, 'daybook.view');
+  }
 
-  // No requirement listed = visible to all authenticated users.
-  return true;
+  // The Bilty tab also mounts (silently, hidden from nav) for users with
+  // `voucher.view` so the Daybook can navigate to BiltyForm for editing
+  // bilty rows. The TopNavBar still hides "Bilty" unless the user has
+  // `bilty.view` — this is purely a navigation-target enabler.
+  if (tab === 'Bilty') {
+    return hasPerm(user, 'bilty.view') || hasPerm(user, 'voucher.view');
+  }
+
+  const page = TAB_TO_PAGE[tab];
+  if (!page) return true; // unmapped tab = open to all authenticated users
+  return hasPerm(user, permKey(page, 'view'));
 }
 
 /**
- * Inside-screen action gate — used by screens to decide whether to show
- * New / Edit / Delete buttons. Same rules as canAccessTab but takes any
- * Permission string.
+ * Inside-screen action gate. Used by screens to decide whether to show
+ * New / Edit / Delete buttons.
+ *
+ * Example: `canDoAction(user, 'bilty', 'edit')` returns true if the user
+ * has `bilty.edit` (or `*`, or is an admin).
  */
 export function canDoAction(
   user: { role: Role; permissions?: string[] } | null,
-  perm: Permission
+  page: PermissionPage,
+  action: PermissionAction
 ): boolean {
   if (!user) return false;
   if (isAdmin(user)) return true;
-  return hasPerm(user, perm);
+  // Non-view actions implicitly require view — you can't edit/delete a row
+  // you can't see in the first place.
+  if (action !== 'view' && !hasPerm(user, permKey(page, 'view'))) return false;
+  return hasPerm(user, permKey(page, action));
+}
+
+/**
+ * Pick the tab the app should land on right after login.
+ * Follows the nav-bar order — Dashboard → Ledger dropdown items → Bilty →
+ * Freight → Billing — and returns the first tab the user can actually use.
+ *
+ * Returns `undefined` for users who have nothing accessible (caller can
+ * fall back to React Navigation's default first-screen behaviour).
+ */
+export function pickInitialTab(
+  user: { role: Role; permissions?: string[] } | null
+): TabName | undefined {
+  if (!user) return undefined;
+  if (isAdmin(user)) return 'Dashboard';
+
+  // 1. Ledger dropdown items, in the order shown in the dropdown.
+  const ledgerOrder: TabName[] = [
+    'LedgerMaster', 'Customers', 'OtherLedgers',
+    'OwnerMaster', 'AgentMaster',
+    'ItemMaster', 'ItemGroup', 'ItemCategory',
+    'VehicleMaster', 'DestinationMaster', 'BranchMaster', 'ZoneMaster', 'LedgerGroups',
+  ];
+  for (const t of ledgerOrder) {
+    if (canAccessTab(t, user)) return t;
+  }
+
+  // 2. Bilty — strict bilty.view only (the tab also mounts for voucher.view
+  // users so the Daybook can navigate to BiltyForm, but they shouldn't land
+  // there at startup).
+  if (hasPerm(user, 'bilty.view')) return 'Bilty';
+
+  // 3. Freight, then Billing (Daybook for voucher-only users).
+  if (canAccessTab('Freight', user)) return 'Freight';
+  if (canAccessTab('Billing', user)) return 'Billing';
+
+  return undefined;
 }

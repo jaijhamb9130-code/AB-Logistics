@@ -8,8 +8,6 @@
  */
 
 import {
-  advanceTotal,
-  fuelTotal,
   itemsTotal,
   netPayable,
   toNum,
@@ -43,13 +41,9 @@ describe('FreightMemoDetail math (FREIGHT-02, FREIGHT-03)', () => {
     expect(itemsTotal(items)).toBe(1850);
   });
 
-  it('net_payable = freight_total − (advance_total + fuel_total)', () => {
+  it('net_payable = freight_total', () => {
     const items = [{ qty: 10, rate: 100 } as any];   // 1000
-    const advances = [{ amount: 200 } as any];       //  200
-    const fuels = [{ amount: 100 } as any];          //  100
-    expect(netPayable(items, advances, fuels)).toBe(700);
-    expect(advanceTotal(advances)).toBe(200);
-    expect(fuelTotal(fuels)).toBe(100);
+    expect(netPayable(items)).toBe(1000);
   });
 
   it('tolerates string numerics from mysql2 via toNum', () => {
@@ -69,9 +63,7 @@ describe('freightService.get returns read-only detail shape (FREIGHT-04)', () =>
       bilty_id: 5,
       memo_date: '2026-04-18',
       freight_total: '1000.00',
-      advance_total: '500.00',
-      fuel_total: '200.00',
-      net_payable: '300.00',
+      net_payable: '1000.00',
       generated_by: 1,
       created_at: '2026-04-18T00:00:00.000Z',
       updated_at: '2026-04-18T00:00:00.000Z',
@@ -82,15 +74,13 @@ describe('freightService.get returns read-only detail shape (FREIGHT-04)', () =>
         consignor: 'Acme',
         truck_no: 'DL-01',
         items: [{ id: 1, qty: 10, rate: 100 }],
-        advances: [{ id: 1, amount: 500 }],
-        fuels: [{ id: 1, amount: 200 }],
       },
     });
 
     const d = await freightService.get(9);
     expect(d.memo_no).toBe('FM-2026-000001');
     expect(d.bilty.bilty_no).toBe('BL-2026-000005');
-    expect(toNum(d.net_payable)).toBe(300);
+    expect(toNum(d.net_payable)).toBe(1000);
 
     // Read-only: no mutation affordances in the contract.
     expect((d as any).edit).toBeUndefined();

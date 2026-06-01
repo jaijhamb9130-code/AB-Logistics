@@ -7,20 +7,25 @@ export type AuthStackParamList = {
   Login: undefined;
 };
 
-export type ReportsSection = 'bilty';
-
 export type AppTabsParamList = {
   Dashboard: undefined;
   Bilty: undefined;
   Freight: undefined;
   Billing: undefined;
-  PartyMaster: undefined;
+  LedgerMaster: undefined;
+  // Children of the Ledger Master parent in the nav dropdown.
+  // Customers is scoped to the Sundry Debtors group; OtherLedgers shows all.
+  Customers: undefined;
+  OtherLedgers: undefined;
   OwnerMaster: undefined;
   AgentMaster: undefined;
   ItemMaster: undefined;
+  ItemGroup: undefined;
+  ItemCategory: undefined;
   VehicleMaster: undefined;
   DestinationMaster: undefined;
-  Reports: { section?: ReportsSection } | undefined;
+  BranchMaster: undefined;
+  ZoneMaster: undefined;
   // Top-level Ledger Groups admin tab — second-last (just before Users).
   LedgerGroups: undefined;
   Users: undefined;
@@ -35,7 +40,11 @@ export type TabName = keyof AppTabsParamList;
  */
 export type BiltyStackParamList = {
   BiltyList: undefined;
-  BiltyForm: { id?: number } | undefined;
+  // `id` is the DB primary key; `bilty_no` (e.g. "18520") is the
+  // user-meaningful number that drives the URL — /edit/bilty/:bilty_no.
+  // The form loads by id when present, otherwise resolves bilty_no → id
+  // via /api/bilty/by-no/:no.
+  BiltyForm: { id?: number; bilty_no?: string } | undefined;
   BiltyDetail: { id: number };
 };
 

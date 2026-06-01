@@ -15,10 +15,13 @@
 import React from 'react';
 import {
   Modal as RNModal,
+  Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   View,
+  useWindowDimensions,
 } from 'react-native';
 import { colors, radius, spacing, typography } from '../constants/theme';
 
@@ -33,6 +36,8 @@ interface Props {
   /** Max inner card width in px. Default 520. */
   maxWidth?: number;
   testID?: string;
+  /** Force a centered fade-in card (vs the default mobile bottom-sheet). */
+  centered?: boolean;
 }
 
 export function Modal({
@@ -42,21 +47,45 @@ export function Modal({
   children,
   maxWidth = 520,
   testID,
+  centered = false,
 }: Props) {
+  const { width, height } = useWindowDimensions();
+  const isMobile = width < 768;
+  // Bottom-sheet styling only when on mobile AND not explicitly centered.
+  const useBottomSheet = isMobile && !centered;
+
   return (
     <RNModal
       visible={visible}
       onRequestClose={onClose}
       transparent
-      animationType="fade"
+      animationType={useBottomSheet ? 'slide' : 'fade'}
     >
       <Pressable
-        style={styles.backdrop}
+        style={[styles.backdrop, useBottomSheet && styles.backdropMobile]}
         onPress={onClose}
         testID={testID ? `${testID}-backdrop` : undefined}
       >
         {/* stopPropagation via inner Pressable so taps inside the card don't close it */}
-        <Pressable onPress={() => {}} style={[styles.card, { maxWidth }]}>
+        <Pressable
+          onPress={() => {}}
+          style={[
+            styles.card,
+            { maxWidth: useBottomSheet ? width : maxWidth },
+            useBottomSheet && {
+              maxHeight: height * 0.92,
+              borderBottomLeftRadius: 0,
+              borderBottomRightRadius: 0,
+              borderTopLeftRadius: radius.lg,
+              borderTopRightRadius: radius.lg,
+              width: '100%',
+            },
+            !useBottomSheet && isMobile && {
+              maxHeight: height * 0.86,
+              width: width - 24,
+            },
+          ]}
+        >
           <View style={styles.header}>
             <Text style={styles.title}>{title}</Text>
             <Pressable
@@ -68,7 +97,19 @@ export function Modal({
               <Text style={styles.close}>×</Text>
             </Pressable>
           </View>
-          <View style={styles.body}>{children}</View>
+          <ScrollView
+            style={
+              useBottomSheet
+                ? { maxHeight: height * 0.78 }
+                : isMobile
+                ? { maxHeight: height * 0.72 }
+                : undefined
+            }
+            contentContainerStyle={styles.body}
+            showsVerticalScrollIndicator={false}
+          >
+            {children}
+          </ScrollView>
         </Pressable>
       </Pressable>
     </RNModal>
@@ -83,13 +124,17 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: spacing.lg,
   },
+  backdropMobile: {
+    justifyContent: 'flex-end',
+    padding: 0,
+  },
   card: {
     width: '100%',
     backgroundColor: colors.card,
     borderRadius: radius.lg,
     borderWidth: 1,
     borderColor: colors.border,
-    overflow: 'hidden',
+    ...(Platform.OS === 'web' ? ({ overflow: 'visible' } as any) : { overflow: 'hidden' as const }),
   },
   header: {
     flexDirection: 'row',

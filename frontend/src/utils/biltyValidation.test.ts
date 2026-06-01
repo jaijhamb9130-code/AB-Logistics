@@ -1,6 +1,4 @@
 import {
-  advanceTotal,
-  fuelTotal,
   hasErrors,
   itemsTotal,
   netPayable,
@@ -62,21 +60,12 @@ describe('totals helpers', () => {
     ).toBe(1100);
   });
 
-  it('advanceTotal + fuelTotal sum amount columns', () => {
-    expect(advanceTotal([{ amount: 500 } as any, { amount: 250 } as any])).toBe(750);
-    expect(fuelTotal([{ amount: 200 } as any, { amount: 100 } as any])).toBe(300);
+  it('netPayable = itemsTotal', () => {
+    const np = netPayable([{ qty: 10, rate: 100 } as any]);
+    expect(np).toBe(1000);
   });
 
-  it('netPayable = itemsTotal − advanceTotal − fuelTotal', () => {
-    const np = netPayable(
-      [{ qty: 10, rate: 100 } as any],
-      [{ amount: 200 } as any],
-      [{ amount: 100 } as any]
-    );
-    expect(np).toBe(700);
-  });
-
-  it('netPayable handles empty arrays gracefully', () => {
-    expect(netPayable([], [], [])).toBe(0);
+  it('netPayable handles empty array gracefully', () => {
+    expect(netPayable([])).toBe(0);
   });
 });

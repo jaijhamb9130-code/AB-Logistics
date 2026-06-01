@@ -23,6 +23,7 @@ import {
   StyleSheet,
   Text,
   View,
+  useWindowDimensions,
   type ViewStyle,
 } from 'react-native';
 import { colors, radius, spacing, text, typography } from '../constants/theme';
@@ -51,6 +52,9 @@ interface Props<T> {
 }
 
 const SERIAL_COL_WIDTH = 80;
+const MOBILE_BREAKPOINT = 768;
+// Default minimum width for flex columns on mobile so they don't squish.
+const MOBILE_FLEX_MIN_WIDTH = 160;
 
 export function DataTable<T>({
   columns,
@@ -62,6 +66,9 @@ export function DataTable<T>({
   testID,
   showSerialNo = true,
 }: Props<T>) {
+  const { width: viewportWidth } = useWindowDimensions();
+  const isMobile = viewportWidth < MOBILE_BREAKPOINT;
+
   // Build the effective columns list — prepend S.No. when enabled.
   // The S.No. render receives the row but ignores it; the index is injected at
   // render-time via a wrapper (see renderRow).
@@ -71,24 +78,45 @@ export function DataTable<T>({
     const serialCol: Column<T> = {
       key: '__sno__',
       label: 'S. No.',
-      width: SERIAL_COL_WIDTH,
+      width: isMobile ? 60 : SERIAL_COL_WIDTH,
       align: 'center',
       // Placeholder — actual serial number is injected in renderRow.
       render: () => '',
     };
     return [serialCol, ...columns];
-  }, [columns, showSerialNo]);
+  }, [columns, showSerialNo, isMobile]);
+
+  // Compute total min width on mobile so the inner table is wider than viewport
+  // and the horizontal ScrollView actually scrolls.
+  const totalMinWidth = useMemo(() => {
+    if (!isMobile) return 0;
+    return effectiveColumns.reduce(
+      (sum, c) => sum + (c.width ?? MOBILE_FLEX_MIN_WIDTH),
+      spacing.lg * 2
+    );
+  }, [effectiveColumns, isMobile]);
+
+  // Returns the per-cell width style — fixed if `width` set, flex otherwise.
+  // On mobile, flex columns get a minWidth so the row spans wider than viewport.
+  const cellWidthStyle = (col: Column<T>): ViewStyle => {
+    if (col.width) return { width: col.width, flexGrow: 0 };
+    if (isMobile) return { width: MOBILE_FLEX_MIN_WIDTH, flexGrow: 0 };
+    return { flex: 1 };
+  };
 
   // ------- Header row -------
   const lastIndex = effectiveColumns.length - 1;
+  const rowSizingStyle: ViewStyle | undefined = isMobile
+    ? { minWidth: totalMinWidth }
+    : undefined;
   const header = (
-    <View style={[styles.row, styles.headerRow]}>
+    <View style={[styles.row, styles.headerRow, rowSizingStyle]}>
       {effectiveColumns.map((col, i) => (
         <View
           key={col.key}
           style={[
             styles.cell,
-            col.width ? { width: col.width, flexGrow: 0 } : { flex: 1 },
+            cellWidthStyle(col),
             alignStyle(col.align),
             i < lastIndex && styles.cellDivider,
           ]}
@@ -112,7 +140,7 @@ export function DataTable<T>({
   const renderRow = ({ item, index }: { item: T; index: number }) => {
     const alt = index % 2 === 1;
     const content = (
-      <View style={[styles.row, alt && styles.altRow]}>
+      <View style={[styles.row, alt && styles.altRow, rowSizingStyle]}>
         {effectiveColumns.map((col, i) => {
           // For the S.No. column, render the 1-based index directly.
           const isSerial = col.key === '__sno__';
@@ -122,7 +150,7 @@ export function DataTable<T>({
               key={col.key}
               style={[
                 styles.cell,
-                col.width ? { width: col.width, flexGrow: 0 } : { flex: 1 },
+                cellWidthStyle(col),
                 alignStyle(col.align),
                 i < lastIndex && styles.cellDivider,
               ]}
@@ -166,32 +194,44 @@ export function DataTable<T>({
 
   // ------- Web: CSS sticky via ScrollView. Native: separate header + FlatList. -------
   if (Platform.OS === 'web' && stickyHeader) {
+    const verticalScroll = (
+      <ScrollView
+        style={styles.scroll}
+        stickyHeaderIndices={[0]}
+        showsVerticalScrollIndicator
+      >
+        {header}
+        {rows.length === 0 ? (
+          <View style={[styles.emptyWrap, rowSizingStyle]}>
+            <Text style={styles.emptyText}>{emptyLabel}</Text>
+          </View>
+        ) : (
+          rows.map((row, i) => (
+            <View key={keyExtractor(row)}>
+              {renderRow({ item: row, index: i })}
+            </View>
+          ))
+        )}
+      </ScrollView>
+    );
+
     return (
       <View style={styles.wrap} testID={testID}>
-        <ScrollView
-          style={styles.scroll}
-          stickyHeaderIndices={[0]}
-          showsVerticalScrollIndicator
-        >
-          {header}
-          {rows.length === 0 ? (
-            <View style={styles.emptyWrap}>
-              <Text style={styles.emptyText}>{emptyLabel}</Text>
+        {isMobile ? (
+          <ScrollView horizontal showsHorizontalScrollIndicator bounces={false}>
+            <View style={{ minWidth: totalMinWidth, flex: 1 }}>
+              {verticalScroll}
             </View>
-          ) : (
-            rows.map((row, i) => (
-              <View key={keyExtractor(row)}>
-                {renderRow({ item: row, index: i })}
-              </View>
-            ))
-          )}
-        </ScrollView>
+          </ScrollView>
+        ) : (
+          verticalScroll
+        )}
       </View>
     );
   }
 
-  return (
-    <View style={styles.wrap} testID={testID}>
+  const innerNative = (
+    <>
       {stickyHeader && header}
       <FlatList
         data={rows}
@@ -199,11 +239,23 @@ export function DataTable<T>({
         renderItem={renderRow}
         ListHeaderComponent={!stickyHeader ? header : undefined}
         ListEmptyComponent={
-          <View style={styles.emptyWrap}>
+          <View style={[styles.emptyWrap, rowSizingStyle]}>
             <Text style={styles.emptyText}>{emptyLabel}</Text>
           </View>
         }
       />
+    </>
+  );
+
+  return (
+    <View style={styles.wrap} testID={testID}>
+      {isMobile ? (
+        <ScrollView horizontal showsHorizontalScrollIndicator bounces={false}>
+          <View style={{ minWidth: totalMinWidth, flex: 1 }}>{innerNative}</View>
+        </ScrollView>
+      ) : (
+        innerNative
+      )}
     </View>
   );
 }

@@ -47,9 +47,7 @@ describe('freightService.list (contract)', () => {
         bilty_id: 5,
         memo_date: '2026-04-18',
         freight_total: 1000,
-        advance_total: 500,
-        fuel_total: 200,
-        net_payable: 300,
+        net_payable: 1000,
         generated_by: 1,
         created_at: '2026-04-18T00:00:00.000Z',
         bilty_no: 'BL-2026-000005',
@@ -72,9 +70,7 @@ describe('freightService.generate (contract)', () => {
       bilty_id: 5,
       memo_date: '2026-04-18',
       freight_total: 1000,
-      advance_total: 500,
-      fuel_total: 200,
-      net_payable: 300,
+      net_payable: 1000,
     });
     const memo = await freightService.generate(5);
     expect(freightService.generate).toHaveBeenCalledWith(5);
@@ -101,9 +97,7 @@ describe('freightService.getByBiltyId (contract)', () => {
       bilty_id: 5,
       memo_date: '2026-04-18',
       freight_total: 1000,
-      advance_total: 500,
-      fuel_total: 200,
-      net_payable: 300,
+      net_payable: 1000,
       generated_by: 1,
       created_at: '2026-04-18T00:00:00.000Z',
       updated_at: '2026-04-18T00:00:00.000Z',

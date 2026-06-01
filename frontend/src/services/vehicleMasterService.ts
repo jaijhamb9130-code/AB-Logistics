@@ -33,6 +33,12 @@ export const vehicleMasterService = {
     await http.put(`${BASE}/${id}`, body);
   },
 
+  // Backend returns 204 on success; 409 { error: 'in_use' } when a downstream
+  // record references the vehicle.
+  async delete(id: number): Promise<void> {
+    await http.delete(`${BASE}/${id}`);
+  },
+
   async sync(): Promise<{ ok?: boolean }> {
     const { data } = await http.post<{ ok?: boolean }>(`${BASE}/sync`);
     return data;
