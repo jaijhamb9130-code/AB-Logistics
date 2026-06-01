@@ -7,7 +7,6 @@ const { requirePermission } = require('../middleware/roleMiddleware');
 
 router.use(authMw);
 
-router.post('/sync',  requirePermission('vehiclemaster.edit'),   ctrl.sync);
 router.get('/search', requirePermission('vehiclemaster.view'),   ctrl.search);
 router.get('/',       requirePermission('vehiclemaster.view'),   ctrl.list);
 router.get('/:id',    requirePermission('vehiclemaster.view'),   ctrl.get);

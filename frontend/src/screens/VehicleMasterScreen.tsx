@@ -23,7 +23,6 @@ import { InputField } from '../components/InputField';
 import { AutocompleteField } from '../components/AutocompleteField';
 import { Loader } from '../components/Loader';
 import { Modal } from '../components/Modal';
-import { SyncButton } from '../components/SyncButton';
 import { colors, radius, spacing, text } from '../constants/theme';
 import { vehicleMasterService } from '../services/vehicleMasterService';
 import { ownerService } from '../services/ownerService';
@@ -127,12 +126,6 @@ export function VehicleMasterScreen() {
     }
   }, [form, editTarget, load, closeModal]);
 
-  const onSync = async () => {
-    await vehicleMasterService.sync();
-    Alert.alert('Sync complete', 'Tally sync finished.');
-    await load();
-  };
-
   // Hard delete with native confirm + 409 in_use fallback.
   const onDelete = useCallback(
     async (row: VehicleMasterItem) => {
@@ -188,7 +181,6 @@ export function VehicleMasterScreen() {
       <View style={styles.header}>
         <Text style={styles.title}>Vehicle Master</Text>
         <View style={styles.headerActions}>
-          <SyncButton onSync={onSync} testID="sync-vehicle-btn" />
           {canDoAction(user, 'vehiclemaster', 'create') && (
             <View style={styles.newBtn}>
               <ButtonPrimary title="New Vehicle" onPress={openCreate} testID="new-vehicle-btn" />

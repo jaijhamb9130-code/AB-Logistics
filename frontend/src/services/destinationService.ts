@@ -54,9 +54,4 @@ export const destinationService = {
     });
     return data;
   },
-
-  async sync(): Promise<{ ok?: boolean }> {
-    const { data } = await http.post<{ ok?: boolean }>(`${BASE}/sync`);
-    return data;
-  },
 };

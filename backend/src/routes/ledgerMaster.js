@@ -14,7 +14,6 @@ const edit   = requirePermission(masters.map(m => `${m}.edit`));
 const del    = requirePermission(masters.map(m => `${m}.delete`));
 
 // Customers / Owner / Agent / Other Ledgers — shared routes.
-router.post('/sync', edit, ctrl.sync);
 router.get('/search', view, ctrl.search);
 router.get('/', view, ctrl.list);
 router.get('/:id', view, ctrl.get);

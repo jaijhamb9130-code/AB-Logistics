@@ -22,7 +22,6 @@ import { DataTable, type Column } from '../components/DataTable';
 import { InputField } from '../components/InputField';
 import { Loader } from '../components/Loader';
 import { Modal } from '../components/Modal';
-import { SyncButton } from '../components/SyncButton';
 import { AutocompleteField } from '../components/AutocompleteField';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { colors, radius, spacing, text, typography } from '../constants/theme';
@@ -209,12 +208,6 @@ export function LedgerGroupsScreen() {
     }
   }, [deleteTarget, load]);
 
-  const onSync = async () => {
-    await ledgerGroupService.sync();
-    Alert.alert('Sync complete', 'Tally sync finished.');
-    await load();
-  };
-
   const columns: Column<LedgerGroupItem>[] = [
     // DataTable already prepends an auto S.No column, so we don't add one here.
     {
@@ -272,7 +265,6 @@ export function LedgerGroupsScreen() {
       <View style={styles.header}>
         <Text style={styles.title}>Ledger Groups</Text>
         <View style={styles.headerActions}>
-          <SyncButton onSync={onSync} testID="sync-ledger-groups-btn" />
           {canDoAction(user, 'ledgergroup', 'create') && (
             <View style={styles.newBtn}>
               <ButtonPrimary

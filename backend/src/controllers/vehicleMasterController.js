@@ -112,10 +112,3 @@ exports.remove = async (req, res, next) => {
     return next(err);
   }
 };
-
-exports.sync = async (_req, res) => {
-  return res.status(501).json({
-    error: 'tally_sync_pending',
-    message: 'Tally sync will be enabled once the integration endpoint is configured.',
-  });
-};

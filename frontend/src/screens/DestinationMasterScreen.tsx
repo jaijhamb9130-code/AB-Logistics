@@ -19,7 +19,6 @@ import { DataTable, type Column } from '../components/DataTable';
 import { InputField } from '../components/InputField';
 import { Loader } from '../components/Loader';
 import { Modal } from '../components/Modal';
-import { SyncButton } from '../components/SyncButton';
 import { colors, radius, spacing, text } from '../constants/theme';
 import { destinationService } from '../services/destinationService';
 import { validateRequired } from '../utils/masterValidators';
@@ -109,12 +108,6 @@ export function DestinationMasterScreen() {
     }
   }, [form, editTarget, load, closeModal]);
 
-  const onSync = async () => {
-    await destinationService.sync();
-    Alert.alert('Sync complete', 'Tally sync finished.');
-    await load();
-  };
-
   // Hard delete with native confirm + 409 in_use fallback.
   const onDelete = useCallback(
     async (row: DestinationMasterItem) => {
@@ -168,7 +161,6 @@ export function DestinationMasterScreen() {
       <View style={styles.header}>
         <Text style={styles.title}>Destination Master</Text>
         <View style={styles.headerActions}>
-          <SyncButton onSync={onSync} testID="sync-dest-btn" />
           {canDoAction(user, 'destinationmaster', 'create') && (
             <View style={styles.newBtn}>
               <ButtonPrimary title="New Destination" onPress={openCreate} testID="new-dest-btn" />

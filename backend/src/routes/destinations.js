@@ -7,9 +7,6 @@ const { requirePermission } = require('../middleware/roleMiddleware');
 
 router.use(authMw);
 
-// Specific routes before parameterized ones.
-router.post('/sync',                requirePermission('destinationmaster.edit'),   ctrl.sync);
-
 // Branch helpers — read-only views of distinct values.
 router.get('/branches/search',      requirePermission('destinationmaster.view'),   ctrl.searchBranches);
 router.get('/branches',             requirePermission('destinationmaster.view'),   ctrl.listBranches);

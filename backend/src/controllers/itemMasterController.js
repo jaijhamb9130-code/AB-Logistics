@@ -68,10 +68,3 @@ exports.update = async (req, res, next) => {
     return res.status(200).json({ ok: true });
   } catch (err) { return next(err); }
 };
-
-exports.sync = async (_req, res) => {
-  return res.status(501).json({
-    error: 'tally_sync_pending',
-    message: 'Tally sync will be enabled once the integration endpoint is configured.',
-  });
-};

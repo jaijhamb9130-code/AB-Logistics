@@ -23,7 +23,6 @@ import { InputField } from '../components/InputField';
 import { Loader } from '../components/Loader';
 import { Modal } from '../components/Modal';
 import { SelectDropdown } from '../components/SelectDropdown';
-import { SyncButton } from '../components/SyncButton';
 import { colors, radius, spacing, text, typography } from '../constants/theme';
 import { itemMasterService } from '../services/itemMasterService';
 import { itemGroupService } from '../services/itemGroupService';
@@ -217,12 +216,6 @@ export function ItemMasterScreen() {
     Alert.alert('Delete not enabled', `"${row.name}" cannot be deleted yet — backend route is pending.`);
   }, []);
 
-  const onSync = async () => {
-    await itemMasterService.sync();
-    Alert.alert('Sync complete', 'Tally sync finished.');
-    await load();
-  };
-
   // Aggregate the saved batches: total qty, total amount (sum of qty × rate),
   // and weighted-average rate. Used when batch === 'Yes' AND batches exist.
   const batchTotals = useMemo(() => {
@@ -360,7 +353,6 @@ export function ItemMasterScreen() {
       <View style={styles.header}>
         <Text style={styles.title}>Items</Text>
         <View style={styles.headerActions}>
-          <SyncButton onSync={onSync} testID="sync-item-btn" />
           {canDoAction(user, 'itemmaster', 'create') && (
             <View style={styles.newBtn}>
               <ButtonPrimary title="+ Add Item" onPress={openCreate} testID="new-item-btn" />

@@ -29,7 +29,6 @@ import { InputField } from '../components/InputField';
 import { Loader } from '../components/Loader';
 import { Modal } from '../components/Modal';
 import { SelectDropdown } from '../components/SelectDropdown';
-import { SyncButton } from '../components/SyncButton';
 import { colors, radius, spacing, text } from '../constants/theme';
 import { ledgerGroupService } from '../services/ledgerGroupService';
 import { ledgerMasterService } from '../services/ledgerMasterService';
@@ -263,12 +262,6 @@ export function LedgerMasterFormScreen({
   // gets a distinct, predictable id namespace regardless of numeric group ids.
   const idPrefix = (groupName ?? 'all').toLowerCase();
 
-  const onSync = async () => {
-    await ledgerMasterService.sync();
-    Alert.alert('Sync complete', 'Tally sync finished.');
-    await load();
-  };
-
   const onDelete = useCallback(async (row: LedgerMasterItem) => {
     // Web prompts via confirm; on native a simple proceed (gated by admin flag
     // anyway). Backend FKs prevent deleting referenced ledgers.
@@ -327,7 +320,6 @@ export function LedgerMasterFormScreen({
       <View style={styles.header}>
         <Text style={styles.title}>{title}</Text>
         <View style={styles.headerActions}>
-          <SyncButton onSync={onSync} testID={`sync-${idPrefix}-btn`} />
           {canDoAction(user, permissionPage, 'create') && (
             <View style={styles.newBtn}>
               <ButtonPrimary

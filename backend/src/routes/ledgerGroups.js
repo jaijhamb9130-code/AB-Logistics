@@ -19,7 +19,6 @@ const groupReaders = [
   'agentmaster.view',
 ];
 
-router.post('/sync',  requirePermission('ledgergroup.edit'),   ctrl.sync);
 router.get('/search', requirePermission(groupReaders),         ctrl.search);
 router.get('/',       requirePermission(groupReaders),         ctrl.list);
 router.get('/:id',    requirePermission(groupReaders),         ctrl.get);

@@ -113,11 +113,3 @@ exports.searchLocations = async (req, res, next) => {
     return res.status(200).json(rows);
   } catch (err) { return next(err); }
 };
-
-// POST /api/destinations/sync — Tally sync stub
-exports.sync = async (_req, res) => {
-  return res.status(501).json({
-    error: 'tally_sync_pending',
-    message: 'Tally sync will be enabled once the integration endpoint is configured.',
-  });
-};

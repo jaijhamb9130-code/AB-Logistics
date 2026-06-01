@@ -32,9 +32,4 @@ export const itemMasterService = {
   async update(id: number, body: UpdateItemMasterRequest): Promise<void> {
     await http.put(`${BASE}/${id}`, body);
   },
-
-  async sync(): Promise<{ ok?: boolean }> {
-    const { data } = await http.post<{ ok?: boolean }>(`${BASE}/sync`);
-    return data;
-  },
 };

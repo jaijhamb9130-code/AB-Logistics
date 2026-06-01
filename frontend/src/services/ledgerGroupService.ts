@@ -35,9 +35,4 @@ export const ledgerGroupService = {
   async remove(id: number): Promise<void> {
     await http.delete(`${BASE}/${id}`);
   },
-
-  async sync(): Promise<{ ok?: boolean }> {
-    const { data } = await http.post<{ ok?: boolean }>(`${BASE}/sync`);
-    return data;
-  },
 };

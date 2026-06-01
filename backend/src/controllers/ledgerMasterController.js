@@ -144,11 +144,3 @@ exports.delete = async (req, res, next) => {
     return next(err);
   }
 };
-
-// POST /api/ledger-master/sync — Tally sync stub. Returns 501 until endpoint configured.
-exports.sync = async (_req, res) => {
-  return res.status(501).json({
-    error: 'tally_sync_pending',
-    message: 'Tally sync will be enabled once the integration endpoint is configured.',
-  });
-};
