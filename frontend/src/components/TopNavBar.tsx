@@ -132,7 +132,8 @@ export function TopNavBar({ state, navigation }: BottomTabBarProps) {
     const target = state.routes.find((r) => r.name === routeName);
     if (!target) return;
     // Always navigate (even if tab is already active) so params reach the screen.
-    navigation.navigate(routeName as never, params as never);
+    // Cast: the dynamic routeName/params can't satisfy the typed navigate overloads.
+    (navigation.navigate as any)(routeName, params);
     setOpenDropdown(null);
   };
 

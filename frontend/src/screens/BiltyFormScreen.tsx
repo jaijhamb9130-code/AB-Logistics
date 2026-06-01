@@ -146,7 +146,7 @@ export function BiltyFormScreen() {
 function DesktopBiltyForm({ canSave, editingId }: { canSave: boolean; editingId: number | null }) {
   const { user } = useAuth();
   const navigation = useNavigation<Nav>();
-  const isEdit = editingId !== null;
+  const isEdit = editingId != null;
 
   const { mutateAsync: createBilty, isPending: creating } = useBiltyCreate();
   const { mutateAsync: updateBilty, isPending: updating } = useBiltyUpdate(editingId ?? 0);
@@ -287,7 +287,7 @@ function DesktopBiltyForm({ canSave, editingId }: { canSave: boolean; editingId:
 
   // Load existing bilty when editing
   useEffect(() => {
-    if (!isEdit || editingId === null) return;
+    if (!isEdit || editingId == null) return;
     let cancelled = false;
     (async () => {
       try {
@@ -452,7 +452,7 @@ function DesktopBiltyForm({ canSave, editingId }: { canSave: boolean; editingId:
                 label="Bilty No *"
                 value={value ?? ''}
                 onChangeText={(v) => onChange(v.replace(/\D/g, ''))}
-                fieldType="numeric"
+                fieldType="integer"
                 keyboardType="number-pad"
                 placeholder="e.g. 8400153862"
                 error={errors.header?.bilty_no?.message ?? null}

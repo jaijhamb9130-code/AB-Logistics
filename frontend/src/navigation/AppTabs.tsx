@@ -78,9 +78,9 @@ export function AppTabs() {
     <Tab.Navigator
       tabBar={(props) => <TopNavBar {...props} />}
       initialRouteName={initialTab}
+      sceneContainerStyle={{ backgroundColor: colors.background }}
       screenOptions={{
         headerShown: false,
-        sceneContainerStyle: { backgroundColor: colors.background },
       }}
     >
       {canAccessTab('Dashboard', user) && (

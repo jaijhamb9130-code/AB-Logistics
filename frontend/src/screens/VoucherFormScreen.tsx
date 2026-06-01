@@ -1379,7 +1379,7 @@ function ItemRowEditor({ line, idx, items, onChange, onRemove, canRemove, onOpen
                   key={i.id}
                   // mousedown fires before the search input's onBlur — guarantees the click lands.
                   onPressIn={() => { onChange({ item_id: i.id, item_name: i.name }); setSearch(i.name); setOpen(false); }}
-                  onMouseEnter={Platform.OS === 'web' ? (() => setHighlight(idx)) as any : undefined}
+                  {...(Platform.OS === 'web' ? ({ onMouseEnter: () => setHighlight(idx) } as any) : {})}
                   style={[styles.dropdownRow, idx === highlight && styles.dropdownRowHi]}
                 >
                   <Text style={text.value}>{i.name}</Text>
@@ -1493,7 +1493,7 @@ function LedgerPickerInline({ row, ledgers, onChange, editable }: {
           {filtered.map((l, i) => (
             <Pressable
               key={l.id}
-              onMouseEnter={Platform.OS === 'web' ? (() => setHighlight(i)) as any : undefined}
+              {...(Platform.OS === 'web' ? ({ onMouseEnter: () => setHighlight(i) } as any) : {})}
               onPressIn={() => {
                 onChange({ ledger_id: l.id, ledger_name: l.name, search: l.name });
                 setSuppressDrop(true);
@@ -1621,7 +1621,7 @@ function JournalRowEditor({ row, idx, onChange, onRemove, editable }: {
             {results.slice(0, 12).map((l, i) => (
               <Pressable
                 key={l.id}
-                onMouseEnter={Platform.OS === 'web' ? (() => setHighlight(i)) as any : undefined}
+                {...(Platform.OS === 'web' ? ({ onMouseEnter: () => setHighlight(i) } as any) : {})}
                 onPressIn={() => {
                   onChange({ ledger_id: l.id, ledger_name: l.name, search: l.name });
                   setSuppressDrop(true);
@@ -1755,7 +1755,7 @@ function BillRefRowEditor({ row, idx, pending, onChange, onRemove, editable }: {
               {filtered.map((p, i) => (
                 <Pressable
                   key={p.billname}
-                  onMouseEnter={Platform.OS === 'web' ? (() => setHighlight(i)) as any : undefined}
+                  {...(Platform.OS === 'web' ? ({ onMouseEnter: () => setHighlight(i) } as any) : {})}
                   onPressIn={() => {
                     const settle: 'Dr' | 'Cr' = p.direction === 'Dr' ? 'Cr' : 'Dr';
                     onChange({ refno: p.billname, amount: Number(p.amount), direction: settle });

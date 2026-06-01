@@ -42,6 +42,8 @@ interface Props {
    * pushing it onto a different vertical baseline under `alignItems: center`.
    */
   compact?: boolean;
+  /** When true, the field is non-interactive and visually muted. */
+  disabled?: boolean;
 }
 
 interface AnchorRect {
@@ -60,6 +62,7 @@ export function SelectDropdown({
   testID,
   searchable = false,
   compact = false,
+  disabled = false,
 }: Props) {
   // Click-to-open mode owns this flag; searchable mode derives it from text.
   const [openClick, setOpenClick] = useState(false);
@@ -171,7 +174,7 @@ export function SelectDropdown({
     setTimeout(() => setSearchText(null), 150);
   };
 
-  const onClickFieldToggle = () => setOpenClick((v) => !v);
+  const onClickFieldToggle = () => { if (disabled) return; setOpenClick((v) => !v); };
 
   // What the input shows in searchable mode.
   const displayValue = isSearching ? (searchText ?? '') : value;
@@ -317,6 +320,7 @@ export function SelectDropdown({
     styles.field,
     error ? styles.fieldError : null,
     open && styles.fieldOpen,
+    disabled && styles.fieldDisabled,
   ];
 
   return (
@@ -334,6 +338,7 @@ export function SelectDropdown({
             onBlur={onFieldBlur}
             placeholder={effectivePlaceholder}
             placeholderTextColor={colors.textMuted}
+            editable={!disabled}
             style={[styles.fieldInput, Platform.OS === 'web' && ({ outlineStyle: 'none' } as any)]}
             testID={testID}
           />
@@ -386,6 +391,7 @@ const styles = StyleSheet.create({
   },
   fieldError: { borderColor: colors.danger },
   fieldOpen: { borderColor: '#94A3B8' },
+  fieldDisabled: { opacity: 0.55, backgroundColor: '#F1F5F9' },
   fieldText: {
     flex: 1,
     fontSize: 13,

@@ -786,7 +786,9 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: colors.text,
     fontFamily: typography.ui,
-    outlineStyle: 'none' as any,
+    // outlineStyle is a web-only prop RN's style types don't declare — spread
+    // through `any` to bypass StyleSheet's excess-property check.
+    ...({ outlineStyle: 'none' } as any),
   },
   // Width-bounded wrapper for the SelectDropdown filter so it doesn't stretch
   // to fill the toolbar — keeps the chip-like look from the reference UI.

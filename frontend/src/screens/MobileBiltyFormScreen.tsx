@@ -91,7 +91,7 @@ type StepNum = 1 | 2 | 3;
 
 export function MobileBiltyFormScreen({ editingId, onClose, onSaved, canSave }: Props) {
   const navigation = useNavigation();
-  const isEdit = editingId !== null;
+  const isEdit = editingId != null;
   const { mutateAsync: createBilty, isPending: creating } = useBiltyCreate();
   const { mutateAsync: updateBilty, isPending: updating } = useBiltyUpdate(editingId ?? 0);
   const saving = creating || updating;
@@ -167,7 +167,7 @@ export function MobileBiltyFormScreen({ editingId, onClose, onSaved, canSave }: 
 
   // Load existing bilty
   useEffect(() => {
-    if (!isEdit || editingId === null) return;
+    if (!isEdit || editingId == null) return;
     let cancelled = false;
     (async () => {
       try {
@@ -1071,7 +1071,7 @@ function DateField({
           onChangeText={(v) => onChange(filterDate(v))}
           placeholder="YYYY-MM-DD"
           placeholderTextColor={colors.textMuted}
-          style={[styles.compactInput, error && styles.compactInputError]}
+          style={[styles.compactInput, !!error && styles.compactInputError]}
         />
       )}
     </View>
