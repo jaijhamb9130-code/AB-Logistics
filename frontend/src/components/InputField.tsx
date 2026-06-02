@@ -9,7 +9,7 @@
  * `rightSlot` is used by PasswordField to render the Show/Hide toggle.
  */
 
-import React, { useState } from 'react';
+import React, { forwardRef, useImperativeHandle, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -31,6 +31,8 @@ interface Props extends Omit<TextInputProps, 'style'> {
   fieldType?: FieldType;
   /** When true, render with mobile-form compact dimensions (38px input, 11px uppercase label, no marginBottom). */
   compact?: boolean;
+  /** Web-only data-* attributes forwarded to the input (used for guided-entry tagging). */
+  dataSet?: Record<string, string>;
 }
 
 const KEYBOARD_TYPE: Record<FieldType, TextInputProps['keyboardType']> = {
@@ -58,7 +60,9 @@ function filterValue(raw: string, fieldType: FieldType): string {
   return raw;
 }
 
-export function InputField({
+export type InputFieldHandle = { focus: () => void };
+
+export const InputField = forwardRef<InputFieldHandle, Props>(function InputField({
   label,
   error,
   hint,
@@ -69,8 +73,10 @@ export function InputField({
   fieldType = 'text',
   compact,
   ...rest
-}: Props) {
+}: Props, ref) {
   const [focused, setFocused] = useState(false);
+  const inputRef = useRef<TextInput>(null);
+  useImperativeHandle(ref, () => ({ focus: () => inputRef.current?.focus?.() }), []);
   // Focus ring is a calm slate-blue, not the brand red — bright red on a
   // focused field reads as a validation error to users (it isn't).
   const borderColor = error
@@ -111,9 +117,11 @@ export function InputField({
         focused && Platform.OS === 'web' && ({ boxShadow: `0 0 0 3px ${glowColor}` } as any),
       ]}>
         <TextInput
+          ref={inputRef}
           style={[
             styles.input,
             compact && styles.inputCompact,
+            isNumeric && styles.inputNumeric,
             Platform.OS === 'web' && ({ outlineStyle: 'none', borderWidth: 0 } as any),
           ]}
           value={displayValue}
@@ -124,7 +132,7 @@ export function InputField({
           keyboardType={KEYBOARD_TYPE[fieldType]}
           maxLength={fieldType === 'phone' ? 10 : undefined}
           testID={testID}
-          {...rest}
+          {...(rest as any)}
         />
         {rightSlot}
       </View>
@@ -132,7 +140,7 @@ export function InputField({
       {error ? <Text style={styles.error}>{error}</Text> : null}
     </View>
   );
-}
+});
 
 const styles = StyleSheet.create({
   wrap: {
@@ -159,6 +167,12 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: colors.text,
     fontFamily: typography.ui,
+  },
+  // Numeric fields: monospaced, strong-contrast, bold so the digits read clearly.
+  inputNumeric: {
+    fontFamily: typography.mono,
+    color: colors.textStrong,
+    fontWeight: '700',
   },
   hint: {
     marginTop: 3,

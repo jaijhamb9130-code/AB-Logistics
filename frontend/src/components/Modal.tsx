@@ -51,8 +51,11 @@ export function Modal({
 }: Props) {
   const { width, height } = useWindowDimensions();
   const isMobile = width < 768;
-  // Bottom-sheet styling only when on mobile AND not explicitly centered.
-  const useBottomSheet = isMobile && !centered;
+  // All modals now open as a centered, fade-in card on every screen size —
+  // including mobile (previously a bottom slide-up sheet). The `centered` prop
+  // is kept for API compatibility but the bottom-sheet layout is retired.
+  void centered;
+  const useBottomSheet = false;
 
   return (
     <RNModal

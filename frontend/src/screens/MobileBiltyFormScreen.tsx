@@ -11,7 +11,7 @@
  * everything inside the current session. Refresh / navigating away discards.
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { Controller, useFieldArray, useForm, useWatch } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import {
@@ -26,6 +26,7 @@ import {
 import { useNavigation } from '@react-navigation/native';
 import { ButtonPrimary } from '../components/ButtonPrimary';
 import { InputField } from '../components/InputField';
+import { PrefixedNumberInput } from '../components/PrefixedNumberInput';
 import { Loader } from '../components/Loader';
 import { AutocompleteField } from '../components/AutocompleteField';
 import { Modal } from '../components/Modal';
@@ -34,9 +35,12 @@ import { ledgerGroupService } from '../services/ledgerGroupService';
 import { itemMasterService } from '../services/itemMasterService';
 import { vehicleMasterService } from '../services/vehicleMasterService';
 import { destinationService } from '../services/destinationService';
+import { ownerService } from '../services/ownerService';
+import { zoneService } from '../services/zoneService';
 import { colors, radius, spacing, typography } from '../constants/theme';
 import { useBiltyCreate, useBiltyUpdate } from '../hooks/useBiltyUpdate';
 import { biltyService } from '../services/biltyService';
+import { vchTypeService } from '../services/vchTypeService';
 import { CreateBiltySchema } from '../../../shared/schemas/bilty.schema';
 import type { CreateBiltyInput } from '../../../shared/schemas/bilty.schema';
 import { itemsTotal, netPayable, toNum } from '../utils/biltyValidation';
@@ -128,6 +132,13 @@ export function MobileBiltyFormScreen({ editingId, onClose, onSaved, canSave }: 
   // Surfaced when Save is pressed but the form fails validation — without this
   // the (otherwise silent) Zod failure made the button look broken.
   const [saveError, setSaveError] = useState<string | null>(null);
+  // The Bilty voucher type's own prefix (e.g. "blt") — locks the Bilty No lead.
+  const [biltyPrefix, setBiltyPrefix] = useState<string | null>(null);
+  useEffect(() => {
+    vchTypeService.list()
+      .then((types) => setBiltyPrefix(types.find((t) => t.name === 'Bilty')?.prefix ?? null))
+      .catch(() => { /* ignore — falls back to plain numbering */ });
+  }, []);
 
   // Hide the React Navigation header — the wizard renders its own top bar.
   useEffect(() => {
@@ -144,6 +155,8 @@ export function MobileBiltyFormScreen({ editingId, onClose, onSaved, canSave }: 
   const [vehicleNoOptions, setVehicleNoOptions] = useState<string[]>([]);
   const [branchOptions, setBranchOptions] = useState<string[]>([]);
   const [destinationOptions, setDestinationOptions] = useState<string[]>([]);
+  const [ownerOptions, setOwnerOptions] = useState<string[]>([]);
+  const [zoneOptions, setZoneOptions] = useState<string[]>([]);
 
   useEffect(() => {
     Promise.allSettled([
@@ -171,6 +184,8 @@ export function MobileBiltyFormScreen({ editingId, onClose, onSaved, canSave }: 
           [...new Set(rs.map((r) => r.name).filter((v): v is string => Boolean(v)))].sort()
         )
       ),
+      ownerService.list().then((rs) => setOwnerOptions(rs.map((r) => r.name).sort())),
+      zoneService.list().then((rs) => setZoneOptions(rs.map((r) => r.name).sort())),
     ]);
   }, []);
 
@@ -381,6 +396,11 @@ export function MobileBiltyFormScreen({ editingId, onClose, onSaved, canSave }: 
             branchOptions={branchOptions}
             gstNo={gstNo}
             setGstNo={setGstNo}
+            biltyPrefix={isEdit ? null : biltyPrefix}
+            getValues={getValues}
+            onLastField={() => goNext()}
+            ownerOptions={ownerOptions}
+            zoneOptions={zoneOptions}
           />
         ) : null}
 
@@ -466,6 +486,11 @@ function Step1Details({
   branchOptions,
   gstNo,
   setGstNo,
+  biltyPrefix,
+  getValues,
+  onLastField,
+  ownerOptions,
+  zoneOptions,
 }: {
   control: any;
   errors: any;
@@ -476,7 +501,56 @@ function Step1Details({
   branchOptions: string[];
   gstNo: string;
   setGstNo: (v: string) => void;
+  biltyPrefix: string | null;
+  getValues: any;
+  onLastField?: () => void;
+  ownerOptions: string[];
+  zoneOptions: string[];
 }) {
+  // Guided entry (mobile-web): Enter/Tab walks field-by-field, each gated.
+  // Dropdowns force a listed pick; free-text (Bilty No / Zone / GST / Owner)
+  // require non-empty. After the last field, advance to the next wizard step.
+  const MOB_ORDER = ['bilty_no', 'branch', 'consignor', 'bill_to', 'truck_no', 'goods_type', 'zone', 'gst', 'owner_name', 'agent_name'];
+  const mobRefs = useRef<Record<string, { focus: () => void } | null>>({});
+  const setMobRef = (k: string) => (r: { focus: () => void } | null) => { mobRefs.current[k] = r; };
+  const onLastFieldRef = useRef(onLastField);
+  onLastFieldRef.current = onLastField;
+  const focusMobNext = (k: string) => {
+    const i = MOB_ORDER.indexOf(k);
+    for (let n = i + 1; n < MOB_ORDER.length; n++) {
+      const r = mobRefs.current[MOB_ORDER[n]];
+      if (r && typeof r.focus === 'function') { r.focus(); return; }
+    }
+    onLastFieldRef.current?.(); // past last field → next wizard step
+  };
+  const mobTextNext = (k: string, raw: unknown) => {
+    if (String(raw ?? '').trim() !== '') focusMobNext(k);
+  };
+
+  // Tab gating for the plain-input fields (Bilty No / Zone / GST / Owner) —
+  // identify by data-guided and block Tab unless non-empty. Autocomplete fields
+  // gate Tab themselves.
+  const gstRef = useRef(gstNo);
+  gstRef.current = gstNo;
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Tab' || e.shiftKey) return;
+      const el = document.activeElement as HTMLElement | null;
+      const key = el?.dataset?.guided;
+      if (!key) return;
+      const valOf: Record<string, () => string> = {
+        bilty_no: () => String(getValues('header.bilty_no') ?? ''),
+        gst: () => gstRef.current,
+      };
+      if (!valOf[key]) return;
+      e.preventDefault();
+      if (valOf[key]().trim() !== '') focusMobNext(key);
+    };
+    document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
+  }, [getValues]);
+
   return (
     <View style={styles.sectionTight}>
       <SectionBar title="BILTY DETAILS" />
@@ -488,15 +562,18 @@ function Step1Details({
               control={control}
               name="header.bilty_no"
               render={({ field: { value, onChange } }) => (
-                <InputField
+                <PrefixedNumberInput
+                  ref={setMobRef('bilty_no')}
                   compact
                   label="Bilty No *"
+                  prefix={biltyPrefix}
                   value={value ?? ''}
-                  onChangeText={(v) => onChange(v.toUpperCase())}
-                  fieldType="alphanumeric"
-                  autoCapitalize="characters"
-                  placeholder="digits only, e.g. 18521"
+                  onChangeText={onChange}
+                  placeholder="e.g. 18521"
                   error={errors.header?.bilty_no?.message ?? null}
+                  blurOnSubmit={false}
+                  onSubmitEditing={() => mobTextNext('bilty_no', getValues('header.bilty_no'))}
+                  dataSet={{ guided: 'bilty_no' }}
                 />
               )}
             />
@@ -506,7 +583,7 @@ function Step1Details({
               control={control}
               name="header.branch"
               render={({ field: { value, onChange } }) => (
-                <AutocompleteField compact label="Branch" value={value ?? ''} options={branchOptions} onChangeText={onChange} placeholder="" />
+                <AutocompleteField ref={setMobRef('branch')} compact label="Branch" value={value ?? ''} options={branchOptions} onChangeText={onChange} placeholder="" onSubmitNext={() => focusMobNext('branch')} />
               )}
             />
           </View>
@@ -520,6 +597,7 @@ function Step1Details({
               name="header.consignor"
               render={({ field: { value, onChange } }) => (
                 <AutocompleteField
+                  ref={setMobRef('consignor')}
                   compact
                   label="Consignor *"
                   value={value}
@@ -527,6 +605,7 @@ function Step1Details({
                   onChangeText={onChange}
                   placeholder=""
                   error={errors.header?.consignor?.message ?? null}
+                  onSubmitNext={() => focusMobNext('consignor')}
                 />
               )}
             />
@@ -541,12 +620,14 @@ function Step1Details({
               name="header.bill_to"
               render={({ field: { value, onChange } }) => (
                 <AutocompleteField
+                  ref={setMobRef('bill_to')}
                   compact
                   label="Bill To"
                   value={value ?? ''}
                   options={consignorOptions}
                   onChangeText={onChange}
                   placeholder=""
+                  onSubmitNext={() => focusMobNext('bill_to')}
                 />
               )}
             />
@@ -561,6 +642,7 @@ function Step1Details({
               name="header.truck_no"
               render={({ field: { value, onChange } }) => (
                 <AutocompleteField
+                  ref={setMobRef('truck_no')}
                   compact
                   label="Truck No *"
                   value={value ?? ''}
@@ -568,6 +650,7 @@ function Step1Details({
                   onChangeText={(v) => onChange(v.toUpperCase())}
                   error={errors.header?.truck_no?.message ?? null}
                   placeholder=""
+                  onSubmitNext={() => focusMobNext('truck_no')}
                 />
               )}
             />
@@ -578,6 +661,7 @@ function Step1Details({
               name="header.goods_type"
               render={({ field: { value, onChange } }) => (
                 <AutocompleteField
+                  ref={setMobRef('goods_type')}
                   compact
                   label="Goods Type *"
                   value={value ?? ''}
@@ -585,6 +669,7 @@ function Step1Details({
                   onChangeText={onChange}
                   placeholder=""
                   error={errors.header?.goods_type?.message ?? null}
+                  onSubmitNext={() => focusMobNext('goods_type')}
                 />
               )}
             />
@@ -598,7 +683,7 @@ function Step1Details({
               control={control}
               name="header.zone_name"
               render={({ field: { value, onChange } }) => (
-                <InputField compact label="Zone" value={value ?? ''} onChangeText={onChange} placeholder="Zone" />
+                <AutocompleteField ref={setMobRef('zone')} compact label="Zone" value={value ?? ''} options={zoneOptions} onChangeText={onChange} placeholder="" onSubmitNext={() => focusMobNext('zone')} />
               )}
             />
           </View>
@@ -608,6 +693,7 @@ function Step1Details({
         <View style={[styles.fieldRow, styles.zRow3]}>
           <View style={styles.fieldCol}>
             <InputField
+              ref={setMobRef('gst')}
               compact
               label="GST No"
               value={gstNo}
@@ -615,6 +701,9 @@ function Step1Details({
               fieldType="alphanumeric"
               autoCapitalize="characters"
               placeholder="22AAAAA0000A1Z5"
+              blurOnSubmit={false}
+              onSubmitEditing={() => mobTextNext('gst', gstNo)}
+              dataSet={{ guided: 'gst' }}
             />
           </View>
         </View>
@@ -626,7 +715,7 @@ function Step1Details({
               control={control}
               name="header.owner_name"
               render={({ field: { value, onChange } }) => (
-                <InputField compact label="Owner Name" value={value ?? ''} onChangeText={onChange} placeholder="Owner name" />
+                <AutocompleteField ref={setMobRef('owner_name')} compact label="Owner Name" value={value ?? ''} options={ownerOptions} onChangeText={onChange} placeholder="" onSubmitNext={() => focusMobNext('owner_name')} />
               )}
             />
           </View>
@@ -639,7 +728,7 @@ function Step1Details({
               control={control}
               name="header.agent_name"
               render={({ field: { value, onChange } }) => (
-                <AutocompleteField compact label="Agent Name" value={value ?? ''} options={agentOptions} onChangeText={onChange} placeholder="" />
+                <AutocompleteField ref={setMobRef('agent_name')} compact label="Agent Name" value={value ?? ''} options={agentOptions} onChangeText={onChange} placeholder="" onSubmitNext={() => focusMobNext('agent_name')} />
               )}
             />
           </View>
@@ -804,6 +893,7 @@ export function Step2Items({
               onCancel={handleCancel}
               consignorOptions={consignorOptions}
               destinationOptions={destinationOptions}
+              getValues={getValues}
             />
           )
         ) : null}
@@ -960,6 +1050,7 @@ function ItemFormFields({
   onCancel,
   consignorOptions = [],
   destinationOptions = [],
+  getValues,
 }: {
   control: any;
   errors: any;
@@ -968,19 +1059,67 @@ function ItemFormFields({
   onCancel: () => void;
   consignorOptions?: string[];
   destinationOptions?: string[];
+  getValues: any;
 }) {
+  // Guided entry inside the item modal. Every field is gated: Challan → … →
+  // Shipment → Save. Dropdowns (From/To/Consignee) force a listed pick; numeric
+  // fields require > 0; text fields require non-empty.
+  const MODAL_ORDER = ['challan_no', 'lr_no', 'from_loc', 'to_loc', 'consignee', 'qty', 'rate', 'inc_rate', 'l_rate', 'e_rate', 'shipment_no'];
+  const MODAL_DL = new Set(['from_loc', 'to_loc', 'consignee']);
+  const MODAL_NUM = new Set(['qty', 'rate', 'inc_rate', 'l_rate', 'e_rate']);
+  const modalRefs = useRef<Record<string, { focus: () => void } | null>>({});
+  const setModalRef = (col: string) => (r: { focus: () => void } | null) => { modalRefs.current[col] = r; };
+  const isModalValid = (col: string): boolean => {
+    const v = getValues(`items.${i}.${col}`);
+    if (MODAL_NUM.has(col)) return Number(v) > 0;
+    if (MODAL_DL.has(col)) {
+      const opts = col === 'consignee' ? consignorOptions : destinationOptions;
+      return !!v && opts.some((o) => o.toLowerCase() === String(v).trim().toLowerCase());
+    }
+    return String(v ?? '').trim() !== '';
+  };
+  const advanceModal = (col: string) => {
+    if (!isModalValid(col)) return;
+    const idx = MODAL_ORDER.indexOf(col);
+    if (idx < MODAL_ORDER.length - 1) { modalRefs.current[MODAL_ORDER[idx + 1]]?.focus?.(); return; }
+    // Last field → focus the Save button.
+    if (Platform.OS === 'web') {
+      (document.querySelector(`[data-modalsave="${i}"]`) as HTMLElement | null)?.focus?.();
+    }
+  };
+  const advanceModalRef = useRef(advanceModal);
+  advanceModalRef.current = advanceModal;
+  // Tab gating for the CompactField (text/numeric) cells; the From/To/Consignee
+  // dropdowns gate Tab themselves.
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Tab' || e.shiftKey) return;
+      const el = document.activeElement as HTMLElement | null;
+      const cell = el?.dataset?.cell;
+      if (!cell) return;
+      const dot = cell.indexOf('.');
+      if (cell.slice(0, dot) !== String(i)) return;
+      const col = cell.slice(dot + 1);
+      if (MODAL_DL.has(col)) return;
+      e.preventDefault();
+      advanceModalRef.current(col);
+    };
+    document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
+  }, [i]);
   return (
     <View>
       {/* Row 1 — Challan No · LR No */}
       <View style={[styles.itemRow, styles.zRow4]}>
         <View style={styles.itemCol}>
           <Controller control={control} name={`items.${i}.challan_no`} render={({ field: f }) => (
-            <CompactField label="CHALLAN NO" value={String(f.value ?? '')} onChange={(v) => f.onChange(filterAlphanumeric(v))} />
+            <CompactField ref={setModalRef('challan_no')} label="CHALLAN NO" value={String(f.value ?? '')} onChange={(v) => f.onChange(filterAlphanumeric(v))} onSubmitNext={() => advanceModal('challan_no')} dataSet={{ cell: `${i}.challan_no` }} />
           )} />
         </View>
         <View style={styles.itemCol}>
           <Controller control={control} name={`items.${i}.lr_no`} render={({ field: f }) => (
-            <CompactField label="LR NO" value={String(f.value ?? '')} onChange={(v) => f.onChange(filterAlphanumeric(v))} />
+            <CompactField ref={setModalRef('lr_no')} label="LR NO" value={String(f.value ?? '')} onChange={(v) => f.onChange(filterAlphanumeric(v))} onSubmitNext={() => advanceModal('lr_no')} dataSet={{ cell: `${i}.lr_no` }} />
           )} />
         </View>
       </View>
@@ -990,24 +1129,28 @@ function ItemFormFields({
         <View style={styles.itemCol}>
           <Controller control={control} name={`items.${i}.from_loc`} render={({ field: f }) => (
             <AutocompleteField
+              ref={setModalRef('from_loc')}
               compact
               label="FROM"
               value={String(f.value ?? '')}
               options={destinationOptions}
               onChangeText={f.onChange}
               placeholder=""
+              onSubmitNext={() => advanceModal('from_loc')}
             />
           )} />
         </View>
         <View style={styles.itemCol}>
           <Controller control={control} name={`items.${i}.to_loc`} render={({ field: f }) => (
             <AutocompleteField
+              ref={setModalRef('to_loc')}
               compact
               label="TO"
               value={String(f.value ?? '')}
               options={destinationOptions}
               onChangeText={f.onChange}
               placeholder=""
+              onSubmitNext={() => advanceModal('to_loc')}
             />
           )} />
         </View>
@@ -1018,12 +1161,14 @@ function ItemFormFields({
         <View style={styles.itemCol}>
           <Controller control={control} name={`items.${i}.consignee`} render={({ field: f }) => (
             <AutocompleteField
+              ref={setModalRef('consignee')}
               compact
               label="CONSIGNEE"
               value={String(f.value ?? '')}
               options={consignorOptions}
               onChangeText={f.onChange}
               placeholder=""
+              onSubmitNext={() => advanceModal('consignee')}
             />
           )} />
         </View>
@@ -1033,17 +1178,17 @@ function ItemFormFields({
       <View style={styles.itemRow}>
         <View style={styles.itemCol}>
           <Controller control={control} name={`items.${i}.qty`} render={({ field: f }) => (
-            <CompactField label="QTY *" value={String(f.value ?? '')} onChange={(v) => f.onChange(filterDecimal(v))} numeric error={errors.items?.[i]?.qty?.message ?? null} />
+            <CompactField ref={setModalRef('qty')} label="QTY *" value={String(f.value ?? '')} onChange={(v) => f.onChange(filterDecimal(v))} numeric error={errors.items?.[i]?.qty?.message ?? null} onSubmitNext={() => advanceModal('qty')} dataSet={{ cell: `${i}.qty` }} />
           )} />
         </View>
         <View style={styles.itemCol}>
           <Controller control={control} name={`items.${i}.rate`} render={({ field: f }) => (
-            <CompactField label="RATE *" value={String(f.value ?? '')} onChange={(v) => f.onChange(filterDecimal(v))} numeric error={errors.items?.[i]?.rate?.message ?? null} />
+            <CompactField ref={setModalRef('rate')} label="RATE *" value={String(f.value ?? '')} onChange={(v) => f.onChange(filterDecimal(v))} numeric error={errors.items?.[i]?.rate?.message ?? null} onSubmitNext={() => advanceModal('rate')} dataSet={{ cell: `${i}.rate` }} />
           )} />
         </View>
         <View style={styles.itemCol}>
           <Controller control={control} name={`items.${i}.inc_rate`} render={({ field: f }) => (
-            <CompactField label="INC" value={String(f.value ?? '')} onChange={(v) => f.onChange(filterDecimal(v))} numeric />
+            <CompactField ref={setModalRef('inc_rate')} label="INC" value={String(f.value ?? '')} onChange={(v) => f.onChange(filterDecimal(v))} numeric onSubmitNext={() => advanceModal('inc_rate')} dataSet={{ cell: `${i}.inc_rate` }} />
           )} />
         </View>
       </View>
@@ -1052,17 +1197,17 @@ function ItemFormFields({
       <View style={styles.itemRow}>
         <View style={styles.itemCol}>
           <Controller control={control} name={`items.${i}.l_rate`} render={({ field: f }) => (
-            <CompactField label="L-RATE" value={String(f.value ?? '')} onChange={(v) => f.onChange(filterDecimal(v))} numeric />
+            <CompactField ref={setModalRef('l_rate')} label="L-RATE" value={String(f.value ?? '')} onChange={(v) => f.onChange(filterDecimal(v))} numeric onSubmitNext={() => advanceModal('l_rate')} dataSet={{ cell: `${i}.l_rate` }} />
           )} />
         </View>
         <View style={styles.itemCol}>
           <Controller control={control} name={`items.${i}.e_rate`} render={({ field: f }) => (
-            <CompactField label="E-RATE" value={String(f.value ?? '')} onChange={(v) => f.onChange(filterDecimal(v))} numeric />
+            <CompactField ref={setModalRef('e_rate')} label="E-RATE" value={String(f.value ?? '')} onChange={(v) => f.onChange(filterDecimal(v))} numeric onSubmitNext={() => advanceModal('e_rate')} dataSet={{ cell: `${i}.e_rate` }} />
           )} />
         </View>
         <View style={styles.itemCol}>
           <Controller control={control} name={`items.${i}.shipment_no`} render={({ field: f }) => (
-            <CompactField label="SHIPMENT NO" value={String(f.value ?? '')} onChange={(v) => f.onChange(filterAlphanumeric(v))} />
+            <CompactField ref={setModalRef('shipment_no')} label="SHIPMENT NO" value={String(f.value ?? '')} onChange={(v) => f.onChange(filterAlphanumeric(v))} onSubmitNext={() => advanceModal('shipment_no')} dataSet={{ cell: `${i}.shipment_no` }} />
           )} />
         </View>
       </View>
@@ -1072,7 +1217,7 @@ function ItemFormFields({
         <Pressable onPress={onCancel} style={[styles.modalBtn, styles.modalBtnCancel]} accessibilityRole="button">
           <Text style={styles.modalBtnCancelText}>Cancel</Text>
         </Pressable>
-        <Pressable onPress={onSave} style={[styles.modalBtn, styles.modalBtnSave]} accessibilityRole="button">
+        <Pressable onPress={onSave} style={[styles.modalBtn, styles.modalBtnSave]} accessibilityRole="button" {...({ dataSet: { modalsave: `${i}` } } as any)}>
           <Text style={styles.modalBtnSaveText}>Save</Text>
         </Pressable>
       </View>
@@ -1081,21 +1226,30 @@ function ItemFormFields({
 }
 
 // ─── Compact field (label + tight input) ─────────────────────────────────────
-function CompactField({
-  label,
-  value,
-  onChange,
-  numeric,
-  error,
-  disabled,
-}: {
+type CompactFieldHandle = { focus: () => void };
+const CompactField = forwardRef<CompactFieldHandle, {
   label: string;
   value: string;
   onChange: (v: string) => void;
   numeric?: boolean;
   error?: string | null;
   disabled?: boolean;
-}) {
+  /** Guided entry: Enter advances to the next cell. */
+  onSubmitNext?: () => void;
+  /** Web-only data-* attributes (guided-entry cell tagging). */
+  dataSet?: Record<string, string>;
+}>(function CompactField({
+  label,
+  value,
+  onChange,
+  numeric,
+  error,
+  disabled,
+  onSubmitNext,
+  dataSet,
+}, ref) {
+  const inputRef = useRef<TextInput>(null);
+  useImperativeHandle(ref, () => ({ focus: () => inputRef.current?.focus?.() }), []);
   // For numeric fields: show "0" as a faded placeholder when the underlying
   // value is zero, so the user doesn't have to manually delete the 0 before
   // typing. Empty input → store "0" so form state stays a valid number.
@@ -1115,12 +1269,15 @@ function CompactField({
     <View style={styles.compactField}>
       <Text style={styles.compactLabel}>{label}</Text>
       <TextInput
+        ref={inputRef}
         value={display}
         onChangeText={handleChange}
         keyboardType={numeric ? 'decimal-pad' : 'default'}
         editable={!disabled}
         placeholder={numeric ? '0' : undefined}
         placeholderTextColor={colors.textMuted}
+        blurOnSubmit={false}
+        onSubmitEditing={() => onSubmitNext?.()}
         style={[
           styles.compactInput,
           numeric && styles.compactInputRight,
@@ -1128,10 +1285,11 @@ function CompactField({
           disabled && styles.compactInputDisabled,
           Platform.OS === 'web' && ({ outlineStyle: 'none' } as any),
         ]}
+        {...(dataSet ? ({ dataSet } as any) : {})}
       />
     </View>
   );
-}
+});
 
 // ─── Compact date field — native <input type="date"> on web (shows the
 // browser's calendar picker), text fallback on native. Reuses the CompactField
@@ -1700,7 +1858,7 @@ const styles = StyleSheet.create({
     borderColor: '#CBD5E1',
     borderRadius: 5,
   },
-  compactInputRight: { textAlign: 'right', fontFamily: typography.mono },
+  compactInputRight: { textAlign: 'right', fontFamily: typography.mono, color: colors.textStrong, fontWeight: '700' },
   compactInputError: { borderColor: colors.danger },
   compactInputDisabled: { backgroundColor: '#F8FAFC', borderStyle: 'dashed', color: colors.textMuted },
 

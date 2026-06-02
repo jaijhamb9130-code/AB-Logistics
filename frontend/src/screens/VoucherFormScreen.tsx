@@ -26,6 +26,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { ButtonPrimary } from '../components/ButtonPrimary';
 import { Loader } from '../components/Loader';
 import { Modal } from '../components/Modal';
+import { PrefixedNumberInput } from '../components/PrefixedNumberInput';
 import { SelectDropdown } from '../components/SelectDropdown';
 import { colors, radius, spacing, text, typography } from '../constants/theme';
 import { voucherService } from '../services/voucherService';
@@ -958,14 +959,29 @@ export function VoucherFormScreen() {
 
           <View style={[styles.field, styles.headerCol, isMobile && styles.headerColMobile]}>
             <Text style={styles.fieldLabel}>Voucher No</Text>
-            <TextInput
-              value={vchNo}
-              onChangeText={setVchNo}
-              placeholder="P-001"
-              placeholderTextColor={colors.textMuted}
-              style={[styles.input, !canSave && styles.inputDisabled]}
-              editable={canSave}
-            />
+            {!isEdit && currentVchType?.prefix ? (
+              // New voucher of a type that has a prefix → lock "<prefix>-" and
+              // let the user edit only the number after it.
+              <PrefixedNumberInput
+                hideLabel
+                label="Voucher No"
+                prefix={currentVchType.prefix}
+                value={vchNo}
+                onChangeText={setVchNo}
+                editable={canSave}
+                placeholder="001"
+                testID="vch-no-input"
+              />
+            ) : (
+              <TextInput
+                value={vchNo}
+                onChangeText={setVchNo}
+                placeholder="P-001"
+                placeholderTextColor={colors.textMuted}
+                style={[styles.input, !canSave && styles.inputDisabled]}
+                editable={canSave}
+              />
+            )}
           </View>
 
           {!isMobile ? <View style={styles.headerSpacer} /> : null}

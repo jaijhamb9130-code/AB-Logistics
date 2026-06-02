@@ -20,12 +20,13 @@ const BiltyItemSchema = z.object({
 });
 
 const BiltyHeaderSchema = z.object({
-  // Numeric-digit-only bilty numbers — entered manually by the user.
+  // Optional "<prefix>-" lead (from the Bilty voucher type) followed by a
+  // numeric tail — e.g. '8400153862' or 'blt-758654859'. Must end in digits.
   bilty_no: z
     .string()
     .min(1, { message: 'bilty_no is required' })
     .max(32)
-    .regex(/^\d+$/, { message: 'bilty_no must be digits only' }),
+    .regex(/^([A-Za-z0-9._/]+-)?\d+$/, { message: 'bilty_no must end in a number' }),
   bilty_date: z.string().nullable().optional(),
   consignor: z.string().min(1, { message: 'consignor is required' }).max(255),
   bill_to: z.string().max(255).nullable().optional(),

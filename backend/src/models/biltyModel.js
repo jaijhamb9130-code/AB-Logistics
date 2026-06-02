@@ -363,7 +363,9 @@ function validateBiltyNo(raw) {
     e.code = 'bilty_no_required';
     throw e;
   }
-  if (!/^\d+$/.test(s)) {
+  // Allow an optional "<prefix>-" lead (from the Bilty voucher type) followed by
+  // a numeric tail — e.g. '8400153862' or 'BLT-001'. Must end in digits.
+  if (!/^([A-Za-z0-9._/]+-)?\d+$/.test(s)) {
     const e = new Error('bilty_no_must_be_numeric');
     e.code = 'bilty_no_must_be_numeric';
     throw e;
@@ -870,20 +872,26 @@ async function deleteById(id) {
 // and `BOM/0017` can coexist as distinct sequences.
 async function nextBiltyNo(branch) {
   const vchTypeId = await getBiltyTypeId();
-  // Treat the digits of vch_no as an unsigned int for the MAX(); non-numeric
-  // bilty numbers (e.g. legacy alphanumeric) are filtered out.
-  let sql = `SELECT COALESCE(MAX(CAST(v.vch_no AS UNSIGNED)), 0) AS m
+  // The Bilty type's own configured prefix (e.g. 'BLT'); blank → plain numbering.
+  const [ptRows] = await pool.execute(
+    'SELECT prefix FROM vchtype WHERE id = :id LIMIT 1', { id: vchTypeId }
+  );
+  const prefix = String((ptRows[0] && ptRows[0].prefix) || '').trim();
+  // Take the MAX of the TRAILING numeric portion of existing bilty numbers, so
+  // both plain '123' and prefixed 'BLT-123' continue the same sequence.
+  let sql = `SELECT COALESCE(MAX(CAST(REGEXP_SUBSTR(v.vch_no, '[0-9]+$') AS UNSIGNED)), 0) AS m
                FROM vch_details v
                LEFT JOIN branch_master b ON b.id = v.branch_id
               WHERE v.vch_type_id = :vch_type_id
-                AND v.vch_no REGEXP '^[0-9]+$'`;
+                AND v.vch_no REGEXP '[0-9]+$'`;
   const params = { vch_type_id: vchTypeId };
   if (branch) {
     sql += ' AND b.name = :branch';
     params.branch = branch;
   }
   const [rows] = await pool.execute(sql, params);
-  return String((Number(rows[0]?.m) || 0) + 1);
+  const num = (Number(rows[0]?.m) || 0) + 1;
+  return prefix ? `${prefix}-${num}` : String(num);
 }
 
 module.exports = {

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import {
   Platform,
   Pressable,
@@ -26,9 +26,23 @@ interface Props {
   testID?: string;
   /** When true, render with mobile-form compact dimensions (38px input, 11px uppercase label, no marginBottom). */
   compact?: boolean;
+  /**
+   * Guided entry: invoked when Enter is pressed AND the field holds a VALID
+   * selection (a value matching one of `options`). When set, the field refuses
+   * to advance on free text that isn't a listed option — forcing a pick.
+   */
+  onSubmitNext?: () => void;
+  /**
+   * Guided entry: when true, Enter advances on any NON-EMPTY value even if it
+   * isn't a listed option (used for fields with no connected master, e.g. Owner).
+   * When false/undefined, a listed selection is required to advance.
+   */
+  submitFreeText?: boolean;
 }
 
-export function AutocompleteField({
+export type AutocompleteHandle = { focus: () => void };
+
+export const AutocompleteField = forwardRef<AutocompleteHandle, Props>(function AutocompleteField({
   label,
   value,
   options,
@@ -37,7 +51,9 @@ export function AutocompleteField({
   error,
   testID,
   compact,
-}: Props) {
+  onSubmitNext,
+  submitFreeText,
+}: Props, ref) {
   const [focused, setFocused] = useState(false);
   // Whether the dropdown should be visible. Decoupled from `focused` because
   // we want the list to close after selection but reopen automatically when
@@ -58,6 +74,9 @@ export function AutocompleteField({
   // the Pressable's onPress could fire. We set this ref on onPressIn (which
   // fires on mousedown, BEFORE blur) and clear it after the selection commits.
   const pressingRef = useRef(false);
+
+  // Expose focus() so guided-entry parents can move the cursor to this field.
+  useImperativeHandle(ref, () => ({ focus: () => inputRef.current?.focus?.() }), []);
 
   // Filter by case-insensitive substring once MIN_CHARS are typed. The list
   // always reflects exactly what's typed — we deliberately do NOT "show all
@@ -137,13 +156,24 @@ export function AutocompleteField({
         if (filtered.length === 0) return;
         e.preventDefault();
         setHighlightIndex((i) => (i - 1 + filtered.length) % filtered.length);
-      } else if (e.key === 'Enter') {
+      } else if (e.key === 'Enter' || (e.key === 'Tab' && !e.shiftKey && !!onSubmitNext)) {
+        // Enter always selects the highlighted option. In guided mode, Tab is
+        // intercepted too and gated the same way: advance only on a valid pick
+        // (or non-empty free text); otherwise block so the user must choose a
+        // listed option. preventDefault stops Tab's native focus move.
         e.preventDefault();
         const opt = filtered[highlightIndex];
         if (opt) {
           onChangeText(opt);
           setListOpen(false);
+          onSubmitNext?.();
+        } else if (submitFreeText && onSubmitNext && valTrim !== '') {
+          // Free-text field (no connected master) → advance on any non-empty value.
+          setListOpen(false);
+          onSubmitNext();
         }
+        // Otherwise (forced-selection field with no match) → do nothing, which
+        // keeps focus here and forces the user to pick a listed option.
       } else if (e.key === 'Escape') {
         e.preventDefault();
         setListOpen(false);
@@ -154,7 +184,22 @@ export function AutocompleteField({
     // TextInput intercepts some keys internally during bubble phase.
     document.addEventListener('keydown', onKeyDown, true);
     return () => document.removeEventListener('keydown', onKeyDown, true);
-  }, [showList, filtered, highlightIndex, onChangeText]);
+  }, [showList, filtered, highlightIndex, onChangeText, onSubmitNext]);
+
+  // Guided entry, web: when the field is focused but the list is CLOSED, both
+  // Enter and Tab advance ONLY if a valid option is selected (or non-empty free
+  // text). Otherwise the key is swallowed — focus stays put, forcing a pick.
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !onSubmitNext || !focused || showList) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Enter' && !(e.key === 'Tab' && !e.shiftKey)) return;
+      e.preventDefault();
+      const isValid = valTrim !== '' && options.some((o) => o.toLowerCase() === valLower);
+      if (isValid || (submitFreeText && valTrim !== '')) onSubmitNext();
+    };
+    document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
+  }, [focused, showList, onSubmitNext, submitFreeText, valTrim, valLower, options]);
 
   // Native onKeyPress handler — kept for iOS/Android. Web uses the document
   // listener above; this one is a no-op there.
@@ -260,7 +305,7 @@ export function AutocompleteField({
       ) : null}
     </View>
   );
-}
+});
 
 const styles = StyleSheet.create({
   wrap: { marginBottom: 4, position: 'relative' as const, zIndex: 1 },

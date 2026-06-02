@@ -6,7 +6,7 @@
  * Save delegates to useBiltyCreate mutation (TanStack Query).
  */
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Controller,
   useFieldArray,
@@ -27,8 +27,10 @@ import { useNavigation, useRoute, useFocusEffect, type RouteProp } from '@react-
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { ButtonPrimary } from '../components/ButtonPrimary';
 import { InputField } from '../components/InputField';
+import { PrefixedNumberInput } from '../components/PrefixedNumberInput';
 import { Loader } from '../components/Loader';
 import { AutocompleteField } from '../components/AutocompleteField';
+import { vchTypeService } from '../services/vchTypeService';
 import { ledgerMasterService } from '../services/ledgerMasterService';
 import { ledgerGroupService } from '../services/ledgerGroupService';
 import { itemMasterService } from '../services/itemMasterService';
@@ -164,7 +166,9 @@ export function BiltyCreateFormEmbedded({ onExit }: { onExit?: () => void }) {
         // Close (X) returns to the voucher form (host resets the type) rather
         // than navigating out of the page.
         onClose={() => { if (onExit) onExit(); else navigation.goBack(); }}
-        onSaved={() => { if (onExit) onExit(); (navigation as any).navigate('BiltyList'); }}
+        // Embedded in the Billing stack — go to the Daybook (BiltyList lives in
+        // the Bilty tab and isn't reachable from here).
+        onSaved={() => { (navigation as any).navigate('Daybook'); }}
       />
     );
   }
@@ -386,6 +390,118 @@ function DesktopBiltyForm({ canSave, editingId, embedded = false }: { canSave: b
     setGstNo((prev) => (prev === gst ? prev : gst));
   }, [watchedConsignor, partyGstMap]);
 
+  // The Bilty voucher type's own prefix (e.g. "blt") — locks the Bilty No lead.
+  const [biltyPrefix, setBiltyPrefix] = useState<string | null>(null);
+  useEffect(() => {
+    vchTypeService.list()
+      .then((types) => setBiltyPrefix(types.find((t) => t.name === 'Bilty')?.prefix ?? null))
+      .catch(() => { /* ignore — falls back to plain numbering */ });
+  }, []);
+
+  // ── Guided entry (Tally-style): Enter validates the current header field and
+  // jumps to the next, left-to-right. Dropdown fields require a listed pick;
+  // free-text fields (GST / Owner / Zone) require non-empty text. Refs are
+  // registered per field key; focusNext walks to the next registered field.
+  const GUIDED_ORDER = [
+    'bilty_no', 'branch', 'gst', 'date', 'consignor', 'owner_name',
+    'agent_name', 'bill_to', 'truck_no', 'goods_type', 'zone',
+  ];
+  const guidedRefs = useRef<Record<string, { focus: () => void } | null>>({});
+  const setGuidedRef = (key: string) => (r: { focus: () => void } | null) => {
+    guidedRefs.current[key] = r;
+  };
+  const focusNext = (key: string) => {
+    const i = GUIDED_ORDER.indexOf(key);
+    for (let n = i + 1; n < GUIDED_ORDER.length; n++) {
+      const r = guidedRefs.current[GUIDED_ORDER[n]];
+      if (r && typeof r.focus === 'function') { r.focus(); return; }
+    }
+    // Past the last header field → ensure a row exists, then focus its first
+    // cell (Challan) so the guided flow continues into the items table.
+    if (itemFields.length === 0) appendItem({ ...EMPTY_ITEM });
+    if (Platform.OS === 'web') {
+      setTimeout(() => {
+        (document.querySelector('[data-cell="0.challan_no"]') as HTMLElement | null)?.focus?.();
+      }, 0);
+    }
+  };
+  // Enter handler for free-text header inputs (Bilty No / GST): advance only
+  // when non-empty (the field is gated).
+  const guidedTextNext = (key: string, raw: unknown) => {
+    if (String(raw ?? '').trim() !== '') focusNext(key);
+  };
+
+  // Tab gating for the plain-TextInput header fields (Bilty No, GST). RNW
+  // TextInputs don't forward onKeyDown, so we catch Tab at the document level
+  // and identify the field via its data-guided attribute. Autocomplete fields
+  // gate Tab themselves; the Date input handles its own keydown.
+  const gstNoRef = useRef('');
+  gstNoRef.current = gstNo;
+  const focusNextRef = useRef(focusNext);
+  focusNextRef.current = focusNext;
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Tab' || e.shiftKey) return;
+      const el = document.activeElement as HTMLElement | null;
+      const key = el?.dataset?.guided;
+      if (key !== 'bilty_no' && key !== 'gst') return;
+      e.preventDefault();
+      const filled = key === 'bilty_no'
+        ? String(getValues('header.bilty_no') ?? '').trim() !== ''
+        : gstNoRef.current.trim() !== '';
+      if (filled) focusNextRef.current(key);
+    };
+    document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
+  }, [getValues]);
+
+  // ── Items table guided entry (web). Every cell is gated: Challan → … → E-Rate.
+  // `advanceItemCell` validates the current cell (text non-empty, numeric > 0,
+  // From/To/Consignee a listed pick) then moves to the next cell / row / Save.
+  // It's shared: the table keydown handler drives the text/numeric cells, while
+  // From/To/Consignee (RowDatalist) call it via onSubmitNext after a valid pick.
+  const itemOptsRef = useRef({ dest: destinationOptions, cons: consignorOptions });
+  itemOptsRef.current = { dest: destinationOptions, cons: consignorOptions };
+  const advanceItemCellRef = useRef<(i: number, col: string) => void>(() => {});
+  advanceItemCellRef.current = (i, col) => {
+    const v = getValues(`items.${i}.${col}` as any);
+    let ok: boolean;
+    if (ITEM_NUM_COLS.has(col)) ok = Number(v) > 0;
+    else if (ITEM_DL_COLS.has(col)) {
+      const opts = col === 'consignee' ? itemOptsRef.current.cons : itemOptsRef.current.dest;
+      ok = !!v && opts.some((o) => o.toLowerCase() === String(v).trim().toLowerCase());
+    } else ok = String(v ?? '').trim() !== '';
+    if (!ok) return; // gated — stay put
+    const focusCell = (ri: number, c: string) =>
+      (document.querySelector(`[data-cell="${ri}.${c}"]`) as HTMLElement | null)?.focus?.();
+    const idx = ITEM_COL_ORDER.indexOf(col);
+    if (idx < ITEM_COL_ORDER.length - 1) { focusCell(i, ITEM_COL_ORDER[idx + 1]); return; }
+    const rowCount = ((getValues('items') as any[]) || []).length;
+    if (i + 1 < rowCount) focusCell(i + 1, 'challan_no');
+    else (document.querySelector('[data-testid="bilty-save-btn"]') as HTMLElement | null)?.focus?.();
+  };
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Tab' && e.key !== 'Enter') return;
+      if (e.key === 'Tab' && e.shiftKey) return;
+      const el = document.activeElement as HTMLElement | null;
+      const cell = el?.dataset?.cell;
+      if (!cell) return;
+      const dot = cell.indexOf('.');
+      const i = Number(cell.slice(0, dot));
+      const col = cell.slice(dot + 1);
+      if (Number.isNaN(i) || !col) return;
+      // From/To/Consignee (RowDatalist) handle their own Enter/Tab + force-pick.
+      if (ITEM_DL_COLS.has(col)) return;
+      e.preventDefault();
+      advanceItemCellRef.current(i, col);
+    };
+    document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
+  }, []);
+
   // Auto-suggest next bilty number per branch — only when creating, and only
   // when the user hasn't typed a number yet. Editing existing bilties keeps
   // their current number untouched.
@@ -410,17 +526,51 @@ function DesktopBiltyForm({ canSave, editingId, embedded = false }: { canSave: b
 
   const watchedItems = useWatch({ control, name: 'items' });
 
+  const [saveBlock, setSaveBlock] = useState<string | null>(null);
+
+  // Every field is required before a bilty can be saved (mirrors the guided
+  // field-by-field gating). Returns a human message for the first gap, or null.
+  const firstMissing = (data: CreateBiltyInput): string | null => {
+    const h = data.header;
+    const headerChecks: Array<[string, unknown]> = [
+      ['Bilty No', h.bilty_no], ['Branch', h.branch], ['GST No', gstNo],
+      ['Consignor', h.consignor], ['Owner Name', h.owner_name], ['Agent Name', h.agent_name],
+      ['Bill To', h.bill_to], ['Truck No', h.truck_no], ['Goods Type', h.goods_type], ['Zone', h.zone_name],
+    ];
+    for (const [label, v] of headerChecks) {
+      if (String(v ?? '').trim() === '') return `${label} is required.`;
+    }
+    if (!data.items || data.items.length === 0) return 'Add at least one item.';
+    const TEXT_LABELS: Record<string, string> = { challan_no: 'Challan', lr_no: 'LR No', shipment_no: 'Shipment No', from_loc: 'From', to_loc: 'To', consignee: 'Consignee' };
+    const NUM_LABELS: Record<string, string> = { qty: 'Qty', rate: 'Rate', inc_rate: 'Inc', l_rate: 'L-Rate', e_rate: 'E-Rate' };
+    for (let idx = 0; idx < data.items.length; idx++) {
+      const it: any = data.items[idx];
+      for (const c of Object.keys(TEXT_LABELS)) {
+        if (String(it[c] ?? '').trim() === '') return `Item ${idx + 1}: ${TEXT_LABELS[c]} is required.`;
+      }
+      for (const c of Object.keys(NUM_LABELS)) {
+        if (!(Number(it[c]) > 0)) return `Item ${idx + 1}: ${NUM_LABELS[c]} must be greater than 0.`;
+      }
+    }
+    return null;
+  };
+
   const onSave = handleSubmit(async (data) => {
+    const missing = firstMissing(data);
+    if (missing) { setSaveBlock(missing); return; }
+    setSaveBlock(null);
     try {
       if (isEdit && editingId !== null) {
         await updateBilty(data);
       } else {
         await createBilty(data);
       }
-      // Land where the user can go: BiltyList if they have `bilty.view`,
-      // otherwise the Daybook (which is how staff with only voucher.* perms
-      // reached this form).
-      if (canDoAction(user, 'bilty', 'view')) {
+      // Post-save navigation. When embedded in the Vouchers (Billing) stack,
+      // BiltyList doesn't exist here — go to the Daybook (same stack). Standalone
+      // (Bilty tab) → BiltyList for bilty.view users, else Daybook.
+      if (embedded) {
+        (navigation as any).navigate('Daybook');
+      } else if (canDoAction(user, 'bilty', 'view')) {
         navigation.navigate('BiltyList');
       } else {
         (navigation as any).navigate('Billing', { screen: 'Daybook' });
@@ -432,10 +582,16 @@ function DesktopBiltyForm({ canSave, editingId, embedded = false }: { canSave: b
           setError(field as Parameters<typeof setError>[0], { message: msg as string });
         });
       }
+      setSaveBlock(apiErr?.message || 'Could not save bilty. Please try again.');
     }
+  }, () => {
+    // Zod validation failed (required field empty / qty|rate not > 0). Surface
+    // the first gap using the same all-fields check.
+    setSaveBlock(firstMissing(getValues()) || 'Please complete all required fields before saving.');
   });
 
   const formError =
+    saveBlock ||
     errors.header?.bilty_no?.message ||
     errors.header?.consignor?.message ||
     errors.header?.truck_no?.message ||
@@ -480,15 +636,18 @@ function DesktopBiltyForm({ canSave, editingId, embedded = false }: { canSave: b
             control={control}
             name="header.bilty_no"
             render={({ field: { value, onChange } }) => (
-              <InputField
+              <PrefixedNumberInput
+                ref={setGuidedRef('bilty_no')}
                 label="Bilty No *"
+                prefix={isEdit ? null : biltyPrefix}
                 value={value ?? ''}
-                onChangeText={(v) => onChange(v.replace(/\D/g, ''))}
-                fieldType="integer"
-                keyboardType="number-pad"
+                onChangeText={onChange}
                 placeholder="e.g. 8400153862"
                 error={errors.header?.bilty_no?.message ?? null}
                 testID="bilty-no-input"
+                blurOnSubmit={false}
+                onSubmitEditing={() => guidedTextNext('bilty_no', getValues('header.bilty_no'))}
+                dataSet={{ guided: 'bilty_no' }}
               />
             )}
           />
@@ -499,17 +658,20 @@ function DesktopBiltyForm({ canSave, editingId, embedded = false }: { canSave: b
             name="header.branch"
             render={({ field: { value, onChange } }) => (
               <AutocompleteField
+                ref={setGuidedRef('branch')}
                 label="Branch"
                 value={value ?? ''}
                 options={branchOptions}
                 onChangeText={onChange}
                 placeholder=""
+                onSubmitNext={() => focusNext('branch')}
               />
             )}
           />
         </View>
         <View style={styles.fieldThird}>
           <InputField
+            ref={setGuidedRef('gst')}
             label="GST No"
             value={gstNo}
             onChangeText={(v) => setGstNo(v.toUpperCase())}
@@ -517,6 +679,9 @@ function DesktopBiltyForm({ canSave, editingId, embedded = false }: { canSave: b
             autoCapitalize="characters"
             placeholder="22AAAAA0000A1Z5"
             testID="bilty-gst-input"
+            blurOnSubmit={false}
+            onSubmitEditing={() => guidedTextNext('gst', gstNo)}
+            dataSet={{ guided: 'gst' }}
           />
         </View>
         <View style={styles.fieldThird}>
@@ -532,6 +697,16 @@ function DesktopBiltyForm({ canSave, editingId, embedded = false }: { canSave: b
                     value: value ?? '',
                     onChange: (e: any) => onChange(e?.target?.value || ''),
                     'data-testid': 'bilty-date-input',
+                    ref: (el: any) => {
+                      guidedRefs.current['date'] = el ? { focus: () => el.focus?.() } : null;
+                    },
+                    onKeyDown: (e: any) => {
+                      // Date is pre-filled, so Enter/Tab just advance to Consignor.
+                      if (e.key === 'Enter' || (e.key === 'Tab' && !e.shiftKey)) {
+                        e.preventDefault();
+                        focusNext('date');
+                      }
+                    },
                     style: {
                       width: '100%',
                       boxSizing: 'border-box',
@@ -570,6 +745,7 @@ function DesktopBiltyForm({ canSave, editingId, embedded = false }: { canSave: b
             name="header.consignor"
             render={({ field: { value, onChange } }) => (
               <AutocompleteField
+                ref={setGuidedRef('consignor')}
                 label="Consignor *"
                 value={value}
                 options={consignorOptions}
@@ -577,6 +753,7 @@ function DesktopBiltyForm({ canSave, editingId, embedded = false }: { canSave: b
                 placeholder=""
                 error={errors.header?.consignor?.message ?? null}
                 testID="consignor-input"
+                onSubmitNext={() => focusNext('consignor')}
               />
             )}
           />
@@ -587,11 +764,13 @@ function DesktopBiltyForm({ canSave, editingId, embedded = false }: { canSave: b
             name="header.owner_name"
             render={({ field: { value, onChange } }) => (
               <AutocompleteField
+                ref={setGuidedRef('owner_name')}
                 label="Owner Name"
                 value={value ?? ''}
                 options={ownerOptions}
                 onChangeText={onChange}
                 placeholder=""
+                onSubmitNext={() => focusNext('owner_name')}
               />
             )}
           />
@@ -602,11 +781,13 @@ function DesktopBiltyForm({ canSave, editingId, embedded = false }: { canSave: b
             name="header.agent_name"
             render={({ field: { value, onChange } }) => (
               <AutocompleteField
+                ref={setGuidedRef('agent_name')}
                 label="Agent Name"
                 value={value ?? ''}
                 options={agentOptions}
                 onChangeText={onChange}
                 placeholder=""
+                onSubmitNext={() => focusNext('agent_name')}
               />
             )}
           />
@@ -617,11 +798,13 @@ function DesktopBiltyForm({ canSave, editingId, embedded = false }: { canSave: b
             name="header.bill_to"
             render={({ field: { value, onChange } }) => (
               <AutocompleteField
+                ref={setGuidedRef('bill_to')}
                 label="Bill To"
                 value={value ?? ''}
                 options={consignorOptions}
                 onChangeText={onChange}
                 placeholder=""
+                onSubmitNext={() => focusNext('bill_to')}
               />
             )}
           />
@@ -636,6 +819,7 @@ function DesktopBiltyForm({ canSave, editingId, embedded = false }: { canSave: b
             name="header.truck_no"
             render={({ field: { value, onChange } }) => (
               <AutocompleteField
+                ref={setGuidedRef('truck_no')}
                 label="Truck No *"
                 value={value ?? ''}
                 options={vehicleNoOptions}
@@ -643,6 +827,7 @@ function DesktopBiltyForm({ canSave, editingId, embedded = false }: { canSave: b
                 error={errors.header?.truck_no?.message ?? null}
                 placeholder=""
                 testID="truck-no-input"
+                onSubmitNext={() => focusNext('truck_no')}
               />
             )}
           />
@@ -653,12 +838,14 @@ function DesktopBiltyForm({ canSave, editingId, embedded = false }: { canSave: b
             name="header.goods_type"
             render={({ field: { value, onChange } }) => (
               <AutocompleteField
+                ref={setGuidedRef('goods_type')}
                 label="Goods Type"
                 value={value ?? ''}
                 options={itemOptions}
                 onChangeText={onChange}
                 placeholder=""
                 testID="goods-type-input"
+                onSubmitNext={() => focusNext('goods_type')}
               />
             )}
           />
@@ -669,11 +856,13 @@ function DesktopBiltyForm({ canSave, editingId, embedded = false }: { canSave: b
             name="header.zone_name"
             render={({ field: { value, onChange } }) => (
               <AutocompleteField
+                ref={setGuidedRef('zone')}
                 label="Zone"
                 value={value ?? ''}
                 options={zoneOptions}
                 onChangeText={onChange}
                 placeholder=""
+                onSubmitNext={() => focusNext('zone')}
               />
             )}
           />
@@ -709,25 +898,25 @@ function DesktopBiltyForm({ canSave, editingId, embedded = false }: { canSave: b
         </View>
         {itemFields.map((field, i) => (
           <View key={field.id} style={[styles.row, i % 2 === 1 && styles.altRow]}>
-            <Cell w={95}><Controller control={control} name={`items.${i}.challan_no`} render={({ field: f }) => <RowInput value={String(f.value ?? '')} onChangeText={f.onChange} filterFn={filterAlphanumeric} />} /></Cell>
-            <Cell w={95}><Controller control={control} name={`items.${i}.lr_no`} render={({ field: f }) => <RowInput value={String(f.value ?? '')} onChangeText={f.onChange} filterFn={filterAlphanumeric} />} /></Cell>
-            <Cell w={130}><Controller control={control} name={`items.${i}.shipment_no`} render={({ field: f }) => <RowInput value={String(f.value ?? '')} onChangeText={f.onChange} filterFn={filterAlphanumeric} />} /></Cell>
-            <Cell w={115}><Controller control={control} name={`items.${i}.from_loc`} render={({ field: f }) => <RowDatalist value={String(f.value ?? '')} onChangeText={f.onChange} options={destinationOptions} filterFn={filterLetters} />} /></Cell>
-            <Cell w={115}><Controller control={control} name={`items.${i}.to_loc`} render={({ field: f }) => <RowDatalist value={String(f.value ?? '')} onChangeText={f.onChange} options={destinationOptions} filterFn={filterLetters} />} /></Cell>
-            <Cell><Controller control={control} name={`items.${i}.consignee`} render={({ field: f }) => <RowDatalist value={String(f.value ?? '')} onChangeText={f.onChange} options={consignorOptions} filterFn={filterLetters} />} /></Cell>
+            <Cell w={95}><Controller control={control} name={`items.${i}.challan_no`} render={({ field: f }) => <RowInput value={String(f.value ?? '')} onChangeText={f.onChange} filterFn={filterAlphanumeric} dataSet={{ cell: `${i}.challan_no` }} />} /></Cell>
+            <Cell w={95}><Controller control={control} name={`items.${i}.lr_no`} render={({ field: f }) => <RowInput value={String(f.value ?? '')} onChangeText={f.onChange} filterFn={filterAlphanumeric} dataSet={{ cell: `${i}.lr_no` }} />} /></Cell>
+            <Cell w={130}><Controller control={control} name={`items.${i}.shipment_no`} render={({ field: f }) => <RowInput value={String(f.value ?? '')} onChangeText={f.onChange} filterFn={filterAlphanumeric} dataSet={{ cell: `${i}.shipment_no` }} />} /></Cell>
+            <Cell w={115}><Controller control={control} name={`items.${i}.from_loc`} render={({ field: f }) => <RowDatalist value={String(f.value ?? '')} onChangeText={f.onChange} options={destinationOptions} filterFn={filterLetters} dataSet={{ cell: `${i}.from_loc` }} label="From" onSubmitNext={() => advanceItemCellRef.current(i, 'from_loc')} />} /></Cell>
+            <Cell w={115}><Controller control={control} name={`items.${i}.to_loc`} render={({ field: f }) => <RowDatalist value={String(f.value ?? '')} onChangeText={f.onChange} options={destinationOptions} filterFn={filterLetters} dataSet={{ cell: `${i}.to_loc` }} label="To" onSubmitNext={() => advanceItemCellRef.current(i, 'to_loc')} />} /></Cell>
+            <Cell><Controller control={control} name={`items.${i}.consignee`} render={({ field: f }) => <RowDatalist value={String(f.value ?? '')} onChangeText={f.onChange} options={consignorOptions} filterFn={filterLetters} dataSet={{ cell: `${i}.consignee` }} label="Consignee" onSubmitNext={() => advanceItemCellRef.current(i, 'consignee')} />} /></Cell>
             <Cell w={75} align="right">
               <Controller control={control} name={`items.${i}.qty`} render={({ field: f }) => (
-                <RowInput numeric value={f.value ? String(f.value) : ''} onChangeText={(v) => f.onChange(v)} testID={`item-qty-${i}`} error={errors.items?.[i]?.qty?.message} />
+                <RowInput numeric value={f.value ? String(f.value) : ''} onChangeText={(v) => f.onChange(v)} testID={`item-qty-${i}`} error={errors.items?.[i]?.qty?.message} dataSet={{ cell: `${i}.qty` }} />
               )} />
             </Cell>
             <Cell w={85} align="right">
               <Controller control={control} name={`items.${i}.rate`} render={({ field: f }) => (
-                <RowInput numeric value={f.value ? String(f.value) : ''} onChangeText={(v) => f.onChange(v)} testID={`item-rate-${i}`} error={errors.items?.[i]?.rate?.message} />
+                <RowInput numeric value={f.value ? String(f.value) : ''} onChangeText={(v) => f.onChange(v)} testID={`item-rate-${i}`} error={errors.items?.[i]?.rate?.message} dataSet={{ cell: `${i}.rate` }} />
               )} />
             </Cell>
-            <Cell w={70} align="right"><Controller control={control} name={`items.${i}.inc_rate`} render={({ field: f }) => <RowInput numeric value={f.value ? String(f.value) : ''} onChangeText={(v) => f.onChange(v)} />} /></Cell>
-            <Cell w={75} align="right"><Controller control={control} name={`items.${i}.l_rate`} render={({ field: f }) => <RowInput numeric value={f.value ? String(f.value) : ''} onChangeText={(v) => f.onChange(v)} />} /></Cell>
-            <Cell w={75} align="right"><Controller control={control} name={`items.${i}.e_rate`} render={({ field: f }) => <RowInput numeric value={f.value ? String(f.value) : ''} onChangeText={(v) => f.onChange(v)} />} /></Cell>
+            <Cell w={70} align="right"><Controller control={control} name={`items.${i}.inc_rate`} render={({ field: f }) => <RowInput numeric value={f.value ? String(f.value) : ''} onChangeText={(v) => f.onChange(v)} dataSet={{ cell: `${i}.inc_rate` }} />} /></Cell>
+            <Cell w={75} align="right"><Controller control={control} name={`items.${i}.l_rate`} render={({ field: f }) => <RowInput numeric value={f.value ? String(f.value) : ''} onChangeText={(v) => f.onChange(v)} dataSet={{ cell: `${i}.l_rate` }} />} /></Cell>
+            <Cell w={75} align="right"><Controller control={control} name={`items.${i}.e_rate`} render={({ field: f }) => <RowInput numeric value={f.value ? String(f.value) : ''} onChangeText={(v) => f.onChange(v)} dataSet={{ cell: `${i}.e_rate` }} />} /></Cell>
             <Cell w={36} align="center">
               <RemoveBtn
                 onPress={() => removeItem(i)}
@@ -820,9 +1009,10 @@ const filterLetters = (v: string) => v.replace(/[^a-zA-Z\s'.\-]/g, '');
 const filterAlphanumeric = (v: string) => v.replace(/[^a-zA-Z0-9\s\-_.\/]/g, '');
 const filterDate = (v: string) => v.replace(/[^0-9\-]/g, '').slice(0, 10);
 
-function RowInput({ value, onChangeText, numeric, placeholder, testID, error, filterFn }: {
+function RowInput({ value, onChangeText, numeric, placeholder, testID, error, filterFn, dataSet }: {
   value: string; onChangeText: (v: string) => void; numeric?: boolean;
   placeholder?: string; testID?: string; error?: string; filterFn?: (v: string) => string;
+  dataSet?: Record<string, string>;
 }) {
   const [focused, setFocused] = useState(false);
   // Numeric fields: when the stored value is zero, show empty with "0" as a
@@ -858,16 +1048,23 @@ function RowInput({ value, onChangeText, numeric, placeholder, testID, error, fi
         Platform.OS === 'web' && ({ outlineStyle: 'none' } as any),
       ]}
       testID={testID}
+      {...(dataSet ? ({ dataSet } as any) : {})}
     />
   );
 }
+
+// Items-table guided-entry column order + classification (shared by the table
+// keydown handler and the per-cell advance logic).
+const ITEM_COL_ORDER = ['challan_no', 'lr_no', 'shipment_no', 'from_loc', 'to_loc', 'consignee', 'qty', 'rate', 'inc_rate', 'l_rate', 'e_rate'];
+const ITEM_DL_COLS = new Set(['from_loc', 'to_loc', 'consignee']);
+const ITEM_NUM_COLS = new Set(['qty', 'rate', 'inc_rate', 'l_rate', 'e_rate']);
 
 // Inline cell autocomplete used inside the items table (From, To, Consignee).
 // Matches the AutocompleteField look used in Bilty Details. The dropdown is
 // position: absolute and flips above the input when there isn't enough room
 // below — that's what stops the page from auto-scrolling when the popover
 // would otherwise extend past the viewport.
-const ROW_DROPDOWN_ITEM_HEIGHT = 32;
+const ROW_DROPDOWN_ITEM_HEIGHT = 42; // match the Bilty Details AutocompleteField list
 const ROW_DROPDOWN_VISIBLE = 5;
 const ROW_DROPDOWN_MIN_CHARS = 2;
 const ROW_DROPDOWN_WIDTH = 220;
@@ -883,6 +1080,9 @@ function RowDatalist({
   filterFn,
   testID,
   placeholder,
+  dataSet,
+  onSubmitNext,
+  label,
 }: {
   value: string;
   onChangeText: (v: string) => void;
@@ -890,6 +1090,11 @@ function RowDatalist({
   filterFn?: (v: string) => string;
   testID?: string;
   placeholder?: string;
+  dataSet?: Record<string, string>;
+  /** Guided entry: advance to the next cell after a valid pick. */
+  onSubmitNext?: () => void;
+  /** Field name for the "No <label> found" empty-state hint. */
+  label?: string;
 }) {
   const [focused, setFocused] = useState(false);
   const [listOpen, setListOpen] = useState(false);
@@ -914,7 +1119,10 @@ function RowDatalist({
   const filtered = valTrim.length >= ROW_DROPDOWN_MIN_CHARS
     ? options.filter((o) => o.toLowerCase().includes(valLower))
     : [];
-  const showList = focused && listOpen && filtered.length > 0;
+  const cleanLabel = (label ?? 'option').replace(/\s*\*\s*$/, '').trim();
+  // Show a "No <label> found" row once enough is typed with zero matches.
+  const showNoResults = focused && listOpen && filtered.length === 0 && valTrim.length >= 3;
+  const showList = (focused && listOpen && filtered.length > 0) || showNoResults;
 
   const handleChange = (raw: string) => {
     const next = filterFn ? filterFn(raw) : raw;
@@ -949,7 +1157,7 @@ function RowDatalist({
       const node = wrapRef.current as any;
       if (!node || typeof node.getBoundingClientRect !== 'function') return;
       const rect = node.getBoundingClientRect();
-      const popoverH = ROW_DROPDOWN_ITEM_HEIGHT * Math.min(filtered.length, ROW_DROPDOWN_VISIBLE) + 8;
+      const popoverH = ROW_DROPDOWN_ITEM_HEIGHT * Math.min(Math.max(filtered.length, 1), ROW_DROPDOWN_VISIBLE) + 8;
       const spaceBelow = window.innerHeight - rect.bottom;
       const up = spaceBelow < popoverH && rect.top > popoverH;
       setOpenUp(up);
@@ -972,17 +1180,22 @@ function RowDatalist({
     if (Platform.OS !== 'web' || !showList) return;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'ArrowDown') {
+        if (filtered.length === 0) return;
         e.preventDefault();
         setHighlight((i) => (i + 1) % filtered.length);
       } else if (e.key === 'ArrowUp') {
+        if (filtered.length === 0) return;
         e.preventDefault();
         setHighlight((i) => (i - 1 + filtered.length) % filtered.length);
-      } else if (e.key === 'Enter') {
+      } else if (e.key === 'Enter' || (e.key === 'Tab' && !e.shiftKey && !!onSubmitNext)) {
+        // Enter selects the highlighted match; Tab does the same in guided mode.
+        // Advance only after a valid pick — otherwise block (forces a listed pick).
         e.preventDefault();
         const opt = filtered[highlight];
         if (opt) {
           onChangeText(opt);
           setListOpen(false);
+          onSubmitNext?.();
         }
       } else if (e.key === 'Escape') {
         e.preventDefault();
@@ -991,7 +1204,20 @@ function RowDatalist({
     };
     document.addEventListener('keydown', onKeyDown, true);
     return () => document.removeEventListener('keydown', onKeyDown, true);
-  }, [showList, filtered, highlight, onChangeText]);
+  }, [showList, filtered, highlight, onChangeText, onSubmitNext]);
+
+  // Guided entry, list closed: Enter/Tab advance only if the value is a listed
+  // option; otherwise the key is swallowed (force a pick).
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !onSubmitNext || !focused || showList) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Enter' && !(e.key === 'Tab' && !e.shiftKey)) return;
+      e.preventDefault();
+      if (valTrim !== '' && options.some((o) => o.toLowerCase() === valLower)) onSubmitNext();
+    };
+    document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
+  }, [focused, showList, onSubmitNext, valTrim, valLower, options]);
 
   return (
     <View
@@ -1020,6 +1246,7 @@ function RowDatalist({
           Platform.OS === 'web' && ({ outlineStyle: 'none', scrollMarginBlock: '120px' } as any),
         ]}
         testID={testID}
+        {...(dataSet ? ({ dataSet } as any) : {})}
       />
       {showList && Platform.OS === 'web' && RowDatalistReactDOM && anchor
         ? RowDatalistReactDOM.createPortal(
@@ -1032,14 +1259,33 @@ function RowDatalist({
                 width: anchor.width,
                 zIndex: 999999,
                 background: '#FFFFFF',
-                border: '1px solid #94A3B8',
-                borderRadius: 4,
-                boxShadow: '0 6px 16px rgba(15,23,42,0.12)',
-                maxHeight: ROW_DROPDOWN_ITEM_HEIGHT * ROW_DROPDOWN_VISIBLE,
+                border: '1px solid #E2E8F0',
+                borderRadius: 8,
+                boxShadow: '0 12px 28px rgba(15,23,42,0.14), 0 4px 10px rgba(15,23,42,0.08)',
+                paddingTop: 4,
+                paddingBottom: 4,
+                maxHeight: ROW_DROPDOWN_ITEM_HEIGHT * ROW_DROPDOWN_VISIBLE + 8,
                 overflowY: 'auto',
                 boxSizing: 'border-box',
               }}
             >
+              {filtered.length === 0 ? (
+                <div
+                  style={{
+                    height: ROW_DROPDOWN_ITEM_HEIGHT,
+                    display: 'flex',
+                    alignItems: 'center',
+                    paddingLeft: 16,
+                    paddingRight: 16,
+                    fontSize: 14,
+                    fontStyle: 'italic',
+                    color: '#64748B',
+                    fontFamily: 'inherit',
+                  }}
+                >
+                  No {cleanLabel} found
+                </div>
+              ) : null}
               {filtered.map((opt, i) => {
                 const isHi = i === highlight;
                 return (
@@ -1061,10 +1307,10 @@ function RowDatalist({
                       userSelect: 'none',
                       background: isHi ? '#2563EB' : '#FFFFFF',
                       color: isHi ? '#FFFFFF' : '#0F172A',
-                      fontSize: 13,
-                      lineHeight: '18px',
+                      fontSize: 14,
+                      lineHeight: '20px',
                       fontFamily: 'inherit',
-                      fontWeight: 500,
+                      fontWeight: isHi ? 700 : 500,
                     }}
                   >
                     {opt}
@@ -1179,8 +1425,9 @@ const styles = StyleSheet.create({
   alignCenter: { alignItems: 'center' },
   textRight: { textAlign: 'right' },
   textCenter: { textAlign: 'center' },
-  rowInput: { width: '100%', height: 30, paddingVertical: 4, paddingHorizontal: 8, fontSize: 13, lineHeight: 18, color: colors.text, fontFamily: typography.uiMedium, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card },
-  rowInputRight: { textAlign: 'right', fontFamily: typography.mono },
+  rowInput: { width: '100%', height: 34, paddingVertical: 4, paddingHorizontal: 10, fontSize: 13, lineHeight: 18, color: colors.text, fontFamily: typography.ui, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card },
+  // Numeric cells: right-aligned mono, stronger + bolder so the digits stand out.
+  rowInputRight: { textAlign: 'right', fontFamily: typography.mono, color: colors.textStrong, fontWeight: '700' },
   rowInputError: { borderColor: colors.danger },
   rowInputFocused: { borderColor: '#94A3B8' },
   rowInputOpen: { borderColor: '#94A3B8' },
