@@ -68,7 +68,11 @@ export function VoucherTypeScreen() {
   const load = useCallback(async () => {
     setListError(null);
     try {
-      setRows(await vchTypeService.list());
+      const all = await vchTypeService.list();
+      // "Freight Journal" is an internal companion type auto-posted by every
+      // bilty — it must never be user-managed, so keep it out of this master
+      // list entirely (also excludes it from the Parent dropdown below).
+      setRows(all.filter((t) => t.name !== 'Freight Journal'));
     } catch {
       setListError('Could not load voucher types.');
       setRows([]);
