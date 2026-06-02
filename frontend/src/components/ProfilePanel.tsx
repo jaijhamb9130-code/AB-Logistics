@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Animated,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -29,7 +30,9 @@ export function ProfilePanel({ visible, onClose, user, logout, onNavigate }: Pro
   // On small screens use almost the full width, capped at 360 for tablet ergonomics.
   const panelWidth =
     screenWidth < 768 ? Math.min(360, screenWidth - 32) : PANEL_WIDTH;
-  const slideAnim = useRef(new Animated.Value(panelWidth)).current;
+  // Panel slides in from the LEFT (the avatar lives in the top-left corner), so
+  // it starts off-screen at -panelWidth and animates to 0.
+  const slideAnim = useRef(new Animated.Value(-panelWidth)).current;
   const overlayAnim = useRef(new Animated.Value(0)).current;
   const [mounted, setMounted] = useState(false);
   const [summary, setSummary] = useState<ReportSummary | null>(null);
@@ -67,7 +70,7 @@ export function ProfilePanel({ visible, onClose, user, logout, onNavigate }: Pro
     } else {
       Animated.parallel([
         Animated.timing(slideAnim, {
-          toValue: panelWidth,
+          toValue: -panelWidth,
           duration: 200,
           useNativeDriver: true,
         }),
@@ -86,7 +89,14 @@ export function ProfilePanel({ visible, onClose, user, logout, onNavigate }: Pro
   const roleLabel = user?.role === 'admin' ? 'Administrator' : 'Staff';
 
   return (
-    <View style={StyleSheet.absoluteFillObject} pointerEvents="box-none">
+    <View
+      style={[
+        StyleSheet.absoluteFillObject,
+        // Pin to the viewport on web so a tall page behind can't scroll the panel.
+        Platform.OS === 'web' ? ({ position: 'fixed' } as any) : null,
+      ]}
+      pointerEvents="box-none"
+    >
       {/* Overlay */}
       <Animated.View
         style={[styles.overlay, { opacity: overlayAnim }]}
@@ -315,16 +325,16 @@ const styles = StyleSheet.create({
   panel: {
     position: 'absolute',
     top: 0,
-    right: 0,
+    left: 0,
     bottom: 0,
     width: PANEL_WIDTH,
     backgroundColor: '#FFFFFF',
-    borderLeftWidth: 1,
-    borderLeftColor: '#E2E8F0',
+    borderRightWidth: 1,
+    borderRightColor: '#E2E8F0',
     shadowColor: '#000',
     shadowOpacity: 0.12,
     shadowRadius: 24,
-    shadowOffset: { width: -6, height: 0 },
+    shadowOffset: { width: 6, height: 0 },
     elevation: 30,
   },
   panelContent: {

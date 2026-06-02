@@ -129,6 +129,47 @@ app.use((err, req, res, _next) => {
     return res.status(400).json({ success: false, error: { type: 'VALIDATION_ERROR', message: 'Validation failed', fields: err.flatten().fieldErrors } });
   }
 
+  // Domain validation errors thrown by the bilty/freight models. These carry a
+  // `<thing>_required` / `<thing>_not_found` code — surface the specific reason
+  // (and the offending field) instead of a generic 500 "unexpected error".
+  if (err && typeof err.code === 'string' && /_(required|not_found)$/.test(err.code)) {
+    // Map a code → [field path, human message]. Field path matches the
+    // frontend form so the message can render inline under the right input.
+    const FIELD_MAP = {
+      consignor_required: ['header.consignor', 'Consignor is required.'],
+      consignor_not_found: ['header.consignor', 'Consignor is not a known ledger.'],
+      truck_required: ['header.truck_no', 'Truck No is required.'],
+      truck_not_found: ['header.truck_no', 'Truck No is not a known vehicle.'],
+      goods_type_required: ['header.goods_type', 'Goods Type is required when the bilty has items.'],
+      goods_type_not_found: ['header.goods_type', 'Goods Type is not a known item.'],
+    };
+    const [field, message] = FIELD_MAP[err.code] || [
+      null,
+      `${err.code.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())}.`,
+    ];
+    return res.status(400).json({
+      success: false,
+      error: {
+        type: 'VALIDATION_ERROR',
+        message,
+        ...(field ? { fields: { [field]: message } } : {}),
+      },
+    });
+  }
+
+  // Missing system-config rows (e.g. the "Freight Expense"/"Sales" ledgers or
+  // the "Bilty"/"Freight Journal" voucher types). Still a 500, but name the
+  // missing piece so it's diagnosable instead of "unexpected".
+  if (err && typeof err.code === 'string' && /^(system_ledger_missing_|.*_vchtype_missing$)/.test(err.code)) {
+    return res.status(500).json({
+      success: false,
+      error: {
+        type: 'CONFIG_ERROR',
+        message: `Server is missing required setup data (${err.code}). Please contact an administrator.`,
+      },
+    });
+  }
+
   res.status(500).json({ success: false, error: { type: 'SYSTEM_ERROR', message: 'An unexpected error occurred' } });
 });
 

@@ -28,6 +28,8 @@ export type AppTabsParamList = {
   ZoneMaster: undefined;
   // Top-level Ledger Groups admin tab — second-last (just before Users).
   LedgerGroups: undefined;
+  // Voucher Type master — lives in the Masters dropdown.
+  VoucherType: undefined;
   Users: undefined;
 };
 

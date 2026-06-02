@@ -332,6 +332,9 @@ CREATE TABLE IF NOT EXISTS vchtype (
   parent_id INT UNSIGNED NULL,
   deemed_positive ENUM('YES','NO') NULL DEFAULT NULL,
   is_system TINYINT(1) NOT NULL DEFAULT 0,
+  -- Optional voucher-number prefix. When set, the voucher form auto-fills
+  -- vch_no as `<prefix>-<number>`; when null, numbering starts plainly.
+  prefix VARCHAR(16) NULL DEFAULT NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   INDEX idx_vchtype_name (name),
@@ -358,6 +361,14 @@ SELECT 'Credit Note', 'NO',  1 WHERE NOT EXISTS (SELECT 1 FROM vchtype WHERE nam
 
 -- Set parent_id = self for all root system types (Tally convention).
 UPDATE vchtype SET parent_id = id WHERE is_system = 1 AND parent_id IS NULL;
+
+-- Internal companion type: every Bilty auto-posts a "Freight Journal" voucher
+-- (Dr Freight Expense / Cr vehicle ledger). Required by biltyModel — without
+-- it, bilty creation fails with `freight_journal_vchtype_missing`. parent_id
+-- stays NULL (added AFTER the self-parent UPDATE above) and the UI filters it
+-- out by name, so it never appears as a user-selectable voucher type.
+INSERT INTO vchtype (name, deemed_positive, is_system)
+SELECT 'Freight Journal', NULL, 1 WHERE NOT EXISTS (SELECT 1 FROM vchtype WHERE name = 'Freight Journal');
 
 -- 6) Voucher header — one row per voucher.
 CREATE TABLE IF NOT EXISTS vch_details (

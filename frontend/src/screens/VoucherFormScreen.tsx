@@ -30,6 +30,7 @@ import { SelectDropdown } from '../components/SelectDropdown';
 import { colors, radius, spacing, text, typography } from '../constants/theme';
 import { voucherService } from '../services/voucherService';
 import { vchTypeService } from '../services/vchTypeService';
+import { BiltyCreateFormEmbedded } from './BiltyFormScreen';
 import { ledgerMasterService } from '../services/ledgerMasterService';
 import { itemMasterService } from '../services/itemMasterService';
 import type {
@@ -179,6 +180,11 @@ export function VoucherFormScreen() {
   const [vchDateText, setVchDateText] = useState<string>(fmtDateDDMMYYYY(new Date().toISOString().slice(0, 10)));
   const [remark, setRemark] = useState('');
   const [typeMenuOpen, setTypeMenuOpen] = useState(false);
+  // Keyboard highlight index within the open Voucher Type dropdown (family list).
+  const [typeMenuHighlight, setTypeMenuHighlight] = useState(0);
+  // Mobile-only: open/closed state for the compact top-right primary-type box.
+  // Independent of `typeMenuOpen` (the family dropdown).
+  const [primaryMenuOpen, setPrimaryMenuOpen] = useState(false);
 
   // ── Party
   const [partyId, setPartyId] = useState<number | null>(null);
@@ -312,19 +318,43 @@ export function VoucherFormScreen() {
 
   // ── Derived
   const currentVchType = vchTypes.find((t) => t.id === vchTypeId) || null;
-  const isJournalType = (() => {
-    const n = (currentVchType?.name || '').toLowerCase();
-    return n === 'receipt' || n === 'payment' || n === 'journal' || n === 'contra';
-  })();
-  const isPurchaseMode = (() => {
-    const n = (currentVchType?.name || '').toLowerCase();
-    return n.includes('purchase') || n.includes('debit');
-  })();
+  // Root primary of the current selection: a primary self-references (parent_id
+  // === id) so this yields the primary for both primaries and their children.
+  // Drives the Type dropdown (shows the primary + its children) and the rail
+  // highlight (the active family's primary stays lit even when a child is set).
+  const familyRootId = currentVchType ? (currentVchType.parent_id ?? currentVchType.id) : null;
+  // The voucher Type dropdown shows the active primary + its children.
+  const familyTypes = vchTypes.filter((t) => t.parent_id === familyRootId);
+  // Root primary of the COMMITTED type — drives the rail's RED mark. Arrow-
+  // previewing changes vchTypeId (grey) but not the commit, so red stays put.
+  const committedType = vchTypes.find((t) => t.id === committedVchTypeId) || null;
+  const committedRootId = committedType ? (committedType.parent_id ?? committedType.id) : null;
+  // When the Bilty vch type is selected, the form box renders the full bilty
+  // creation form instead of the normal voucher entry UI.
+  const isBilty = (currentVchType?.name ?? '').toLowerCase() === 'bilty';
+  // Mode is driven by deemed_positive (the canonical field children INHERIT),
+  // not the type name — so a custom child like "qoatation" under Receipt
+  // correctly renders journal mode. null = journal (Dr/Cr ledger table),
+  // YES = sales-like inventory, NO = purchase-like inventory.
+  const isJournalType = currentVchType ? currentVchType.deemed_positive === null : false;
+  const isPurchaseMode = currentVchType ? currentVchType.deemed_positive === 'NO' : false;
+
+  // The voucher form renders its own top chrome, so the stack's navigation
+  // header is unwanted. Re-assert headerShown:false whenever `isBilty` toggles —
+  // the embedded Bilty wizard sets headerShown:true on unmount, which would
+  // otherwise leave a stray "VoucherForm" header behind on mobile.
+  useEffect(() => {
+    navigation.setOptions?.({ headerShown: false });
+  }, [navigation, isBilty]);
 
   // ── Load master data on mount
   useEffect(() => {
     Promise.allSettled([
-      vchTypeService.list().then((vts) => {
+      vchTypeService.list().then((all) => {
+        // "Freight Journal" is an internal companion type posted automatically
+        // by bilties — it must never be user-selectable, so keep it out of the
+        // type rail / dropdown regardless of its parent_id in the DB.
+        const vts = all.filter((t) => t.name !== 'Freight Journal');
         setVchTypes(vts);
         if (!isEdit && vchTypeId === null) {
           // Default landing voucher type = Sales — matches the previous behaviour
@@ -462,11 +492,14 @@ export function VoucherFormScreen() {
   //                  selectVchType): flips the red mark and jumps focus to
   //                  the first form field.
   useEffect(() => {
-    if (Platform.OS !== 'web') return;
-    const types = vchTypes.filter((t) => t.is_system && t.name.toLowerCase() !== 'bilty');
+    // Mobile is tap-only — no rail/arrow keyboard navigation.
+    if (Platform.OS !== 'web' || isMobile) return;
+    const types = vchTypes.filter((t) => t.parent_id === t.id);
     if (types.length === 0) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented) return;
+      // The Voucher Type dropdown owns the arrow keys while it's open.
+      if (typeMenuOpen) return;
       if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
       const a = document.activeElement as HTMLElement | null;
       // Block arrows only when the user is actively typing in a text field.
@@ -487,7 +520,40 @@ export function VoucherFormScreen() {
     // and call preventDefault, which we honour above.
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [vchTypes, vchTypeId]);
+  }, [vchTypes, vchTypeId, typeMenuOpen, isMobile]);
+
+  // Web keyboard nav for the Voucher Type dropdown (the family list). Active
+  // only while the menu is open. Capture phase so it wins over the rail
+  // handler, and ArrowUp/Down move WITHIN the dropdown instead of the rail.
+  useEffect(() => {
+    if (Platform.OS !== 'web' || isMobile || !typeMenuOpen || familyTypes.length === 0) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setTypeMenuHighlight((i) => (i + 1) % familyTypes.length);
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setTypeMenuHighlight((i) => (i - 1 + familyTypes.length) % familyTypes.length);
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        const pick = familyTypes[typeMenuHighlight];
+        if (pick) { setVchTypeId(pick.id); setTypeMenuOpen(false); }
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        setTypeMenuOpen(false);
+      }
+    };
+    document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
+  }, [typeMenuOpen, familyTypes, typeMenuHighlight, isMobile]);
+
+  // When the dropdown opens, start the highlight on the current selection.
+  useEffect(() => {
+    if (!typeMenuOpen) return;
+    const idx = familyTypes.findIndex((t) => t.id === vchTypeId);
+    setTypeMenuHighlight(idx >= 0 ? idx : 0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [typeMenuOpen]);
 
   // Commit a rail pick — flip the red active mark and jump cursor to the
   // first form field. Triggered on mouse click OR Enter on a focused rail
@@ -759,6 +825,24 @@ export function VoucherFormScreen() {
 
   if (loading || !canSave) return <Loader />;
 
+  // ─── Mobile Bilty: render the wizard full-height ─────────────────────────────
+  // The Bilty wizard manages its own scroll + pinned bottom action bar, so it
+  // must NOT live inside the page ScrollView (that collapses its flex:1 and
+  // leaves dead space below the action bar). Give it a plain flex:1 host so it
+  // fills the viewport and the buttons sit at the true screen bottom.
+  if (isBilty && isMobile) {
+    return (
+      <View style={styles.shell}>
+        <BiltyCreateFormEmbedded
+          onExit={() => {
+            const fb = vchTypes.find((t) => t.parent_id === t.id && t.name.toLowerCase() !== 'bilty');
+            if (fb) selectVchType(fb.id);
+          }}
+        />
+      </View>
+    );
+  }
+
   // ─── Render ────────────────────────────────────────────────────────────────
   return (
     <View style={styles.shell}>
@@ -767,13 +851,70 @@ export function VoucherFormScreen() {
         contentContainerStyle={[
           styles.content,
           isMobile && { paddingRight: spacing.md, paddingLeft: spacing.md, paddingTop: spacing.md },
+          // Bilty wizard is full-bleed on mobile — drop the page gutters so the
+          // embedded wizard reads as one edge-to-edge surface, not a card.
+          isBilty && isMobile && { paddingLeft: 0, paddingRight: 0, paddingTop: 0, paddingBottom: 0 },
         ]}
       >
-        <View style={styles.formCard}>
-        <Text style={styles.pageTitle}>Vouchers</Text>
+        <View style={[styles.formCard, isBilty && isMobile && styles.formCardBiltyMobile]}>
+        {!isMobile ? <Text style={styles.pageTitle}>Vouchers</Text> : null}
 
+        {/* TITLE + compact primary-type selector on ONE row — the selector box
+            pinned to the top-right corner (the requested "box at the corner"). */}
+        {isMobile ? (
+          <View style={[styles.titleRowMobile, isBilty && { paddingHorizontal: spacing.md, paddingTop: spacing.sm }]}>
+            {!(isBilty && isMobile) ? <Text style={styles.pageTitle}>Vouchers</Text> : <View />}
+            <View style={styles.primaryBoxWrapMobile}>
+              <Pressable
+                onPress={() => setPrimaryMenuOpen((v) => !v)}
+                style={styles.primaryBoxMobile}
+                accessibilityRole="button"
+                accessibilityLabel="Switch voucher type"
+              >
+                <Text style={styles.primaryBoxTextMobile} numberOfLines={1}>
+                  {(vchTypes.find((t) => t.id === committedRootId)?.name) ?? 'Voucher Type'}
+                </Text>
+                <Text style={styles.caret}>{primaryMenuOpen ? '▴' : '▾'}</Text>
+              </Pressable>
+              {primaryMenuOpen ? (
+                <>
+                  <Pressable style={styles.menuScrim} onPress={() => setPrimaryMenuOpen(false)} />
+                  <View style={styles.selectMenu}>
+                    {vchTypes.filter((t) => t.parent_id === t.id).map((t) => {
+                      const active = t.id === committedRootId;
+                      return (
+                        <Pressable
+                          key={t.id}
+                          onPress={() => { selectVchType(t.id); setPrimaryMenuOpen(false); }}
+                          style={[styles.selectMenuItem, active && styles.selectMenuItemActive]}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Switch to ${t.name} voucher`}
+                        >
+                          <Text style={[styles.selectMenuItemText, active && styles.selectMenuItemTextActive]}>{t.name}</Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                </>
+              ) : null}
+            </View>
+          </View>
+        ) : null}
+
+        {isBilty ? (
+          <BiltyCreateFormEmbedded
+            onExit={() => {
+              // Return to the normal voucher form on a non-Bilty primary instead
+              // of navigating away (which previously dumped the user to Dashboard).
+              const fb = vchTypes.find((t) => t.parent_id === t.id && t.name.toLowerCase() !== 'bilty');
+              if (fb) selectVchType(fb.id);
+            }}
+          />
+        ) : (
+        <>
         {/* HEADER — Type dropdown · Voucher No · Voucher Date */}
-        <View style={styles.headerRow}>
+        <View style={[styles.headerRow, isMobile && styles.headerRowMobile]}>
+          {!isMobile ? (
           <View style={[styles.field, styles.headerCol, typeMenuOpen && styles.fieldOpen]}>
             <Text style={styles.fieldLabel}>Voucher Type</Text>
             <Pressable
@@ -795,13 +936,15 @@ export function VoucherFormScreen() {
               <>
                 <Pressable style={styles.menuScrim} onPress={() => setTypeMenuOpen(false)} />
                 <View style={styles.selectMenu}>
-                  {vchTypes.filter((t) => t.is_system && t.name.toLowerCase() !== 'bilty').map((t) => {
+                  {familyTypes.map((t, i) => {
                     const active = vchTypeId === t.id;
+                    const hi = i === typeMenuHighlight;
                     return (
                       <Pressable
                         key={t.id}
                         onPressIn={() => { setVchTypeId(t.id); setTypeMenuOpen(false); }}
-                        style={[styles.selectMenuItem, active && styles.selectMenuItemActive]}
+                        {...(Platform.OS === 'web' ? ({ onMouseEnter: () => setTypeMenuHighlight(i) } as any) : {})}
+                        style={[styles.selectMenuItem, hi && !active && styles.selectMenuItemHover, active && styles.selectMenuItemActive]}
                       >
                         <Text style={[styles.selectMenuItemText, active && styles.selectMenuItemTextActive]}>{t.name}</Text>
                       </Pressable>
@@ -811,8 +954,9 @@ export function VoucherFormScreen() {
               </>
             ) : null}
           </View>
+          ) : null}
 
-          <View style={[styles.field, styles.headerCol]}>
+          <View style={[styles.field, styles.headerCol, isMobile && styles.headerColMobile]}>
             <Text style={styles.fieldLabel}>Voucher No</Text>
             <TextInput
               value={vchNo}
@@ -824,9 +968,9 @@ export function VoucherFormScreen() {
             />
           </View>
 
-          <View style={styles.headerSpacer} />
+          {!isMobile ? <View style={styles.headerSpacer} /> : null}
 
-          <View style={[styles.field, styles.headerCol]}>
+          <View style={[styles.field, styles.headerCol, isMobile && styles.headerColMobile]}>
             <Text style={styles.fieldLabel}>Voucher Date</Text>
             {Platform.OS === 'web' ? (
               // Real <input type="date"> — browser renders its own calendar
@@ -932,20 +1076,23 @@ export function VoucherFormScreen() {
 
         {/* BODY — Items table OR Ledger Dr/Cr table */}
         {isJournalType ? (
-          <View style={styles.tableCard}>
-            <View style={styles.tableHeader}>
-              <Text style={[styles.th, { width: 36 }]}>#</Text>
-              <Text style={[styles.th, { width: 70 }]}>TYPE</Text>
-              <Text style={[styles.th, { flex: 1 }]}>LEDGER</Text>
-              <Text style={[styles.th, styles.thRight, { width: 130 }]}>DR AMOUNT</Text>
-              <Text style={[styles.th, styles.thRight, { width: 130 }]}>CR AMOUNT</Text>
-              <View style={{ width: 28 }} />
-            </View>
+          <View style={[styles.tableCard, isMobile && styles.tableCardMobile]}>
+            {!isMobile ? (
+              <View style={styles.tableHeader}>
+                <Text style={[styles.th, { width: 36 }]}>#</Text>
+                <Text style={[styles.th, { width: 70 }]}>TYPE</Text>
+                <Text style={[styles.th, { flex: 1 }]}>LEDGER</Text>
+                <Text style={[styles.th, styles.thRight, { width: 130 }]}>DR AMOUNT</Text>
+                <Text style={[styles.th, styles.thRight, { width: 130 }]}>CR AMOUNT</Text>
+                <View style={{ width: 28 }} />
+              </View>
+            ) : null}
             {journalRows.map((row, idx) => (
               <JournalRowEditor
                 key={row.id}
                 row={row}
                 idx={idx}
+                isMobile={isMobile}
                 onChange={(patch) => setJournalRows((p) => p.map((r) => r.id === row.id ? { ...r, ...patch } : r))}
                 onRemove={() => setJournalRows((p) => p.length > 2 ? p.filter((r) => r.id !== row.id) : p)}
                 editable={canSave}
@@ -958,11 +1105,18 @@ export function VoucherFormScreen() {
             )}
             <View style={styles.grandTotalRow}>
               <Text style={styles.grandTotalLabel}>Grand Total</Text>
-              <View style={styles.grandTotalDualWrap}>
-                <Text style={[styles.grandTotalValue, { width: 130 }]}>{fmt(journalDr)}</Text>
-                <Text style={[styles.grandTotalValue, { width: 130 }]}>{fmt(journalCr)}</Text>
-                <View style={{ width: 28 }} />
-              </View>
+              {isMobile ? (
+                <View style={styles.grandTotalDualWrapMobile}>
+                  <Text style={styles.grandTotalDualLabelMobile}>Dr {fmt(journalDr)}</Text>
+                  <Text style={styles.grandTotalDualLabelMobile}>Cr {fmt(journalCr)}</Text>
+                </View>
+              ) : (
+                <View style={styles.grandTotalDualWrap}>
+                  <Text style={[styles.grandTotalValue, { width: 130 }]}>{fmt(journalDr)}</Text>
+                  <Text style={[styles.grandTotalValue, { width: 130 }]}>{fmt(journalCr)}</Text>
+                  <View style={{ width: 28 }} />
+                </View>
+              )}
             </View>
             {!journalBalanced ? (
               <Text style={styles.balanceWarn}>
@@ -971,21 +1125,24 @@ export function VoucherFormScreen() {
             ) : null}
           </View>
         ) : (
-          <View style={styles.tableCard}>
-            <View style={styles.tableHeader}>
-              <Text style={[styles.th, { width: 36 }]}>#</Text>
-              <Text style={[styles.th, { flex: 2, minWidth: 200 }]}>ITEM</Text>
-              <Text style={[styles.th, styles.thRight, { width: 80 }]}>QTY</Text>
-              <Text style={[styles.th, styles.thRight, { width: 110 }]}>RATE</Text>
-              <Text style={[styles.th, styles.thRight, { width: 130 }]}>AMOUNT</Text>
-              <View style={{ width: 28 }} />
-            </View>
+          <View style={[styles.tableCard, isMobile && styles.tableCardMobile]}>
+            {!isMobile ? (
+              <View style={styles.tableHeader}>
+                <Text style={[styles.th, { width: 36 }]}>#</Text>
+                <Text style={[styles.th, { flex: 2, minWidth: 200 }]}>ITEM</Text>
+                <Text style={[styles.th, styles.thRight, { width: 80 }]}>QTY</Text>
+                <Text style={[styles.th, styles.thRight, { width: 110 }]}>RATE</Text>
+                <Text style={[styles.th, styles.thRight, { width: 130 }]}>AMOUNT</Text>
+                <View style={{ width: 28 }} />
+              </View>
+            ) : null}
             {lines.map((line, idx) => (
               <ItemRowEditor
                 key={line.id}
                 line={line}
                 idx={idx}
                 items={items}
+                isMobile={isMobile}
                 onChange={(patch) => updateLine(idx, patch)}
                 onRemove={() => removeLine(idx)}
                 canRemove={lines.length > 1 && canSave}
@@ -1007,25 +1164,28 @@ export function VoucherFormScreen() {
             {ledgerRows.length > 0 ? (
               <View style={styles.ledgerSection}>
                 {ledgerRows.map((row) => (
-                  <View key={row.id} style={styles.ledgerRow}>
-                    <Text style={[styles.cellMeta, { width: 36 }]}>·</Text>
-                    <View style={{ flex: 1, minWidth: 200 }}>
+                  <View key={row.id} style={[styles.ledgerRow, isMobile && styles.ledgerRowMobile]}>
+                    {!isMobile ? <Text style={[styles.cellMeta, { width: 36 }]}>·</Text> : null}
+                    <View style={isMobile ? { width: '100%' } : { flex: 1, minWidth: 200 }}>
                       {row.auto ? (
                         <Text style={text.value}>{row.ledger_name} <Text style={text.meta}>(auto)</Text></Text>
                       ) : (
                         <LedgerPickerInline row={row} ledgers={otherLedgers} onChange={(patch) => setLedgerRows((p) => p.map((r) => r.id === row.id ? { ...r, ...patch } : r))} editable={canSave} />
                       )}
                     </View>
-                    <TextInput
-                      value={row.amount ? String(row.amount) : ''}
-                      onChangeText={(v) => setLedgerRows((p) => p.map((r) => r.id === row.id ? { ...r, amount: Number(v) || 0 } : r))}
-                      editable={!row.auto && canSave}
-                      keyboardType="decimal-pad"
-                      style={[styles.input, styles.amountInput, (!row.auto && canSave) ? null : styles.inputDisabled]}
-                    />
-                    <Pressable onPress={() => removeLedgerRow(row.id)} disabled={row.auto || !canSave} style={[styles.removeBtn, (row.auto || !canSave) && { opacity: 0.3 }]}>
-                      <Text style={styles.removeBtnText}>×</Text>
-                    </Pressable>
+                    <View style={isMobile ? styles.ledgerAmountRowMobile : undefined}>
+                      {isMobile ? <Text style={styles.fieldLabelSmallMobile}>Amount</Text> : null}
+                      <TextInput
+                        value={row.amount ? String(row.amount) : ''}
+                        onChangeText={(v) => setLedgerRows((p) => p.map((r) => r.id === row.id ? { ...r, amount: Number(v) || 0 } : r))}
+                        editable={!row.auto && canSave}
+                        keyboardType="decimal-pad"
+                        style={[styles.input, isMobile ? styles.amountInputMobile : styles.amountInput, (!row.auto && canSave) ? null : styles.inputDisabled]}
+                      />
+                      <Pressable onPress={() => removeLedgerRow(row.id)} disabled={row.auto || !canSave} style={[styles.removeBtn, (row.auto || !canSave) && { opacity: 0.3 }]}>
+                        <Text style={styles.removeBtnText}>×</Text>
+                      </Pressable>
+                    </View>
                   </View>
                 ))}
               </View>
@@ -1081,6 +1241,8 @@ export function VoucherFormScreen() {
             </Text>
           )}
         </View>
+        </>
+        )}
         </View>
       </ScrollView>
 
@@ -1088,9 +1250,9 @@ export function VoucherFormScreen() {
       {Platform.OS === 'web' && !isMobile ? (
         <View style={styles.sideRail}>
           <Text style={styles.sideRailTitle}>VCH TYPES</Text>
-          {vchTypes.filter((t) => t.is_system && t.name.toLowerCase() !== 'bilty').map((t, idx) => {
-            // Red = committed (Enter / click). Grey = highlighted by arrow.
-            const active = committedVchTypeId === t.id;
+          {vchTypes.filter((t) => t.parent_id === t.id).map((t, idx) => {
+            // Red = the COMMITTED family's primary. Grey = arrow-preview.
+            const active = t.id === committedRootId;
             const focused = railIdx === idx;
             return (
               <Pressable
@@ -1293,7 +1455,7 @@ export function VoucherFormScreen() {
 
 // ─── Sub-components ─────────────────────────────────────────────────────────
 
-function ItemRowEditor({ line, idx, items, onChange, onRemove, canRemove, onOpenBatch, editable }: {
+function ItemRowEditor({ line, idx, items, onChange, onRemove, canRemove, onOpenBatch, editable, isMobile }: {
   line: LineItem;
   idx: number;
   items: ItemMasterItem[];
@@ -1302,6 +1464,7 @@ function ItemRowEditor({ line, idx, items, onChange, onRemove, canRemove, onOpen
   canRemove: boolean;
   onOpenBatch: () => void;
   editable: boolean;
+  isMobile: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState(line.item_name);
@@ -1348,9 +1511,20 @@ function ItemRowEditor({ line, idx, items, onChange, onRemove, canRemove, onOpen
   }, [open, filtered, highlight, onChange]);
 
   return (
-    <View style={[styles.tableRow, open && styles.tableRowOpen]}>
-      <Text style={[styles.cellMeta, { width: 36 }]}>{idx + 1}</Text>
-      <View style={{ flex: 2, minWidth: 200 }}>
+    <View style={[styles.tableRow, open && styles.tableRowOpen, isMobile && styles.rowCardMobile]}>
+      {isMobile ? (
+        <View style={styles.rowCardHeadMobile}>
+          <Text style={styles.rowCardIndexMobile}>Item {idx + 1}</Text>
+          {editable && (
+            <Pressable onPress={onRemove} disabled={!canRemove} style={[styles.removeBtn, !canRemove && { opacity: 0.3 }]}>
+              <Text style={styles.removeBtnText}>×</Text>
+            </Pressable>
+          )}
+        </View>
+      ) : (
+        <Text style={[styles.cellMeta, { width: 36 }]}>{idx + 1}</Text>
+      )}
+      <View style={isMobile ? { width: '100%' } : { flex: 2, minWidth: 200 }}>
         <Pressable
           onPress={() => editable && setOpen((v) => !v)}
           style={[styles.selectField, !editable && styles.inputDisabled]}
@@ -1400,29 +1574,64 @@ function ItemRowEditor({ line, idx, items, onChange, onRemove, canRemove, onOpen
           </Pressable>
         ) : null}
       </View>
-      <TextInput
-        value={line.qty ? String(line.qty) : ''}
-        onChangeText={(v) => onChange({ qty: Number(v) || 0 })}
-        keyboardType="decimal-pad"
-        style={[styles.input, { width: 80, textAlign: 'right' }, !editable && styles.inputDisabled]}
-        editable={editable}
-      />
-      <TextInput
-        value={line.rate ? String(line.rate) : ''}
-        onChangeText={(v) => onChange({ rate: Number(v) || 0 })}
-        keyboardType="decimal-pad"
-        style={[styles.input, { width: 110, textAlign: 'right' }, !editable && styles.inputDisabled]}
-        editable={editable}
-      />
-      <TextInput
-        value={line.amount ? String(line.amount) : ''}
-        editable={false}
-        style={[styles.input, styles.inputDisabled, { width: 130, textAlign: 'right' }]}
-      />
-      {editable && (
-        <Pressable onPress={onRemove} disabled={!canRemove} style={[styles.removeBtn, !canRemove && { opacity: 0.3 }]}>
-          <Text style={styles.removeBtnText}>×</Text>
-        </Pressable>
+      {isMobile ? (
+        <View style={styles.fieldRowMobile}>
+          <View style={styles.fieldColMobile}>
+            <Text style={styles.fieldLabelSmallMobile}>Qty</Text>
+            <TextInput
+              value={line.qty ? String(line.qty) : ''}
+              onChangeText={(v) => onChange({ qty: Number(v) || 0 })}
+              keyboardType="decimal-pad"
+              style={[styles.input, { textAlign: 'right' }, !editable && styles.inputDisabled]}
+              editable={editable}
+            />
+          </View>
+          <View style={styles.fieldColMobile}>
+            <Text style={styles.fieldLabelSmallMobile}>Rate</Text>
+            <TextInput
+              value={line.rate ? String(line.rate) : ''}
+              onChangeText={(v) => onChange({ rate: Number(v) || 0 })}
+              keyboardType="decimal-pad"
+              style={[styles.input, { textAlign: 'right' }, !editable && styles.inputDisabled]}
+              editable={editable}
+            />
+          </View>
+          <View style={styles.fieldColMobile}>
+            <Text style={styles.fieldLabelSmallMobile}>Amount</Text>
+            <TextInput
+              value={line.amount ? String(line.amount) : ''}
+              editable={false}
+              style={[styles.input, styles.inputDisabled, { textAlign: 'right' }]}
+            />
+          </View>
+        </View>
+      ) : (
+        <>
+          <TextInput
+            value={line.qty ? String(line.qty) : ''}
+            onChangeText={(v) => onChange({ qty: Number(v) || 0 })}
+            keyboardType="decimal-pad"
+            style={[styles.input, { width: 80, textAlign: 'right' }, !editable && styles.inputDisabled]}
+            editable={editable}
+          />
+          <TextInput
+            value={line.rate ? String(line.rate) : ''}
+            onChangeText={(v) => onChange({ rate: Number(v) || 0 })}
+            keyboardType="decimal-pad"
+            style={[styles.input, { width: 110, textAlign: 'right' }, !editable && styles.inputDisabled]}
+            editable={editable}
+          />
+          <TextInput
+            value={line.amount ? String(line.amount) : ''}
+            editable={false}
+            style={[styles.input, styles.inputDisabled, { width: 130, textAlign: 'right' }]}
+          />
+          {editable && (
+            <Pressable onPress={onRemove} disabled={!canRemove} style={[styles.removeBtn, !canRemove && { opacity: 0.3 }]}>
+              <Text style={styles.removeBtnText}>×</Text>
+            </Pressable>
+          )}
+        </>
       )}
     </View>
   );
@@ -1510,12 +1719,13 @@ function LedgerPickerInline({ row, ledgers, onChange, editable }: {
   );
 }
 
-function JournalRowEditor({ row, idx, onChange, onRemove, editable }: {
+function JournalRowEditor({ row, idx, onChange, onRemove, editable, isMobile }: {
   row: JournalRow;
   idx: number;
   onChange: (patch: Partial<JournalRow>) => void;
   onRemove: () => void;
   editable: boolean;
+  isMobile: boolean;
 }) {
   const [typeOpen, setTypeOpen] = useState(false);
   const [results, setResults] = useState<OtherLedger[]>([]);
@@ -1573,36 +1783,108 @@ function JournalRowEditor({ row, idx, onChange, onRemove, editable }: {
     return () => document.removeEventListener('keydown', onKey, true);
   }, [open, results, highlight, onChange]);
 
-  return (
-    <View style={[styles.tableRow, (open || typeOpen) && styles.tableRowOpen]}>
-      <Text style={[styles.cellMeta, { width: 36 }]}>{idx + 1}</Text>
-      <View style={{ width: 70 }}>
-        <Pressable
-          onPress={() => editable && setTypeOpen((v) => !v)}
-          style={[styles.selectField, !editable && styles.inputDisabled]}
-          accessibilityRole="button"
-          accessibilityLabel="Dr or Cr"
-        >
-          <Text style={styles.selectText}>{row.drOrCr}</Text>
-          <Text style={styles.caret}>▾</Text>
-        </Pressable>
-        {typeOpen ? (
-          <>
-            <Pressable style={styles.menuScrim} onPress={() => setTypeOpen(false)} />
+  // Shared Dr/Cr selector block — reused in desktop inline layout and the
+  // mobile card's second row.
+  const drCrSelect = (
+    <View style={isMobile ? styles.journalTypeColMobile : { width: 70 }}>
+      {isMobile ? <Text style={styles.fieldLabelSmallMobile}>Dr / Cr</Text> : null}
+      <Pressable
+        onPress={() => editable && setTypeOpen((v) => !v)}
+        style={[styles.selectField, !editable && styles.inputDisabled]}
+        accessibilityRole="button"
+        accessibilityLabel="Dr or Cr"
+      >
+        <Text style={styles.selectText}>{row.drOrCr}</Text>
+        <Text style={styles.caret}>▾</Text>
+      </Pressable>
+      {typeOpen ? (
+        <>
+          <Pressable style={styles.menuScrim} onPress={() => setTypeOpen(false)} />
+          <View style={styles.dropdown}>
+            {(['Dr', 'Cr'] as const).map((dc) => (
+              <Pressable
+                key={dc}
+                onPressIn={() => { onChange({ drOrCr: dc }); setTypeOpen(false); }}
+                style={styles.dropdownRow}
+              >
+                <Text style={text.value}>{dc}</Text>
+              </Pressable>
+            ))}
+          </View>
+        </>
+      ) : null}
+    </View>
+  );
+
+  // Single amount input bound to the active direction — used on mobile (the
+  // desktop two-column Dr/Cr amount layout collapses to one field).
+  const amountInputMobile = (
+    <View style={styles.journalAmountColMobile}>
+      <Text style={styles.fieldLabelSmallMobile}>Amount</Text>
+      <TextInput
+        value={row.amount ? String(row.amount) : ''}
+        onChangeText={(v) => onChange({ amount: Number(v) || 0 })}
+        keyboardType="decimal-pad"
+        style={[styles.input, { textAlign: 'right' }, !editable && styles.inputDisabled]}
+        editable={editable}
+      />
+    </View>
+  );
+
+  if (isMobile) {
+    return (
+      <View style={[styles.tableRow, (open || typeOpen) && styles.tableRowOpen, styles.rowCardMobile]}>
+        <View style={styles.rowCardHeadMobile}>
+          <Text style={styles.rowCardIndexMobile}>Entry {idx + 1}</Text>
+          {editable && (
+            <Pressable onPress={onRemove} style={styles.removeBtn}>
+              <Text style={styles.removeBtnText}>×</Text>
+            </Pressable>
+          )}
+        </View>
+        <View style={{ width: '100%' }}>
+          <TextInput
+            value={row.search}
+            onChangeText={(v) => {
+              onChange({ search: v, ledger_id: null, ledger_name: '' });
+              setSuppressDrop(false);
+            }}
+            placeholder="Search ledger..."
+            placeholderTextColor={colors.textMuted}
+            style={[styles.input, row.ledger_id !== null && styles.inputBound, !editable && styles.inputDisabled]}
+            editable={editable}
+          />
+          {open ? (
             <View style={styles.dropdown}>
-              {(['Dr', 'Cr'] as const).map((dc) => (
+              {results.slice(0, 12).map((l, i) => (
                 <Pressable
-                  key={dc}
-                  onPressIn={() => { onChange({ drOrCr: dc }); setTypeOpen(false); }}
-                  style={styles.dropdownRow}
+                  key={l.id}
+                  {...(Platform.OS === 'web' ? ({ onMouseEnter: () => setHighlight(i) } as any) : {})}
+                  onPressIn={() => {
+                    onChange({ ledger_id: l.id, ledger_name: l.name, search: l.name });
+                    setSuppressDrop(true);
+                  }}
+                  style={[styles.dropdownRow, i === highlight && styles.dropdownRowHi]}
                 >
-                  <Text style={text.value}>{dc}</Text>
+                  <Text style={text.value}>{l.name}</Text>
+                  {l.ledger_group_name ? <Text style={text.meta}>{l.ledger_group_name}</Text> : null}
                 </Pressable>
               ))}
             </View>
-          </>
-        ) : null}
+          ) : null}
+        </View>
+        <View style={styles.journalSecondRowMobile}>
+          {drCrSelect}
+          {amountInputMobile}
+        </View>
       </View>
+    );
+  }
+
+  return (
+    <View style={[styles.tableRow, (open || typeOpen) && styles.tableRowOpen]}>
+      <Text style={[styles.cellMeta, { width: 36 }]}>{idx + 1}</Text>
+      {drCrSelect}
       <View style={{ flex: 1 }}>
         <TextInput
           value={row.search}
@@ -1962,6 +2244,17 @@ const styles = StyleSheet.create({
       : { shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 6, shadowOffset: { width: 0, height: 1 } }),
   },
 
+  // Bilty-on-mobile: the embedded wizard renders its own full-bleed chrome, so
+  // the parent voucher card drops all of its own padding / border / background
+  // to avoid the "box inside a box" nesting.
+  formCardBiltyMobile: {
+    padding: 0,
+    borderWidth: 0,
+    backgroundColor: 'transparent',
+    gap: 0,
+    ...(Platform.OS === 'web' ? ({ boxShadow: 'none' } as any) : { shadowOpacity: 0, shadowRadius: 0 }),
+  },
+
   pageTitle: {
     fontSize: 22,
     fontFamily: typography.uiHeavy,
@@ -1985,6 +2278,157 @@ const styles = StyleSheet.create({
   },
   headerCol: { minWidth: 180, flexBasis: 200, flexGrow: 0 },
   headerSpacer: { flex: 1 },
+
+  // ── Mobile layout overrides (all gated by isMobile in the JSX) ──────────────
+  headerRowMobile: {
+    // Voucher No + Date sit side-by-side (Voucher Type is hidden on mobile —
+    // the top-right box selects it). Keeps the header compact with no tall gap.
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+    marginTop: 0,
+    marginBottom: spacing.sm,
+  },
+  headerColMobile: {
+    flexBasis: '48%',
+    minWidth: 0,
+    width: '48%',
+    maxWidth: '48%',
+  },
+  titleRowMobile: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: spacing.sm,
+    // Sit ABOVE the headerRow (zIndex 1000) so the primary-type dropdown that
+    // drops from the top-right box renders IN FRONT of the Voucher No/Date row.
+    ...(Platform.OS === 'web' ? ({ position: 'relative', zIndex: 3000 } as any) : { zIndex: 3000 }),
+  },
+  // Compact primary-type box — mobile replacement for the desktop VCH TYPES
+  // rail. A small pill pinned to the top-right that opens a dropdown of the
+  // primary voucher types.
+  primaryBoxRowMobile: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    marginTop: -spacing.xs,
+    marginBottom: spacing.xs,
+  },
+  primaryBoxWrapMobile: {
+    width: 168,
+    ...(Platform.OS === 'web' ? ({ position: 'relative', zIndex: 1100 } as any) : { zIndex: 1100 }),
+  },
+  primaryBoxMobile: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 7,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.brandRed,
+    backgroundColor: colors.brandRedTone,
+  },
+  primaryBoxTextMobile: {
+    flexShrink: 1,
+    fontSize: 13,
+    fontFamily: typography.uiBold,
+    color: colors.brandRed,
+  },
+  // Table card loses its border on mobile — rows render as standalone cards.
+  tableCardMobile: {
+    borderWidth: 0,
+    backgroundColor: 'transparent',
+  },
+  // Each ledger / item row becomes a vertical card on mobile.
+  rowCardMobile: {
+    flexDirection: 'column',
+    alignItems: 'stretch',
+    gap: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    backgroundColor: colors.card,
+    padding: spacing.md,
+    marginBottom: spacing.sm,
+  },
+  rowCardHeadMobile: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  rowCardIndexMobile: {
+    fontSize: 12,
+    fontFamily: typography.uiBold,
+    color: colors.textMuted,
+    letterSpacing: 0.4,
+  },
+  fieldLabelSmallMobile: {
+    fontSize: 11,
+    fontFamily: typography.uiMedium,
+    color: colors.textMuted,
+    letterSpacing: 0.2,
+    marginBottom: 4,
+  },
+  // qty / rate / amount three-up row inside a mobile item card.
+  fieldRowMobile: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    width: '100%',
+  },
+  fieldColMobile: {
+    flex: 1,
+    minWidth: 0,
+  },
+  // Journal card second row: Dr/Cr selector + amount side by side.
+  journalSecondRowMobile: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    width: '100%',
+    alignItems: 'flex-end',
+  },
+  journalTypeColMobile: {
+    width: 110,
+    flexShrink: 0,
+  },
+  journalAmountColMobile: {
+    flex: 1,
+    minWidth: 0,
+  },
+  // Inline (auto-tax / manual) ledger row → card on mobile.
+  ledgerRowMobile: {
+    flexDirection: 'column',
+    alignItems: 'stretch',
+    gap: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    backgroundColor: colors.card,
+    padding: spacing.md,
+    marginBottom: spacing.sm,
+  },
+  ledgerAmountRowMobile: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    width: '100%',
+  },
+  amountInputMobile: {
+    flex: 1,
+    minWidth: 0,
+    textAlign: 'right',
+  },
+  grandTotalDualWrapMobile: {
+    alignItems: 'flex-end',
+  },
+  grandTotalDualLabelMobile: {
+    fontSize: 14,
+    fontFamily: typography.uiHeavy,
+    color: '#2563EB',
+    textAlign: 'right',
+  },
 
   field: {
     gap: 4,
@@ -2057,7 +2501,8 @@ const styles = StyleSheet.create({
   },
   selectMenuItem: { paddingHorizontal: spacing.md, paddingVertical: 8 },
   selectMenuItemActive: { backgroundColor: colors.brandRedTone },
-  selectMenuItemText: { fontSize: 13, fontFamily: typography.uiMedium, color: colors.text },
+  selectMenuItemHover: { backgroundColor: '#F1F5F9' },
+  selectMenuItemText: { fontSize: 13, fontFamily: typography.uiMedium, color: colors.textMuted },
   selectMenuItemTextActive: { color: colors.brandRed, fontFamily: typography.uiBold },
   menuScrim: {
     // On web: fixed so it covers the full viewport without adding any scroll

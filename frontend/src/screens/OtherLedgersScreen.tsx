@@ -37,6 +37,7 @@ import { ledgerGroupService } from '../services/ledgerGroupService';
 import { ledgerMasterService } from '../services/ledgerMasterService';
 import { useAuth } from '../context/AuthContext';
 import { canDoAction } from '../navigation/guards';
+import { useResponsive } from '../hooks/useResponsive';
 import { validateRequired } from '../utils/masterValidators';
 import type { LedgerGroupItem } from '../../../shared/types/ledgerGroup';
 import type { LedgerMasterItem } from '../../../shared/types/ledgerMaster';
@@ -71,6 +72,7 @@ type CreateErrors = Partial<Record<keyof CreateState, string>>;
 
 export function OtherLedgersScreen() {
   const { user } = useAuth();
+  const { isMobile } = useResponsive();
 
   const [rows, setRows] = useState<LedgerMasterItem[] | null>(null);
   const [groups, setGroups] = useState<LedgerGroupItem[]>([]);
@@ -323,10 +325,14 @@ export function OtherLedgersScreen() {
       <View style={styles.header}>
         <Text style={styles.title}>Ledgers</Text>
         <View style={styles.headerActions}>
-          <Text style={styles.headerHint}>
-            Click any row to edit its <Text style={styles.headerHintBold}>group</Text>{' '}
-            or <Text style={styles.headerHintBold}>opening balance</Text>.
-          </Text>
+          {/* The "click any row" hint is desktop-only — on mobile it squeezes
+              into an unreadable column, and the cards already show Edit buttons. */}
+          {!isMobile ? (
+            <Text style={styles.headerHint}>
+              Click any row to edit its <Text style={styles.headerHintBold}>group</Text>{' '}
+              or <Text style={styles.headerHintBold}>opening balance</Text>.
+            </Text>
+          ) : null}
           {canDoAction(user, 'ledgermaster', 'create') && (
             <View style={styles.newBtn}>
               <ButtonPrimary title="+ Create Ledger" onPress={openCreate} testID="new-other-btn" />

@@ -66,6 +66,7 @@ const TAB_TO_PAGE: Partial<Record<TabName, PermissionPage>> = {
   BranchMaster: 'branchmaster',
   ZoneMaster: 'zonemaster',
   LedgerGroups: 'ledgergroup',
+  VoucherType: 'voucher',
   Users: 'user',
 };
 
@@ -145,7 +146,7 @@ export function pickInitialTab(
     'LedgerMaster', 'Customers', 'OtherLedgers',
     'OwnerMaster', 'AgentMaster',
     'ItemMaster', 'ItemGroup', 'ItemCategory',
-    'VehicleMaster', 'DestinationMaster', 'BranchMaster', 'ZoneMaster', 'LedgerGroups',
+    'VehicleMaster', 'DestinationMaster', 'BranchMaster', 'ZoneMaster', 'LedgerGroups', 'VoucherType',
   ];
   for (const t of ledgerOrder) {
     if (canAccessTab(t, user)) return t;

@@ -18,6 +18,8 @@ export interface VchType {
   parent_name: string | null;
   deemed_positive: DeemedPositive;
   is_system: 0 | 1;
+  /** Optional voucher-number prefix; null/empty = plain numbering. */
+  prefix: string | null;
 }
 
 export interface OtherLedger {

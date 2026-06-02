@@ -20,7 +20,7 @@ export const TOP_NAV_HEIGHT_MOBILE = 56;
 
 const LABELS: Record<string, string> = {
   Dashboard: 'Dashboard',
-  Bilty: 'Bilty',
+  Bilty: 'Reports',
   Freight: 'Freight',
   Billing: 'Vouchers',
   LedgerMaster: 'Ledger Master',
@@ -36,13 +36,14 @@ const LABELS: Record<string, string> = {
   BranchMaster: 'Branch Master',
   ZoneMaster: 'Zone Master',
   LedgerGroups: 'Ledger Groups',
+  VoucherType: 'Voucher Type',
   Users: 'Users',
 };
 
 // Explicit left-to-right display order of nav items.
 // Users is hidden from nav and accessed via the profile panel.
 // LedgerGroups is hidden from nav and lives at the bottom of the Ledger dropdown.
-const NAV_ORDER = ['Dashboard', 'Ledger', 'Bilty', 'Freight', 'Billing'];
+const NAV_ORDER = ['Dashboard', 'Ledger', 'Freight', 'Billing', 'Bilty'];
 
 // Routes grouped under the "Ledger" dropdown — hidden as top-level nav items.
 // Order here = order shown inside the dropdown (matches the user's requested sequence).
@@ -61,6 +62,7 @@ const LEDGER_ROUTES = [
   'BranchMaster',
   'ZoneMaster',
   'LedgerGroups',
+  'VoucherType',
 ];
 
 // Routes that live as children under the "Item Master" parent in the
@@ -171,16 +173,14 @@ export function TopNavBar({ state, navigation }: BottomTabBarProps) {
       <>
         <View style={{ height: 0 }} />
         <View style={[styles.bar, styles.barMobile]}>
+          {/* Profile avatar — left corner */}
           <Pressable
-            onPress={() => setDrawerOpen(true)}
-            hitSlop={8}
-            style={({ pressed }) => [styles.hamburger, pressed && { opacity: 0.6 }]}
+            onPress={() => setProfileOpen((v) => !v)}
+            style={({ pressed }) => [styles.avatar, styles.avatarMobile, pressed && styles.avatarPressed]}
             accessibilityRole="button"
-            accessibilityLabel="Open menu"
+            accessibilityLabel="Open profile"
           >
-            <View style={styles.hamburgerLine} />
-            <View style={styles.hamburgerLine} />
-            <View style={styles.hamburgerLine} />
+            <Text style={styles.avatarText}>{initials}</Text>
           </Pressable>
 
           <View style={styles.logoWrapMobile}>
@@ -190,13 +190,17 @@ export function TopNavBar({ state, navigation }: BottomTabBarProps) {
             <Text style={styles.logoWordmarkMobile}>LOGISTICS</Text>
           </View>
 
+          {/* Hamburger menu — right corner. Toggles: tap opens, tap again closes. */}
           <Pressable
-            onPress={() => setProfileOpen((v) => !v)}
-            style={({ pressed }) => [styles.avatar, styles.avatarMobile, pressed && styles.avatarPressed]}
+            onPress={() => setDrawerOpen((v) => !v)}
+            hitSlop={8}
+            style={({ pressed }) => [styles.hamburger, pressed && { opacity: 0.6 }]}
             accessibilityRole="button"
-            accessibilityLabel="Open profile"
+            accessibilityLabel="Open menu"
           >
-            <Text style={styles.avatarText}>{initials}</Text>
+            <View style={styles.hamburgerLine} />
+            <View style={styles.hamburgerLine} />
+            <View style={styles.hamburgerLine} />
           </Pressable>
         </View>
 
@@ -247,7 +251,7 @@ export function TopNavBar({ state, navigation }: BottomTabBarProps) {
               return availableLedgerTargets.length > 0 ? (
                 <DropdownNavItem
                   key="ledger"
-                  label="Ledger"
+                  label="Masters"
                   active={ledgerActive}
                   activeKey={activeRouteName}
                   isOpen={openDropdown === 'ledger'}
@@ -694,11 +698,12 @@ function buildDrawerItems(args: {
     const ledgerChildren: DrawerNavItem[] = [];
     args.availableLedgerTargets.forEach((n) => {
       if (n === 'LedgerMaster') {
-        // Mobile drawer is a flat list — emit Customers / Other Ledgers as
-        // sibling rows. The "Ledger Master" parent label itself is omitted
-        // because clicking it on desktop is a no-op (just expands).
+        // Nested sub-group — "Ledger Master" expands to Customers / Other
+        // Ledgers, exactly like the desktop dropdown flyout. The parent itself
+        // is expand-only (no direct navigation).
+        const sub: DrawerNavItem[] = [];
         if (args.hasCustomers) {
-          ledgerChildren.push({
+          sub.push({
             key: 'Customers',
             label: LABELS.Customers ?? 'Customers',
             active: args.activeRouteName === 'Customers',
@@ -706,27 +711,36 @@ function buildDrawerItems(args: {
           });
         }
         if (args.hasOtherLedgers) {
-          ledgerChildren.push({
+          sub.push({
             key: 'OtherLedgers',
             label: LABELS.OtherLedgers ?? 'Other Ledgers',
             active: args.activeRouteName === 'OtherLedgers',
             onPress: () => args.navigateTo('OtherLedgers'),
           });
         }
-      } else if (n === 'ItemMaster') {
-        // Mobile drawer is flat — only emit "Items" if the parent tab is
-        // mounted. ItemGroup / ItemCategory siblings are emitted unconditionally
-        // (gated by their own perms).
-        if (args.hasItemMaster) {
+        if (sub.length > 0) {
           ledgerChildren.push({
+            key: 'LedgerMaster',
+            label: LABELS.LedgerMaster ?? 'Ledger Master',
+            active: sub.some((c) => c.active),
+            children: sub,
+          });
+        }
+      } else if (n === 'ItemMaster') {
+        // Nested sub-group — "Item Master" expands to Items / Item Group /
+        // Item Category, mirroring the desktop flyout. "Items" only appears
+        // when the ItemMaster tab itself is mounted.
+        const sub: DrawerNavItem[] = [];
+        if (args.hasItemMaster) {
+          sub.push({
             key: 'ItemMaster',
-            label: LABELS.ItemMaster ?? 'Item Master',
+            label: 'Items',
             active: args.activeRouteName === 'ItemMaster',
             onPress: () => args.navigateTo('ItemMaster'),
           });
         }
         if (args.hasItemGroup) {
-          ledgerChildren.push({
+          sub.push({
             key: 'ItemGroup',
             label: 'Item Group',
             active: args.activeRouteName === 'ItemGroup',
@@ -734,11 +748,19 @@ function buildDrawerItems(args: {
           });
         }
         if (args.hasItemCategory) {
-          ledgerChildren.push({
+          sub.push({
             key: 'ItemCategory',
             label: 'Item Category',
             active: args.activeRouteName === 'ItemCategory',
             onPress: () => args.navigateTo('ItemCategory'),
+          });
+        }
+        if (sub.length > 0) {
+          ledgerChildren.push({
+            key: 'ItemMaster',
+            label: LABELS.ItemMaster ?? 'Item Master',
+            active: sub.some((c) => c.active),
+            children: sub,
           });
         }
       } else {
@@ -750,17 +772,10 @@ function buildDrawerItems(args: {
         });
       }
     });
-    out.push({ key: 'Ledger', label: 'Ledger', active: args.ledgerActive, children: ledgerChildren });
+    // Label mirrors the desktop nav dropdown ("Masters"), not the route name.
+    out.push({ key: 'Ledger', label: 'Masters', active: args.ledgerActive, children: ledgerChildren });
   }
 
-  if (args.canViewBilty) {
-    out.push({
-      key: 'Bilty',
-      label: 'Bilty',
-      active: args.activeRouteName === 'Bilty',
-      onPress: () => args.navigateTo('Bilty'),
-    });
-  }
   out.push({
     key: 'Freight',
     label: 'Freight',
@@ -796,12 +811,15 @@ function buildDrawerItems(args: {
     }
   }
 
-  if (args.hasUsers) {
+  // Reports (Bilty route) sits LAST — mirrors the desktop nav order
+  // (Dashboard · Masters · Freight · Vouchers · Reports). Users is intentionally
+  // NOT listed here: like the desktop nav, it's reached via the profile panel.
+  if (args.canViewBilty) {
     out.push({
-      key: 'Users',
-      label: 'Users',
-      active: args.activeRouteName === 'Users',
-      onPress: () => args.navigateTo('Users'),
+      key: 'Bilty',
+      label: LABELS.Bilty ?? 'Reports',
+      active: args.activeRouteName === 'Bilty',
+      onPress: () => args.navigateTo('Bilty'),
     });
   }
 

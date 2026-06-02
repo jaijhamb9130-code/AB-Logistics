@@ -19,6 +19,7 @@ import { DestinationMasterScreen } from '../screens/DestinationMasterScreen';
 import { BranchMasterScreen } from '../screens/BranchMasterScreen';
 import { ZoneMasterScreen } from '../screens/ZoneMasterScreen';
 import { LedgerGroupsScreen } from '../screens/LedgerGroupsScreen';
+import { VoucherTypeScreen } from '../screens/VoucherTypeScreen';
 import { useAuth } from '../context/AuthContext';
 import { canAccessTab, pickInitialTab } from './guards';
 import { colors } from '../constants/theme';
@@ -64,6 +65,7 @@ const PaddedDestinationMaster = withPad(DestinationMasterScreen);
 const PaddedBranchMaster = withPad(BranchMasterScreen);
 const PaddedZoneMaster = withPad(ZoneMasterScreen);
 const PaddedLedgerGroups = withPad(LedgerGroupsScreen);
+const PaddedVoucherType = withPad(VoucherTypeScreen);
 const PaddedUsers = withPad(UsersScreen);
 
 export function AppTabs() {
@@ -133,6 +135,9 @@ export function AppTabs() {
       )}
       {canAccessTab('LedgerGroups', user) && (
         <Tab.Screen name="LedgerGroups" component={PaddedLedgerGroups} />
+      )}
+      {canAccessTab('VoucherType', user) && (
+        <Tab.Screen name="VoucherType" component={PaddedVoucherType} />
       )}
       {canAccessTab('Users', user) && (
         <Tab.Screen name="Users" component={PaddedUsers} />

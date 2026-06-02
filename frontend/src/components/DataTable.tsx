@@ -14,7 +14,7 @@
  * Deactivate buttons add a custom `render` on an extra column (plan 02-03).
  */
 
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   FlatList,
   Platform,
@@ -53,6 +53,8 @@ interface Props<T> {
 
 const SERIAL_COL_WIDTH = 80;
 const MOBILE_BREAKPOINT = 768;
+// Mobile card view paginates after this many rows.
+const MOBILE_PAGE_SIZE = 20;
 // Default minimum width for flex columns on mobile so they don't squish.
 const MOBILE_FLEX_MIN_WIDTH = 160;
 
@@ -68,6 +70,14 @@ export function DataTable<T>({
 }: Props<T>) {
   const { width: viewportWidth } = useWindowDimensions();
   const isMobile = viewportWidth < MOBILE_BREAKPOINT;
+
+  // Mobile card pagination. Clamp the page when the row count shrinks (search /
+  // delete) so we never land on an empty page past the end.
+  const [page, setPage] = useState(0);
+  useEffect(() => {
+    const maxPage = Math.max(0, Math.ceil(rows.length / MOBILE_PAGE_SIZE) - 1);
+    setPage((p) => Math.min(p, maxPage));
+  }, [rows.length]);
 
   // Build the effective columns list — prepend S.No. when enabled.
   // The S.No. render receives the row but ignores it; the index is injected at
@@ -191,6 +201,129 @@ export function DataTable<T>({
     }
     return <Pressable onPress={() => onRowPress(item)}>{content}</Pressable>;
   };
+
+  // ------- Mobile: one stacked card per row (label / value pairs) -------
+  // Columnar tables don't fit a phone, so on mobile we drop the grid entirely
+  // and render each row as a dense KV card (same pattern as the Bilty list),
+  // instead of forcing a horizontal scroll.
+  if (isMobile) {
+    // Label-bearing columns become KV rows; label-less columns (Edit/Delete
+    // action buttons) move into the card's top row next to the #N serial.
+    const dataColumns = columns.filter((c) => !!c.label);
+    const actionColumns = columns.filter((c) => !c.label);
+    const totalPages = Math.max(1, Math.ceil(rows.length / MOBILE_PAGE_SIZE));
+    const currentPage = Math.min(page, totalPages - 1);
+    const start = currentPage * MOBILE_PAGE_SIZE;
+    const pageRows = rows.slice(start, start + MOBILE_PAGE_SIZE);
+    const showHead = showSerialNo || actionColumns.length > 0;
+
+    const renderCard = ({ item, index }: { item: T; index: number }) => {
+      const body = (
+        <View style={styles.card}>
+          {showHead ? (
+            // Top row: #N on the left, Edit/Delete on the right — saves a whole
+            // extra action row of vertical space.
+            <View style={styles.cardHead}>
+              {showSerialNo ? <Text style={styles.cardSerial}>#{start + index + 1}</Text> : <View />}
+              {actionColumns.length > 0 ? (
+                <View style={styles.cardHeadActions}>
+                  {actionColumns.map((col) => (
+                    <View key={col.key}>{col.render(item)}</View>
+                  ))}
+                </View>
+              ) : null}
+            </View>
+          ) : null}
+          {dataColumns.map((col) => {
+            const rendered = col.render(item);
+            const isText = typeof rendered === 'string' || typeof rendered === 'number';
+            return (
+              <View key={col.key} style={styles.cardRow}>
+                <Text style={styles.cardLabel}>{col.label}</Text>
+                <View style={styles.cardValueWrap}>
+                  {isText ? (
+                    <Text
+                      style={[styles.cardValueText, col.align === 'right' && styles.mono]}
+                      numberOfLines={1}
+                    >
+                      {String(rendered)}
+                    </Text>
+                  ) : (
+                    rendered
+                  )}
+                </View>
+              </View>
+            );
+          })}
+        </View>
+      );
+      if (!onRowPress) return body;
+      if (Platform.OS === 'web') {
+        return (
+          // @ts-ignore — web-only onClick
+          <View onClick={() => onRowPress(item)} style={{ cursor: 'pointer' } as any}>
+            {body}
+          </View>
+        );
+      }
+      return <Pressable onPress={() => onRowPress(item)}>{body}</Pressable>;
+    };
+
+    return (
+      <View style={styles.cardWrap} testID={testID}>
+        {rows.length === 0 ? (
+          <View style={styles.emptyWrap}>
+            <Text style={styles.emptyText}>{emptyLabel}</Text>
+          </View>
+        ) : (
+          <>
+            <FlatList
+              data={pageRows}
+              keyExtractor={(r) => String(keyExtractor(r))}
+              renderItem={renderCard}
+              contentContainerStyle={styles.cardListContent}
+              showsVerticalScrollIndicator={false}
+            />
+            {totalPages > 1 ? (
+              <View style={styles.pagination}>
+                <Pressable
+                  disabled={currentPage === 0}
+                  onPress={() => setPage(currentPage - 1)}
+                  style={[styles.pageArrow, currentPage === 0 && styles.pageDisabled]}
+                >
+                  <Text style={styles.pageArrowText}>‹</Text>
+                </Pressable>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.pageNumbers}
+                >
+                  {Array.from({ length: totalPages }).map((_, i) => (
+                    <Pressable
+                      key={i}
+                      onPress={() => setPage(i)}
+                      style={[styles.pageNum, i === currentPage && styles.pageNumActive]}
+                    >
+                      <Text style={[styles.pageNumText, i === currentPage && styles.pageNumTextActive]}>
+                        {i + 1}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </ScrollView>
+                <Pressable
+                  disabled={currentPage === totalPages - 1}
+                  onPress={() => setPage(currentPage + 1)}
+                  style={[styles.pageArrow, currentPage === totalPages - 1 && styles.pageDisabled]}
+                >
+                  <Text style={styles.pageArrowText}>›</Text>
+                </Pressable>
+              </View>
+            ) : null}
+          </>
+        )}
+      </View>
+    );
+  }
 
   // ------- Web: CSS sticky via ScrollView. Native: separate header + FlatList. -------
   if (Platform.OS === 'web' && stickyHeader) {
@@ -342,6 +475,133 @@ const styles = StyleSheet.create({
     padding: spacing.xl,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+
+  // ── Mobile card layout — full-bleed, dense rows, divider between cards ──
+  cardWrap: {
+    flex: 1,
+    backgroundColor: colors.card,
+    // Screens wrap the table in a `padding: spacing.lg` container; cancel that
+    // horizontally so the card list runs edge-to-edge (the header/search above
+    // keep their padding).
+    marginHorizontal: -spacing.lg,
+  },
+  cardListContent: {
+    // No side gutters — cards span edge to edge for maximum width / density.
+    paddingHorizontal: 0,
+    paddingTop: 0,
+    paddingBottom: spacing.sm,
+  },
+  card: {
+    backgroundColor: colors.card,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+    paddingHorizontal: spacing.md,
+    paddingTop: 5,
+    paddingBottom: 6,
+  },
+  // Top row of each card: #N on the left, Edit/Delete actions on the right.
+  cardHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 2,
+  },
+  cardSerial: {
+    fontFamily: typography.mono,
+    fontSize: 12,
+    color: colors.textMuted,
+    fontWeight: '700',
+  },
+  cardHeadActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    // The Edit/Delete buttons are styled per-screen (theme `text.action`), so
+    // shrink the whole cluster here to keep them compact in the card header
+    // without touching every screen. Anchored to the right edge on web.
+    transform: [{ scale: 0.78 }],
+    ...(Platform.OS === 'web' ? ({ transformOrigin: 'right center' } as any) : {}),
+  },
+  cardRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'baseline',
+    paddingVertical: 1,
+    gap: spacing.md,
+  },
+  cardLabel: {
+    ...text.label,
+    fontSize: 11,
+    color: colors.textLabel,
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+    flexShrink: 0,
+  },
+  cardValueWrap: {
+    flex: 1,
+    alignItems: 'flex-end',
+  },
+  cardValueText: {
+    ...text.value,
+    fontSize: 13,
+    lineHeight: 18,
+    textAlign: 'right',
+  },
+
+  // ── Pagination bar ──
+  pagination: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    backgroundColor: colors.card,
+    gap: spacing.xs,
+  },
+  pageNumbers: {
+    alignItems: 'center',
+    gap: spacing.xs,
+    paddingHorizontal: spacing.xs,
+  },
+  pageNum: {
+    minWidth: 30,
+    height: 30,
+    borderRadius: radius.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: spacing.sm,
+    backgroundColor: '#F1F5F9',
+  },
+  pageNumActive: {
+    backgroundColor: colors.brandRed,
+  },
+  pageNumText: {
+    fontFamily: typography.uiBold,
+    fontSize: 13,
+    color: colors.textStrong,
+  },
+  pageNumTextActive: {
+    color: '#FFFFFF',
+  },
+  pageArrow: {
+    width: 30,
+    height: 30,
+    borderRadius: radius.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F1F5F9',
+  },
+  pageArrowText: {
+    fontFamily: typography.uiBold,
+    fontSize: 18,
+    lineHeight: 20,
+    color: colors.textStrong,
+  },
+  pageDisabled: {
+    opacity: 0.4,
   },
   emptyText: {
     ...text.meta,

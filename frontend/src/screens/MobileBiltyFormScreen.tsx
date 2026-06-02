@@ -78,6 +78,31 @@ function toDateStr(v: unknown): string {
   return String(v).slice(0, 10);
 }
 
+// Pull the first human-readable message out of a react-hook-form errors tree
+// (header fields first, then per-item fields) so a failed Save can tell the
+// user exactly what to fix.
+function firstBiltyErrorMessage(errs: any): string {
+  const firstOf = (obj: any): string | null => {
+    if (!obj) return null;
+    for (const val of Object.values(obj)) {
+      if (val && typeof (val as any).message === 'string') return (val as any).message;
+    }
+    return null;
+  };
+  const headerMsg = firstOf(errs?.header);
+  if (headerMsg) return headerMsg;
+  if (errs?.items) {
+    if (typeof errs.items.message === 'string') return errs.items.message;
+    if (Array.isArray(errs.items)) {
+      for (const it of errs.items) {
+        const m = firstOf(it);
+        if (m) return `Item: ${m}`;
+      }
+    }
+  }
+  return 'Please complete the required fields before saving.';
+}
+
 const filterDecimal = (raw: string): string => {
   const cleaned = raw.replace(/[^0-9.]/g, '');
   const parts = cleaned.split('.');
@@ -100,6 +125,9 @@ export function MobileBiltyFormScreen({ editingId, onClose, onSaved, canSave }: 
   const [loading, setLoading] = useState<boolean>(isEdit);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [gstNo, setGstNo] = useState<string>('');
+  // Surfaced when Save is pressed but the form fails validation — without this
+  // the (otherwise silent) Zod failure made the button look broken.
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   // Hide the React Navigation header — the wizard renders its own top bar.
   useEffect(() => {
@@ -216,15 +244,26 @@ export function MobileBiltyFormScreen({ editingId, onClose, onSaved, canSave }: 
   const watchedItems = useWatch({ control, name: 'items' });
   const watchedHeader = useWatch({ control, name: 'header' });
 
-  const goNext = () => setStep((s) => (Math.min(3, s + 1) as StepNum));
-  const goPrev = () => setStep((s) => (Math.max(1, s - 1) as StepNum));
+  const goNext = () => { setSaveError(null); setStep((s) => (Math.min(3, s + 1) as StepNum)); };
+  const goPrev = () => { setSaveError(null); setStep((s) => (Math.max(1, s - 1) as StepNum)); };
 
-  const onSave = handleSubmit(async (data) => {
+  const onValidSave = async (data: CreateBiltyInput) => {
+    setSaveError(null);
     // Mobile-only: bilty_no is manual entry and required. The shared schema
     // keeps it optional for desktop compatibility, so we enforce here.
     const biltyNoInput = (data.header?.bilty_no || '').trim();
     if (!biltyNoInput) {
       setError('header.bilty_no' as any, { message: 'Bilty No is required' });
+      setSaveError('Bilty No is required.');
+      setStep(1);
+      return;
+    }
+    // The backend requires a Goods Type once the bilty has items (it anchors
+    // the inventory entry). Catch it here so the user gets instant feedback on
+    // Step 1 instead of a round-trip 400.
+    if ((data.items?.length ?? 0) > 0 && !(data.header?.goods_type || '').trim()) {
+      setError('header.goods_type' as any, { message: 'Goods Type is required' });
+      setSaveError('Goods Type is required when the bilty has items.');
       setStep(1);
       return;
     }
@@ -239,15 +278,29 @@ export function MobileBiltyFormScreen({ editingId, onClose, onSaved, canSave }: 
     } catch (err: any) {
       const apiErr = err?.response?.data?.error;
       if (apiErr?.fields) {
-        Object.entries(apiErr.fields).forEach(([field, msg]) => {
-          setError(field as Parameters<typeof setError>[0], { message: msg as string });
+        const fieldKeys = Object.keys(apiErr.fields);
+        fieldKeys.forEach((field) => {
+          setError(field as Parameters<typeof setError>[0], { message: apiErr.fields[field] as string });
         });
-        // If the bilty_no conflict came from the API, jump back to Step 1
-        // so the user sees the inline error under the Bilty No input.
-        if (apiErr.fields['header.bilty_no']) setStep(1);
+        // Jump to whichever step owns the offending field so the user sees the
+        // inline error (header fields → Step 1, item fields → Step 2).
+        if (fieldKeys.some((f) => f.startsWith('header.'))) setStep(1);
+        else if (fieldKeys.some((f) => f.startsWith('items'))) setStep(2);
       }
+      setSaveError(apiErr?.message || 'Could not save bilty. Please try again.');
     }
-  });
+  };
+
+  // Validation failed (Zod) — react-hook-form's handleSubmit skips onValidSave
+  // entirely. Surface a readable reason and jump to the step that owns the
+  // first bad field so the user isn't staring at a dead button.
+  const onInvalidSave = (formErrors: any) => {
+    setSaveError(firstBiltyErrorMessage(formErrors));
+    if (formErrors?.header) setStep(1);
+    else if (formErrors?.items) setStep(2);
+  };
+
+  const onSave = handleSubmit(onValidSave, onInvalidSave);
 
   if (isEdit && loading) {
     return (
@@ -352,6 +405,13 @@ export function MobileBiltyFormScreen({ editingId, onClose, onSaved, canSave }: 
         ) : null}
       </ScrollView>
 
+      {/* Save validation / API error — shown just above the action bar */}
+      {saveError ? (
+        <View style={styles.saveErrorBar}>
+          <Text style={styles.saveErrorText}>{saveError}</Text>
+        </View>
+      ) : null}
+
       {/* Bottom action bar — different button set per step */}
       <View style={styles.bottomBar}>
         {step === 1 ? (
@@ -435,7 +495,7 @@ function Step1Details({
                   onChangeText={(v) => onChange(v.toUpperCase())}
                   fieldType="alphanumeric"
                   autoCapitalize="characters"
-                  placeholder="e.g. BL-2026-000001"
+                  placeholder="digits only, e.g. 18521"
                   error={errors.header?.bilty_no?.message ?? null}
                 />
               )}
@@ -517,7 +577,15 @@ function Step1Details({
               control={control}
               name="header.goods_type"
               render={({ field: { value, onChange } }) => (
-                <AutocompleteField compact label="Goods Type" value={value ?? ''} options={itemOptions} onChangeText={onChange} placeholder="" />
+                <AutocompleteField
+                  compact
+                  label="Goods Type *"
+                  value={value ?? ''}
+                  options={itemOptions}
+                  onChangeText={onChange}
+                  placeholder=""
+                  error={errors.header?.goods_type?.message ?? null}
+                />
               )}
             />
           </View>
@@ -823,12 +891,39 @@ function ItemSummaryCard({
           <Text style={styles.itemCardRemove}>×</Text>
         </Pressable>
       </View>
-      <SummaryKV label="CHALLAN NO" value={item.challan_no} />
-      <SummaryKV label="LR NO" value={item.lr_no} />
-      <SummaryKV label="FROM" value={item.from_loc} />
-      <SummaryKV label="TO" value={item.to_loc} />
+      {/* Row 1 — Challan No (left) · LR No (right) */}
+      <View style={styles.itemKVPair}>
+        <SummaryKVHalf label="CHALLAN NO" value={item.challan_no} />
+        <SummaryKVHalf label="LR NO" value={item.lr_no} align="right" />
+      </View>
+      {/* Row 2 — From (left) · To (right) */}
+      <View style={styles.itemKVPair}>
+        <SummaryKVHalf label="FROM" value={item.from_loc} />
+        <SummaryKVHalf label="TO" value={item.to_loc} align="right" />
+      </View>
+      {/* Row 3 — Consignee (full width) */}
       <SummaryKV label="CONSIGNEE" value={item.consignee} />
     </Pressable>
+  );
+}
+
+// Half-width KV pair for the two-up card rows (Challan/LR, From/To). The
+// right-hand cell anchors its label+value cluster to the row's right corner.
+function SummaryKVHalf({
+  label,
+  value,
+  align,
+}: {
+  label: string;
+  value?: string | number;
+  align?: 'left' | 'right';
+}) {
+  const v = value === undefined || value === null || value === '' ? '—' : String(value);
+  return (
+    <View style={[styles.itemKVHalf, align === 'right' && styles.itemKVHalfRight]}>
+      <Text style={styles.itemKVHalfLabel}>{label}</Text>
+      <Text style={styles.itemKVHalfValue} numberOfLines={1}>{v}</Text>
+    </View>
   );
 }
 
@@ -1307,7 +1402,7 @@ const styles = StyleSheet.create({
   topSubtitle: { fontSize: 11, color: colors.brandRed, fontFamily: typography.uiBold, marginTop: 2, letterSpacing: 0.5 },
 
   scroll: { flex: 1 },
-  scrollContent: { padding: 12, paddingBottom: 40 },
+  scrollContent: { padding: 12, paddingBottom: 16 },
 
   stepBody: { gap: 10 },
 
@@ -1419,18 +1514,47 @@ const styles = StyleSheet.create({
     borderColor: '#E2E8F0',
     borderRadius: radius.sm,
     paddingHorizontal: 8,
-    paddingTop: 6,
-    paddingBottom: 8,
-    gap: 4,
+    paddingTop: 5,
+    paddingBottom: 6,
+    gap: 2,
   },
   itemCardHead: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingBottom: 4,
-    marginBottom: 2,
+    paddingBottom: 3,
+    marginBottom: 1,
     borderBottomWidth: 1,
     borderBottomColor: '#F1F5F9',
+  },
+
+  // Two-up KV row inside the item summary card (Challan/LR, From/To).
+  itemKVPair: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 10,
+  },
+  itemKVHalf: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 6,
+    minWidth: 0,
+  },
+  itemKVHalfRight: {
+    justifyContent: 'flex-end',
+  },
+  itemKVHalfLabel: {
+    color: colors.textMuted,
+    fontFamily: typography.uiMedium,
+    fontSize: 11,
+    letterSpacing: 0.2,
+  },
+  itemKVHalfValue: {
+    color: colors.textStrong,
+    fontFamily: typography.uiMedium,
+    fontSize: 13,
+    flexShrink: 1,
   },
   itemCardTitle: {
     fontSize: 10,
@@ -1634,6 +1758,19 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: colors.border,
   },
+  saveErrorBar: {
+    backgroundColor: '#FEF2F2',
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(247,72,61,0.25)',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  saveErrorText: {
+    color: colors.danger,
+    fontFamily: typography.uiBold,
+    fontSize: 12.5,
+    textAlign: 'center',
+  },
   btnGhost: {
     paddingHorizontal: spacing.md,
     paddingVertical: 12,
@@ -1655,15 +1792,13 @@ const styles = StyleSheet.create({
 
   // Preview
   previewWrap: { paddingBottom: spacing.lg },
+  // Full-bleed on mobile: no border / shadow / rounded card chrome, so the
+  // preview reads as one flat surface inside the wizard rather than a card
+  // nested inside the wizard card. Section separators below still divide it.
   previewSheet: {
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    padding: spacing.lg,
-    ...(Platform.OS === 'web'
-      ? ({ boxShadow: '0 2px 8px rgba(15,23,42,0.06)' } as any)
-      : { shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 6, shadowOffset: { width: 0, height: 2 } }),
+    backgroundColor: 'transparent',
+    paddingHorizontal: 0,
+    paddingTop: 0,
   },
   previewHeader: {
     alignItems: 'center',

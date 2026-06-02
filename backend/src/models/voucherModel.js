@@ -404,15 +404,14 @@ async function getDaybook(fromDate, toDate) {
 }
 
 async function getNextVoucherNo(vchTypeId) {
+  // Each type uses its OWN configured prefix (no parent fallback). When a
+  // prefix is set → `<prefix>-<number>` (e.g. SAL-001); when none → plain
+  // zero-padded number (e.g. 001).
   const [vtRows] = await pool.execute(
-    `SELECT v.name, COALESCE(p.name, v.name) AS parent_name
-     FROM vchtype v
-     LEFT JOIN vchtype p ON v.parent_id = p.id AND v.parent_id != v.id
-     WHERE v.id = :id LIMIT 1`,
+    `SELECT prefix FROM vchtype WHERE id = :id LIMIT 1`,
     { id: vchTypeId }
   );
-  const typeName = String((vtRows[0] && vtRows[0].name) || (vtRows[0] && vtRows[0].parent_name) || 'V').trim();
-  const prefix = typeName.charAt(0).toUpperCase();
+  const prefix = String((vtRows[0] && vtRows[0].prefix) || '').trim();
 
   const [lastRows] = await pool.execute(
     `SELECT vch_no FROM vch_details
@@ -427,7 +426,8 @@ async function getNextVoucherNo(vchTypeId) {
     const m = String(lastVchNo).match(/(\d+)$/);
     if (m) nextNum = parseInt(m[1], 10) + 1;
   }
-  return `${prefix}-${String(nextNum).padStart(3, '0')}`;
+  const num = String(nextNum).padStart(3, '0');
+  return prefix ? `${prefix}-${num}` : num;
 }
 
 // Pending bill refs for a party. Both Dr and Cr balances are returned —

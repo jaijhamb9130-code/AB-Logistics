@@ -13,6 +13,8 @@ import { colors, radius, spacing, typography } from '../constants/theme';
 const ITEM_HEIGHT = 42;
 const VISIBLE_ITEMS = 7;
 const MIN_CHARS = 2;
+// Once this many chars are typed with zero matches, show a "No <label> found" hint.
+const NO_RESULT_CHARS = 3;
 
 interface Props {
   label: string;
@@ -57,18 +59,23 @@ export function AutocompleteField({
   // fires on mousedown, BEFORE blur) and clear it after the selection commits.
   const pressingRef = useRef(false);
 
-  // Exact match → show every option so user can switch. Below MIN_CHARS the
-  // list stays closed; otherwise filter by case-insensitive substring.
+  // Filter by case-insensitive substring once MIN_CHARS are typed. The list
+  // always reflects exactly what's typed — we deliberately do NOT "show all
+  // options on an exact match", so it never displays unrelated names after a
+  // full value has been entered or selected.
   const valTrim = value.trim();
   const valLower = valTrim.toLowerCase();
-  const exactMatch = valTrim !== '' && options.some((o) => o.toLowerCase() === valLower);
-  const filtered = exactMatch
-    ? options
-    : valTrim.length >= MIN_CHARS
-      ? options.filter((o) => o.toLowerCase().includes(valLower))
-      : [];
+  const filtered = valTrim.length >= MIN_CHARS
+    ? options.filter((o) => o.toLowerCase().includes(valLower))
+    : [];
 
-  const showList = focused && listOpen && filtered.length > 0;
+  // When enough has been typed but nothing matches, surface a "No <label>
+  // found" hint instead of silently hiding the dropdown. Strip a trailing
+  // required-marker " *" from the label so it reads "No Consignor found".
+  const cleanLabel = label.replace(/\s*\*\s*$/, '').trim();
+  const showNoResults =
+    focused && listOpen && filtered.length === 0 && valTrim.length >= NO_RESULT_CHARS;
+  const showList = (focused && listOpen && filtered.length > 0) || showNoResults;
 
   const handleSelect = (opt: string) => {
     onChangeText(opt);
@@ -81,6 +88,14 @@ export function AutocompleteField({
   // Wrapper around the parent's onChangeText that also reopens the list
   // whenever the user types something new.
   const handleChangeText = (v: string) => {
+    // Lock behaviour: once the field holds a COMPLETE, valid option, block any
+    // keystroke that APPENDS to it (typing more) — the user may only backspace
+    // / delete to change the value. This prevents junk like
+    // "Adani Logisticsbhus" after the entry has been selected. Deletions and
+    // replacements (shorter values) are always allowed, which re-enables typing.
+    const isCompleteValue = valTrim !== '' && options.some((o) => o.toLowerCase() === valLower);
+    const isAppending = v.length > value.length && v.toLowerCase().startsWith(valLower);
+    if (isCompleteValue && isAppending) return;
     onChangeText(v);
     setListOpen(true);
   };
@@ -115,9 +130,11 @@ export function AutocompleteField({
     if (Platform.OS !== 'web' || !showList) return;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'ArrowDown') {
+        if (filtered.length === 0) return;
         e.preventDefault();
         setHighlightIndex((i) => (i + 1) % filtered.length);
       } else if (e.key === 'ArrowUp') {
+        if (filtered.length === 0) return;
         e.preventDefault();
         setHighlightIndex((i) => (i - 1 + filtered.length) % filtered.length);
       } else if (e.key === 'Enter') {
@@ -198,6 +215,11 @@ export function AutocompleteField({
             ? ({ onMouseDown: (e: any) => e.preventDefault() } as any)
             : {})}
         >
+          {filtered.length === 0 ? (
+            <View style={[styles.item, { height: ITEM_HEIGHT }]}>
+              <Text style={styles.noResultText}>No {cleanLabel} found</Text>
+            </View>
+          ) : (
           <ScrollView
             nestedScrollEnabled
             keyboardShouldPersistTaps="handled"
@@ -233,6 +255,7 @@ export function AutocompleteField({
               </Pressable>
             ))}
           </ScrollView>
+          )}
         </View>
       ) : null}
     </View>
@@ -317,6 +340,13 @@ const styles = StyleSheet.create({
   itemTextActive: {
     color: '#FFFFFF',
     fontFamily: typography.uiBold,
+  },
+  noResultText: {
+    fontSize: 13,
+    lineHeight: 18,
+    color: colors.textMuted,
+    fontFamily: typography.ui,
+    fontStyle: 'italic',
   },
 
   // Compact variant — used by mobile bilty wizard for tight, balanced rows.

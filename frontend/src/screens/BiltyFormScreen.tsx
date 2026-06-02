@@ -143,7 +143,35 @@ export function BiltyFormScreen() {
   return <DesktopBiltyForm canSave={canSave} editingId={editingId} />;
 }
 
-function DesktopBiltyForm({ canSave, editingId }: { canSave: boolean; editingId: number | null }) {
+/**
+ * Embeddable "create bilty" form for the Vouchers screen's "Bilty" vch type.
+ * Always opens in new mode (no route params). On desktop it renders the
+ * single-page bilty form; on mobile it renders the step1 → step2 → preview →
+ * save wizard (same as the standalone mobile bilty flow). On save it navigates
+ * to the Reports (bilty list) screen.
+ */
+export function BiltyCreateFormEmbedded({ onExit }: { onExit?: () => void }) {
+  const { user } = useAuth();
+  const { isMobile } = useResponsive();
+  const navigation = useNavigation<Nav>();
+  const canSave =
+    canDoAction(user, 'bilty', 'create') || canDoAction(user, 'voucher', 'create');
+  if (isMobile) {
+    return (
+      <MobileBiltyFormScreen
+        editingId={null}
+        canSave={canSave}
+        // Close (X) returns to the voucher form (host resets the type) rather
+        // than navigating out of the page.
+        onClose={() => { if (onExit) onExit(); else navigation.goBack(); }}
+        onSaved={() => { if (onExit) onExit(); (navigation as any).navigate('BiltyList'); }}
+      />
+    );
+  }
+  return <DesktopBiltyForm canSave={canSave} editingId={null} embedded />;
+}
+
+function DesktopBiltyForm({ canSave, editingId, embedded = false }: { canSave: boolean; editingId: number | null; embedded?: boolean }) {
   const { user } = useAuth();
   const navigation = useNavigation<Nav>();
   const isEdit = editingId != null;
@@ -275,6 +303,10 @@ function DesktopBiltyForm({ canSave, editingId }: { canSave: boolean; editingId:
   // sees which voucher they're editing — re-renders as the field is edited.
   const titleBiltyNo = useWatch({ control, name: 'header.bilty_no' });
   useEffect(() => {
+    // When embedded (e.g. inside the Vouchers "Bilty" vch type), never touch
+    // the host screen's navigation header — that's what was leaking a stray
+    // "New Bilty" title onto the Vouchers page.
+    if (embedded) return;
     const suffix =
       isEdit && typeof titleBiltyNo === 'string' && titleBiltyNo.trim() !== ''
         ? ` / ${titleBiltyNo.trim()}`
@@ -283,7 +315,7 @@ function DesktopBiltyForm({ canSave, editingId }: { canSave: boolean; editingId:
       title: (isEdit ? 'Edit Bilty' : 'New Bilty') + suffix,
       headerShown: true,
     });
-  }, [navigation, isEdit, titleBiltyNo]);
+  }, [navigation, isEdit, titleBiltyNo, embedded]);
 
   // Load existing bilty when editing
   useEffect(() => {
@@ -877,16 +909,21 @@ function RowDatalist({
   //   - 2+ chars              → filter by case-insensitive substring
   const valTrim = value.trim();
   const valLower = valTrim.toLowerCase();
-  const exactMatch = valTrim !== '' && options.some((o) => o.toLowerCase() === valLower);
-  const filtered = exactMatch
-    ? options
-    : valTrim.length >= ROW_DROPDOWN_MIN_CHARS
-      ? options.filter((o) => o.toLowerCase().includes(valLower))
-      : [];
+  // Always reflect what's typed (no "show all on exact match") so the list
+  // never displays unrelated names once a full value is entered/selected.
+  const filtered = valTrim.length >= ROW_DROPDOWN_MIN_CHARS
+    ? options.filter((o) => o.toLowerCase().includes(valLower))
+    : [];
   const showList = focused && listOpen && filtered.length > 0;
 
   const handleChange = (raw: string) => {
-    onChangeText(filterFn ? filterFn(raw) : raw);
+    const next = filterFn ? filterFn(raw) : raw;
+    // Lock: once the cell holds a complete, valid option, block APPENDING more
+    // (only backspace / delete may change it). Mirrors AutocompleteField.
+    const isCompleteValue = valTrim !== '' && options.some((o) => o.toLowerCase() === valLower);
+    const isAppending = next.length > value.length && next.toLowerCase().startsWith(valLower);
+    if (isCompleteValue && isAppending) return;
+    onChangeText(next);
     setListOpen(true);
   };
   const handleSelect = (opt: string) => {

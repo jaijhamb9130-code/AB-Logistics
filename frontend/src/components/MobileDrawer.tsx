@@ -1,5 +1,5 @@
 /**
- * MobileDrawer — left slide-in navigation panel for mobile web (<768px).
+ * MobileDrawer — right slide-in navigation panel for mobile web (<768px).
  *
  * Shown when the hamburger button on the mobile TopNavBar is tapped.
  * Reuses the same route metadata as the desktop nav, but renders nav
@@ -10,6 +10,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   Animated,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -35,10 +36,19 @@ interface Props {
   onLogout: () => void;
 }
 
+// True when the item or any of its (possibly deep) descendants is the active
+// route — used to keep a collapsed parent group highlighted.
+function anyDescendantActive(item: DrawerNavItem): boolean {
+  if (!item.children || item.children.length === 0) return false;
+  return item.children.some((c) => c.active || anyDescendantActive(c));
+}
+
 export function MobileDrawer({ visible, onClose, user, items, onLogout }: Props) {
   const { width } = useWindowDimensions();
   const drawerWidth = Math.min(320, Math.max(260, width * 0.85));
-  const slideAnim = useRef(new Animated.Value(-drawerWidth)).current;
+  // Drawer slides in from the RIGHT (hamburger lives in the right corner), so
+  // it starts off-screen at +drawerWidth and animates to 0.
+  const slideAnim = useRef(new Animated.Value(drawerWidth)).current;
   const overlayAnim = useRef(new Animated.Value(0)).current;
   const [mounted, setMounted] = useState(false);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
@@ -62,7 +72,7 @@ export function MobileDrawer({ visible, onClose, user, items, onLogout }: Props)
     } else {
       Animated.parallel([
         Animated.timing(slideAnim, {
-          toValue: -drawerWidth,
+          toValue: drawerWidth,
           duration: 200,
           useNativeDriver: true,
         }),
@@ -80,8 +90,64 @@ export function MobileDrawer({ visible, onClose, user, items, onLogout }: Props)
   const initials = (user?.username ?? 'AD').slice(0, 2).toUpperCase();
   const roleLabel = user?.role === 'admin' ? 'Administrator' : 'Staff';
 
+  // Recursive row renderer. depth 0 = top-level (Dashboard, Masters, …);
+  // each nested level reuses the sub-row style and indents one more step via
+  // the wrapping subList. Tapping a row with children toggles its expansion;
+  // a leaf row fires its onPress.
+  const renderRows = (rows: DrawerNavItem[], depth: number): React.ReactNode =>
+    rows.map((item) => {
+      const hasChildren = !!(item.children && item.children.length > 0);
+      const isExpanded = !!expanded[item.key];
+      const showActive = item.active || anyDescendantActive(item);
+      const isTop = depth === 0;
+      return (
+        <View key={item.key}>
+          <Pressable
+            onPress={() => {
+              if (hasChildren) {
+                setExpanded((s) => ({ ...s, [item.key]: !s[item.key] }));
+              } else if (item.onPress) {
+                item.onPress();
+              }
+            }}
+            style={({ pressed }) => [
+              isTop ? styles.navRow : styles.subRow,
+              showActive && (isTop ? styles.navRowActive : styles.subRowActive),
+              pressed && styles.navRowPressed,
+            ]}
+            accessibilityRole="button"
+          >
+            <View style={[styles.navDot, showActive && styles.navDotActive]} />
+            <Text
+              style={[
+                isTop ? styles.navLabel : styles.subLabel,
+                showActive && styles.navLabelActive,
+              ]}
+            >
+              {item.label}
+            </Text>
+            {hasChildren ? (
+              <Text style={styles.navChevron}>{isExpanded ? '▴' : '▾'}</Text>
+            ) : null}
+          </Pressable>
+
+          {hasChildren && isExpanded ? (
+            <View style={styles.subList}>{renderRows(item.children!, depth + 1)}</View>
+          ) : null}
+        </View>
+      );
+    });
+
   return (
-    <View style={StyleSheet.absoluteFillObject} pointerEvents="box-none">
+    <View
+      style={[
+        StyleSheet.absoluteFillObject,
+        // On web, pin to the viewport (not the document) so a tall page behind
+        // the drawer can't scroll it or leave white space below the panel.
+        Platform.OS === 'web' ? ({ position: 'fixed' } as any) : null,
+      ]}
+      pointerEvents="box-none"
+    >
       <Animated.View
         style={[styles.overlay, { opacity: overlayAnim }]}
         pointerEvents={visible ? 'auto' : 'none'}
@@ -127,66 +193,15 @@ export function MobileDrawer({ visible, onClose, user, items, onLogout }: Props)
 
         <View style={styles.divider} />
 
-        {/* Nav list */}
-        <ScrollView contentContainerStyle={styles.navList} showsVerticalScrollIndicator={false}>
-          {items.map((item) => {
-            const hasChildren = !!(item.children && item.children.length > 0);
-            const isExpanded = !!expanded[item.key];
-            const childActive =
-              hasChildren && item.children!.some((c) => c.active);
-            const showActive = item.active || childActive;
-            return (
-              <View key={item.key}>
-                <Pressable
-                  onPress={() => {
-                    if (hasChildren) {
-                      setExpanded((s) => ({ ...s, [item.key]: !s[item.key] }));
-                    } else if (item.onPress) {
-                      item.onPress();
-                    }
-                  }}
-                  style={({ pressed }) => [
-                    styles.navRow,
-                    showActive && styles.navRowActive,
-                    pressed && styles.navRowPressed,
-                  ]}
-                  accessibilityRole="button"
-                >
-                  <View style={[styles.navDot, showActive && styles.navDotActive]} />
-                  <Text style={[styles.navLabel, showActive && styles.navLabelActive]}>
-                    {item.label}
-                  </Text>
-                  {hasChildren ? (
-                    <Text style={styles.navChevron}>{isExpanded ? '▴' : '▾'}</Text>
-                  ) : null}
-                </Pressable>
-
-                {hasChildren && isExpanded ? (
-                  <View style={styles.subList}>
-                    {item.children!.map((c) => (
-                      <Pressable
-                        key={c.key}
-                        onPress={c.onPress}
-                        style={({ pressed }) => [
-                          styles.subRow,
-                          c.active && styles.subRowActive,
-                          pressed && styles.navRowPressed,
-                        ]}
-                        accessibilityRole="button"
-                      >
-                        <View style={[styles.navDot, c.active && styles.navDotActive]} />
-                        <Text
-                          style={[styles.subLabel, c.active && styles.navLabelActive]}
-                        >
-                          {c.label}
-                        </Text>
-                      </Pressable>
-                    ))}
-                  </View>
-                ) : null}
-              </View>
-            );
-          })}
+        {/* Nav list — rendered recursively so nested sub-groups (e.g.
+            Masters → Ledger Master → Customers) expand just like the desktop
+            dropdown flyouts. */}
+        <ScrollView
+          style={styles.navScroll}
+          contentContainerStyle={styles.navList}
+          showsVerticalScrollIndicator={false}
+        >
+          {renderRows(items, 0)}
         </ScrollView>
 
         {/* Logout */}
@@ -210,15 +225,15 @@ const styles = StyleSheet.create({
   panel: {
     position: 'absolute',
     top: 0,
-    left: 0,
+    right: 0,
     bottom: 0,
     backgroundColor: '#FFFFFF',
-    borderRightWidth: 1,
-    borderRightColor: '#E2E8F0',
+    borderLeftWidth: 1,
+    borderLeftColor: '#E2E8F0',
     shadowColor: '#000',
     shadowOpacity: 0.18,
     shadowRadius: 24,
-    shadowOffset: { width: 6, height: 0 },
+    shadowOffset: { width: -6, height: 0 },
     elevation: 30,
     flexDirection: 'column',
   },
@@ -308,6 +323,13 @@ const styles = StyleSheet.create({
     marginHorizontal: 18,
   },
 
+  // flex:1 + minHeight:0 lets the nav list take the space between the identity
+  // header and the LOGOUT button and scroll INTERNALLY when long (Masters
+  // expanded), instead of growing the whole panel past the viewport.
+  navScroll: {
+    flex: 1,
+    minHeight: 0,
+  },
   navList: {
     paddingHorizontal: 10,
     paddingTop: 12,

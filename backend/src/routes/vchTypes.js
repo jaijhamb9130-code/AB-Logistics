@@ -12,6 +12,7 @@ router.use(authMw);
 router.get('/',       requirePermission('voucher.view'),   ctrl.list);
 router.get('/:id',    requirePermission('voucher.view'),   ctrl.get);
 router.post('/',      requirePermission('voucher.create'), ctrl.create);
+router.put('/:id/prefix', requirePermission('voucher.edit'), ctrl.setPrefix);
 router.put('/:id',    requirePermission('voucher.edit'),   ctrl.update);
 router.delete('/:id', requirePermission('voucher.delete'), ctrl.remove);
 

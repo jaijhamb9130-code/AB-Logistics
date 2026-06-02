@@ -147,16 +147,7 @@ export function BiltyScreen() {
   return (
     <View style={styles.wrap}>
       <View style={styles.header}>
-        <Text style={styles.title}>Bilty</Text>
-        {canCreate ? (
-          <View style={styles.headerBtn}>
-            <ButtonPrimary
-              title="New Bilty"
-              onPress={() => navigation.navigate('BiltyForm')}
-              testID="new-bilty-btn"
-            />
-          </View>
-        ) : null}
+        <Text style={styles.title}>Reports</Text>
       </View>
 
       {err ? (
@@ -212,7 +203,7 @@ export function BiltyScreen() {
         >
           {(filteredRows ?? []).length === 0 ? (
             <Text style={styles.emptyText}>
-              {query ? 'No bilties match your search.' : 'No bilties yet — tap New Bilty to create one.'}
+              {query ? 'No bilties match your search.' : 'No bilties yet. Create one from Vouchers → Bilty.'}
             </Text>
           ) : (
             (filteredRows ?? []).map((r) => (
@@ -231,7 +222,7 @@ export function BiltyScreen() {
             rows={rows}
             keyExtractor={(r) => r.id}
             onRowPress={(r) => navigation.navigate('BiltyDetail', { id: r.id })}
-            emptyLabel="No bilties yet — click New Bilty to create one."
+            emptyLabel="No bilties yet. Create one from Vouchers → Bilty."
             testID="bilty-table"
           />
         </View>
