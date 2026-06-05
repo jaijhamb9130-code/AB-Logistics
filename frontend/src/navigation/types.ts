@@ -17,7 +17,6 @@ export type AppTabsParamList = {
   // Customers is scoped to the Sundry Debtors group; OtherLedgers shows all.
   Customers: undefined;
   OtherLedgers: undefined;
-  OwnerMaster: undefined;
   AgentMaster: undefined;
   ItemMaster: undefined;
   ItemGroup: undefined;
@@ -25,7 +24,6 @@ export type AppTabsParamList = {
   VehicleMaster: undefined;
   DestinationMaster: undefined;
   BranchMaster: undefined;
-  ZoneMaster: undefined;
   // Top-level Ledger Groups admin tab — second-last (just before Users).
   LedgerGroups: undefined;
   // Voucher Type master — lives in the Masters dropdown.
@@ -46,7 +44,10 @@ export type BiltyStackParamList = {
   // user-meaningful number that drives the URL — /edit/bilty/:bilty_no.
   // The form loads by id when present, otherwise resolves bilty_no → id
   // via /api/bilty/by-no/:no.
-  BiltyForm: { id?: number; bilty_no?: string } | undefined;
+  // `returnTo: 'daybook'` makes save/cancel return to the Billing → Daybook
+  // screen (used when the form is opened from a Day Book row), instead of the
+  // default BiltyList / dashboard landing.
+  BiltyForm: { id?: number; bilty_no?: string; returnTo?: 'daybook' } | undefined;
   BiltyDetail: { id: number };
 };
 
@@ -65,6 +66,11 @@ export type FreightStackParamList = {
  */
 export type BillingStackParamList = {
   VouchersList: undefined;
-  VoucherForm: { id?: number; editVoucher?: { id: number } } | undefined;
-  Daybook: { date?: string } | undefined;
+  // `id` edits a generic voucher; `biltyEditId` edits a Bilty in-place on the
+  // Vouchers page (Bilty vch type), used when a Bilty / Freight Journal row is
+  // edited from the Day Book.
+  VoucherForm: { id?: number; biltyEditId?: number; editVoucher?: { id: number } } | undefined;
+  // `notice` shows a one-shot success toast on arrival (e.g. after a voucher
+  // update navigates back here).
+  Daybook: { date?: string; notice?: string } | undefined;
 };

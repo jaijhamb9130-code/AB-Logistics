@@ -12,7 +12,7 @@
  * Visual structure mirrors InputField so it slots into the same forms.
  */
 
-import React, { forwardRef, useImperativeHandle, useRef, useState } from 'react';
+import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -56,7 +56,26 @@ export const PrefixedNumberInput = forwardRef<PrefixedNumberHandle, Props>(funct
 }: Props, ref) {
   const [focused, setFocused] = useState(false);
   const inputRef = useRef<TextInput>(null);
+  // Stable, unique field name per instance — defeats Chrome's autofill /
+  // form-restoration without changing on every render.
+  const nameRef = useRef(`bn_${Math.random().toString(36).slice(2, 8)}`);
   useImperativeHandle(ref, () => ({ focus: () => inputRef.current?.focus?.() }), []);
+
+  // Bulletproof autofill/restore opt-out: set the attributes straight on the DOM
+  // input (bypasses RNW prop normalisation). A unique `name` means Chrome has no
+  // saved history for this field, so it can't refill an old number on reload.
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const el: any = inputRef.current;
+    if (el && typeof el.setAttribute === 'function') {
+      el.setAttribute('autocomplete', 'off');
+      el.setAttribute('autocorrect', 'off');
+      el.setAttribute('autocapitalize', 'off');
+      el.setAttribute('name', nameRef.current);
+      el.setAttribute('data-lpignore', 'true');
+      el.setAttribute('data-1p-ignore', 'true');
+    }
+  }, []);
   const hasPrefix = !!(prefix && prefix.trim());
   const lead = hasPrefix ? `${prefix}-` : '';
 
@@ -109,6 +128,12 @@ export const PrefixedNumberInput = forwardRef<PrefixedNumberHandle, Props>(funct
           keyboardType="number-pad"
           placeholder={placeholder}
           testID={testID}
+          // Stop the browser restoring the last typed number on reload (that's
+          // what made an old number reappear over the fetched next-number). The
+          // DOM effect above reinforces this with a unique field name.
+          autoComplete="off"
+          autoCorrect={false}
+          spellCheck={false}
           {...(rest as any)}
         />
       </View>

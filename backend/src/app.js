@@ -21,8 +21,6 @@ const itemGroupRouter = require('./routes/itemGroup');
 const itemCategoryRouter = require('./routes/itemCategory');
 const vchTypesRouter = require('./routes/vchTypes');
 const vouchersRouter = require('./routes/vouchers');
-const zoneRouter = require('./routes/zone');
-const ownerRouter = require('./routes/owner');
 const agentRouter = require('./routes/agent');
 const branchRouter = require('./routes/branch');
 
@@ -79,8 +77,6 @@ v1.use('/item-groups', itemGroupRouter);
 v1.use('/item-categories', itemCategoryRouter);
 v1.use('/vch-types', vchTypesRouter);
 v1.use('/vouchers', vouchersRouter);
-v1.use('/zones', zoneRouter);
-v1.use('/owners', ownerRouter);
 v1.use('/agents', agentRouter);
 v1.use('/branches', branchRouter);
 

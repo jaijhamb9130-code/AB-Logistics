@@ -31,6 +31,8 @@ interface Props extends Omit<TextInputProps, 'style'> {
   fieldType?: FieldType;
   /** When true, render with mobile-form compact dimensions (38px input, 11px uppercase label, no marginBottom). */
   compact?: boolean;
+  /** Optional style override for the inner text input (e.g. larger/bold value text). */
+  inputStyle?: TextInputProps['style'];
   /** Web-only data-* attributes forwarded to the input (used for guided-entry tagging). */
   dataSet?: Record<string, string>;
 }
@@ -72,6 +74,7 @@ export const InputField = forwardRef<InputFieldHandle, Props>(function InputFiel
   testID,
   fieldType = 'text',
   compact,
+  inputStyle,
   ...rest
 }: Props, ref) {
   const [focused, setFocused] = useState(false);
@@ -123,6 +126,7 @@ export const InputField = forwardRef<InputFieldHandle, Props>(function InputFiel
             compact && styles.inputCompact,
             isNumeric && styles.inputNumeric,
             Platform.OS === 'web' && ({ outlineStyle: 'none', borderWidth: 0 } as any),
+            inputStyle,
           ]}
           value={displayValue}
           onChangeText={handleChange}

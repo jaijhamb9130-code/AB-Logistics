@@ -26,11 +26,15 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { ButtonPrimary } from '../components/ButtonPrimary';
 import { Loader } from '../components/Loader';
 import { Modal } from '../components/Modal';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import { PrefixedNumberInput } from '../components/PrefixedNumberInput';
 import { SelectDropdown } from '../components/SelectDropdown';
+import { AutocompleteField } from '../components/AutocompleteField';
+import { Toast } from '../components/Toast';
 import { colors, radius, spacing, text, typography } from '../constants/theme';
 import { voucherService } from '../services/voucherService';
 import { vchTypeService } from '../services/vchTypeService';
+import { biltyService } from '../services/biltyService';
 import { BiltyCreateFormEmbedded } from './BiltyFormScreen';
 import { ledgerMasterService } from '../services/ledgerMasterService';
 import { itemMasterService } from '../services/itemMasterService';
@@ -40,6 +44,7 @@ import type {
   OtherLedger,
   PendingRef,
   VoucherDetail,
+  BiltyBudget,
 } from '../../../shared/types/voucher';
 import type { ItemMasterItem } from '../../../shared/types/itemMaster';
 import type { LedgerMasterSearchResult } from '../../../shared/types/ledgerMaster';
@@ -158,10 +163,16 @@ export function VoucherFormScreen() {
   const route = useRoute<Route>();
   const editId = route.params?.id ?? null;
   const isEdit = editId !== null;
+  // Editing a Bilty in-place on the Vouchers page (from a Day Book Bilty /
+  // Freight Journal row). Renders the embedded Bilty form in edit mode.
+  const biltyEditId = route.params?.biltyEditId ?? null;
+  // Any edit context — guards voucher-type switching (arrows disabled; rail
+  // click asks for confirmation before discarding the loaded voucher).
+  const inEditMode = isEdit || biltyEditId !== null;
   const { isMobile } = useResponsive();
 
-  const canSave = isEdit
-    ? canDoAction(currentUser, 'voucher', 'edit')
+  const canSave = (isEdit || biltyEditId !== null)
+    ? canDoAction(currentUser, 'voucher', 'edit') || canDoAction(currentUser, 'bilty', 'edit')
     : canDoAction(currentUser, 'voucher', 'create');
 
   // The voucher's quick-add-party flow creates Sundry Debtors customers,
@@ -187,6 +198,15 @@ export function VoucherFormScreen() {
   // Independent of `typeMenuOpen` (the family dropdown).
   const [primaryMenuOpen, setPrimaryMenuOpen] = useState(false);
 
+  // Bilty sub-type picker — only shown when the Bilty primary is active. Lets
+  // the user pick "Bilty" itself or one of its child types. The pick drives
+  // ONLY the prefix on the embedded bilty's "Bilty No" field (no prefix → the
+  // prefix box disappears and numbering starts directly).
+  // The picker's text is the single source of truth. The selected type (and so
+  // the prefix/branch/key) is DERIVED from it — blank or non-matching text means
+  // "no type", which clears the bilty no/branch and drops the prefix.
+  const [biltyTypeText, setBiltyTypeText] = useState('');
+
   // ── Party
   const [partyId, setPartyId] = useState<number | null>(null);
   const [partyName, setPartyName] = useState('');
@@ -203,6 +223,34 @@ export function VoucherFormScreen() {
 
   // ── Journal mode rows
   const [journalRows, setJournalRows] = useState<JournalRow[]>([emptyJournalRow(), emptyJournalRow()]);
+
+  // ── Advance / Fuel sub-mode (Contra/Journal/Payment/Receipt only).
+  // 0 = normal, 1 = advance, 2 = fuel. When advance/fuel is active, a Bilty No
+  // search field appears; selecting a bilty auto-fills + locks its owner into
+  // journal row 1.
+  const [biltyMode, setBiltyMode] = useState<0 | 1 | 2>(0);
+  const [biltyModeMenuOpen, setBiltyModeMenuOpen] = useState(false);
+  // Grey-highlight index for keyboard nav inside the Mode dropdown (0/1/2).
+  const [biltyModeHighlight, setBiltyModeHighlight] = useState(0);
+  const [biltyList, setBiltyList] = useState<{ id: number; bilty_no: string }[]>([]);
+  const [biltyNoText, setBiltyNoText] = useState('');
+  // Advance: true once a bilty is picked and its truck is locked into row 1.
+  const [biltyLocked, setBiltyLocked] = useState(false);
+  // Mirror of biltyLocked readable inside effects without widening their deps.
+  const biltyLockedRef = useRef(false);
+  useEffect(() => { biltyLockedRef.current = biltyLocked; }, [biltyLocked]);
+  // Id of the currently selected bilty (both modes). Fuel uses it to switch
+  // row 1 into the Fuel-group ledger dropdown once a bilty is chosen.
+  const [selectedBiltyId, setSelectedBiltyId] = useState<number | null>(null);
+  // Advance/Fuel spend cap for the selected bilty (transport total / used /
+  // remaining). Drives the on-form banner and the client-side save block;
+  // the same cap is enforced server-side.
+  const [biltyBudget, setBiltyBudget] = useState<BiltyBudget | null>(null);
+  // True while an edit is being hydrated with a restored bilty — keeps the
+  // advance/fuel effect from resetting/relocking the already-loaded ledger
+  // rows. Cleared the moment the user interacts (types a bilty no / changes
+  // mode), so normal behaviour resumes.
+  const suppressBiltyHydrateRef = useRef(false);
 
   // ── Bill allocation
   const [billRefs, setBillRefs] = useState<BillRefRow[]>([]);
@@ -225,10 +273,16 @@ export function VoucherFormScreen() {
   // `railIdx`            — which rail item shows the GREY highlight (the
   //                       arrow cursor's position).
   const [committedVchTypeId, setCommittedVchTypeId] = useState<number | null>(null);
+  // In edit mode, a rail click stages the target type here and opens a confirm
+  // dialog (switching discards the loaded voucher) instead of switching outright.
+  const [pendingTypeId, setPendingTypeId] = useState<number | null>(null);
   const [railIdx, setRailIdx] = useState<number>(-1);
   const railRefs = useRef<Array<any>>([]);
   // Ref to the first form field — focused after Enter commits a vch-type pick.
   const firstFieldRef = useRef<any>(null);
+  // Ref to the Bilty-type picker — focused (instead of firstFieldRef) when the
+  // committed type is Bilty, so the rail's Enter lands on the Bilty Type field.
+  const biltyTypeRef = useRef<{ focus: () => void } | null>(null);
   // Timestamp of the last rail commit. The Voucher Type Pressable checks this
   // and ignores any press within ~250ms — that protects against the same Enter
   // keypress (or its keyup / browser repeat) re-triggering once focus lands.
@@ -260,6 +314,13 @@ export function VoucherFormScreen() {
     setLines([emptyLine()]);
     setLedgerRows([]);
     setJournalRows([emptyJournalRow(), emptyJournalRow()]);
+    setBiltyMode(0);
+    setBiltyModeMenuOpen(false);
+    setBiltyNoText('');
+    setBiltyLocked(false);
+    biltyLockedRef.current = false;
+    setSelectedBiltyId(null);
+    setBiltyBudget(null);
     setBillRefs([]);
     setBillOpen(false);
     setPendingRefs([]);
@@ -316,6 +377,10 @@ export function VoucherFormScreen() {
   const [loading, setLoading] = useState(isEdit);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // One-shot success toast shown on the form after a create (the form stays
+  // open for the next entry). Updates navigate to the Daybook and show the
+  // toast there instead.
+  const [notice, setNotice] = useState<string | null>(null);
 
   // ── Derived
   const currentVchType = vchTypes.find((t) => t.id === vchTypeId) || null;
@@ -333,12 +398,163 @@ export function VoucherFormScreen() {
   // When the Bilty vch type is selected, the form box renders the full bilty
   // creation form instead of the normal voucher entry UI.
   const isBilty = (currentVchType?.name ?? '').toLowerCase() === 'bilty';
+  // Bilty + its children (Freight Journal is already filtered out of vchTypes).
+  // A primary self-references (parent_id === id), so filtering on the Bilty
+  // primary's id yields "Bilty" plus every child type under it.
+  const biltyPrimary = vchTypes.find((t) => t.parent_id === t.id && t.name.toLowerCase() === 'bilty') || null;
+  const biltyPrimaryId = biltyPrimary?.id ?? null;
+  const biltyFamily = biltyPrimaryId !== null ? vchTypes.filter((t) => t.parent_id === biltyPrimaryId) : [];
+  // Derived from the picker text: exact (case-insensitive) match → that type;
+  // blank or non-matching → null (no prefix, Bilty No numeric, Branch normal).
+  const selectedBiltyType =
+    biltyFamily.find((t) => t.name.toLowerCase() === biltyTypeText.trim().toLowerCase()) ?? null;
+  const biltySubTypeId = selectedBiltyType?.id ?? null;
+  // Prefix fed into the embedded bilty form. null/'' → no prefix box.
+  const biltySelectedPrefix = selectedBiltyType?.prefix ?? null;
+  // Branch fed into the embedded bilty form. Truthy → auto-fill + lock Branch.
+  const biltySelectedBranch = selectedBiltyType?.branch ?? null;
   // Mode is driven by deemed_positive (the canonical field children INHERIT),
   // not the type name — so a custom child like "qoatation" under Receipt
   // correctly renders journal mode. null = journal (Dr/Cr ledger table),
   // YES = sales-like inventory, NO = purchase-like inventory.
   const isJournalType = currentVchType ? currentVchType.deemed_positive === null : false;
   const isPurchaseMode = currentVchType ? currentVchType.deemed_positive === 'NO' : false;
+
+  // ── Advance / Fuel eligibility — JOURNAL only. The Mode dropdown + Bilty No
+  // field (and the bilty-truck row-1 lock) render ONLY for Journal vouchers.
+  // Contra / Payment / Receipt (and every other type) are left as plain
+  // double-entry / inventory vouchers with no bilty mechanism.
+  const currentPrimaryName = (vchTypes.find((t) => t.id === familyRootId)?.name ?? '').toLowerCase();
+  const biltyEligible = isJournalType && currentPrimaryName === 'journal';
+
+  // Switch advance/fuel mode. Clears any in-progress bilty selection and
+  // unlocks row 1 so the form returns to a clean state for the new mode.
+  const selectBiltyMode = (v: 0 | 1 | 2) => {
+    // User-driven mode change — resume normal advance/fuel behaviour.
+    suppressBiltyHydrateRef.current = false;
+    setBiltyMode(v);
+    setBiltyModeMenuOpen(false);
+    setBiltyNoText('');
+    setSelectedBiltyId(null);
+    if (biltyLockedRef.current) {
+      setBiltyLocked(false);
+      biltyLockedRef.current = false;
+    }
+    // Always reset the rows so the previous mode's row 1 doesn't carry over.
+    setJournalRows((prev) => {
+      const n = [...prev];
+      n[0] = emptyJournalRow();
+      return n;
+    });
+  };
+
+  // Lazy-load the bilty list the first time advance/fuel is entered. The list
+  // feeds the Bilty No search dropdown (whole bilty no, prefix included) and
+  // maps a picked number back to its id for the owner lookup.
+  useEffect(() => {
+    if (!biltyEligible || biltyMode === 0 || biltyList.length > 0) return;
+    biltyService.list()
+      .then((rows) => setBiltyList(rows.map((r) => ({ id: r.id, bilty_no: r.bilty_no }))))
+      .catch(() => { /* ignore — field just won't suggest */ });
+  }, [biltyEligible, biltyMode, biltyList.length]);
+
+  // React to the picked Bilty No.
+  //  • Advance (mode 1): fetch the bilty's truck ledger and lock it into row 1.
+  //  • Fuel (mode 2): just record the bilty id — row 1 becomes a dropdown
+  //    restricted to the "Fuel" ledger group, row 2 stays the full ledger list.
+  // Clearing / changing to a non-match resets row 1 to an empty, editable row.
+  useEffect(() => {
+    if (!biltyEligible || biltyMode === 0) return;
+    // Edit hydration restores the bilty (and its rows) programmatically — don't
+    // let this effect reset/relock those rows. The selection is set directly in
+    // the hydrate effect; this just stands down until the user interacts.
+    if (suppressBiltyHydrateRef.current) return;
+    const q = biltyNoText.trim().toLowerCase();
+    const match = q ? biltyList.find((b) => b.bilty_no.toLowerCase() === q) : null;
+
+    const resetRow1 = () => {
+      setSelectedBiltyId(null);
+      if (biltyLockedRef.current) { setBiltyLocked(false); biltyLockedRef.current = false; }
+      setJournalRows((prev) => { const n = [...prev]; n[0] = emptyJournalRow(); return n; });
+    };
+
+    if (!match) {
+      // Only unlock/reset row 1 when a bilty was actually locked or selected.
+      // On an Advance/Fuel-mode EDIT, hydration restores both ledger rows while
+      // the Bilty No search starts empty — an empty search must NOT be read as
+      // "user cleared the bilty", or it would wipe the hydrated row 1.
+      if (biltyLockedRef.current || selectedBiltyId !== null) resetRow1();
+      return;
+    }
+    setSelectedBiltyId(match.id);
+
+    if (biltyMode === 2) {
+      // Fuel: no auto-fill/lock — clear row 1 so the user picks from the Fuel
+      // group dropdown (the row's groupFilter does the restricting).
+      setError(null);
+      if (biltyLockedRef.current) { setBiltyLocked(false); biltyLockedRef.current = false; }
+      setJournalRows((prev) => { const n = [...prev]; n[0] = emptyJournalRow(); return n; });
+      return;
+    }
+
+    // Advance: lock the truck (vehicle ledger) into row 1.
+    let cancelled = false;
+    voucherService.biltyVehicleLedger(match.id)
+      .then((res) => {
+        if (cancelled) return;
+        if (res.ledger_id) {
+          setError(null);
+          setJournalRows((prev) => {
+            const n = [...prev];
+            const base = n[0] ?? emptyJournalRow();
+            n[0] = {
+              ...base,
+              drOrCr: 'Dr',
+              ledger_id: res.ledger_id!,
+              ledger_name: res.ledger_name ?? '',
+              search: res.ledger_name ?? '',
+            };
+            return n;
+          });
+          setBiltyLocked(true);
+          biltyLockedRef.current = true;
+        } else {
+          setBiltyLocked(false);
+          biltyLockedRef.current = false;
+          setError('This bilty has no truck on record.');
+        }
+      })
+      .catch(() => { if (!cancelled) setError('Could not load the bilty truck.'); });
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [biltyNoText, biltyMode, biltyEligible, biltyList]);
+
+  // Restore the Bilty No text for display on edit once the bilty list loads.
+  // Runs only while hydrating a restored selection — the advance/fuel effect is
+  // suppressed, so setting the text here won't disturb the hydrated rows.
+  useEffect(() => {
+    if (!suppressBiltyHydrateRef.current || selectedBiltyId == null) return;
+    if (biltyList.length === 0) return;
+    const b = biltyList.find((x) => x.id === selectedBiltyId);
+    if (b) setBiltyNoText(b.bilty_no);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedBiltyId, biltyList]);
+
+  // Fetch the Advance/Fuel spend cap whenever the selected bilty changes (both
+  // modes share one Transport-Total pool). On edit, exclude this voucher's own
+  // spend so the remaining is measured against everyone else. Cleared when no
+  // bilty is selected or the mode leaves Advance/Fuel.
+  useEffect(() => {
+    if (!biltyEligible || biltyMode === 0 || selectedBiltyId == null) {
+      setBiltyBudget(null);
+      return;
+    }
+    let cancelled = false;
+    voucherService.biltyBudget(selectedBiltyId, isEdit ? editId : null)
+      .then((b) => { if (!cancelled) setBiltyBudget(b); })
+      .catch(() => { if (!cancelled) setBiltyBudget(null); });
+    return () => { cancelled = true; };
+  }, [selectedBiltyId, biltyEligible, biltyMode, isEdit, editId]);
 
   // The voucher form renders its own top chrome, so the stack's navigation
   // header is unwanted. Re-assert headerShown:false whenever `isBilty` toggles —
@@ -347,6 +563,20 @@ export function VoucherFormScreen() {
   useEffect(() => {
     navigation.setOptions?.({ headerShown: false });
   }, [navigation, isBilty]);
+
+  // Editing a Bilty in-place (from a Day Book Bilty / Freight Journal row):
+  // lock the rail + form to the Bilty primary type once the voucher types load,
+  // so the embedded Bilty edit form renders instead of the generic voucher UI.
+  useEffect(() => {
+    if (biltyEditId == null || biltyPrimaryId == null) return;
+    setVchTypeId(biltyPrimaryId);
+    setCommittedVchTypeId(biltyPrimaryId);
+  }, [biltyEditId, biltyPrimaryId]);
+
+  // The Bilty Type picker starts BLANK — no auto-default. Until the user picks a
+  // type, there's no prefix (Bilty No starts numeric) and the field is skippable.
+  // The selected type is derived from the text (above), so no sync effect is
+  // needed — clearing the text immediately clears the type/prefix/branch.
 
   // ── Load master data on mount
   useEffect(() => {
@@ -357,9 +587,10 @@ export function VoucherFormScreen() {
         // type rail / dropdown regardless of its parent_id in the DB.
         const vts = all.filter((t) => t.name !== 'Freight Journal');
         setVchTypes(vts);
-        if (!isEdit && vchTypeId === null) {
+        if (!isEdit && biltyEditId === null && vchTypeId === null) {
           // Default landing voucher type = Sales — matches the previous behaviour
-          // before the layout rewrite.
+          // before the layout rewrite. Skipped when editing a bilty in-place
+          // (the Bilty type is selected by its own effect).
           const sales = vts.find((t) => t.name === 'Sales' && t.is_system) || vts[0];
           if (sales) setVchTypeId(sales.id);
         }
@@ -392,6 +623,15 @@ export function VoucherFormScreen() {
       setVchDate(iso);
       setVchDateText(fmtDateDDMMYYYY(iso));
       setRemark(v.remark || '');
+      const mode = v.bilty_mode === 1 || v.bilty_mode === 2 ? v.bilty_mode : 0;
+      setBiltyMode(mode);
+      // Restore the bilty picked in Advance/Fuel mode. Suppress the advance/fuel
+      // row effect so it doesn't clobber the hydrated rows; the Bilty No text is
+      // resolved for display once the bilty list loads (effect below).
+      if (mode !== 0 && v.bilty_id) {
+        suppressBiltyHydrateRef.current = true;
+        setSelectedBiltyId(v.bilty_id);
+      }
       setPartyId(v.ledger_master_id);
       setPartyName(v.party_name || '');
 
@@ -499,8 +739,16 @@ export function VoucherFormScreen() {
     if (types.length === 0) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented) return;
-      // The Voucher Type dropdown owns the arrow keys while it's open.
-      if (typeMenuOpen) return;
+      // While EDITING a voucher, the type must not be changed by arrows — the
+      // user has to deliberately click another rail item, which then asks for
+      // confirmation before discarding the loaded voucher.
+      if (inEditMode) return;
+      // A dropdown owns the arrow keys while it's open — the Voucher Type
+      // dropdown and the Mode (Normal/Advance/Fuel) dropdown each have their
+      // own capture-phase handler, so the rail must stand down while either is
+      // open (otherwise arrows would swap the whole voucher type out from under
+      // an open menu).
+      if (typeMenuOpen || biltyModeMenuOpen) return;
       if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
       const a = document.activeElement as HTMLElement | null;
       // Block arrows only when the user is actively typing in a text field.
@@ -521,7 +769,7 @@ export function VoucherFormScreen() {
     // and call preventDefault, which we honour above.
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [vchTypes, vchTypeId, typeMenuOpen, isMobile]);
+  }, [vchTypes, vchTypeId, typeMenuOpen, biltyModeMenuOpen, isMobile, inEditMode]);
 
   // Web keyboard nav for the Voucher Type dropdown (the family list). Active
   // only while the menu is open. Capture phase so it wins over the rail
@@ -556,6 +804,37 @@ export function VoucherFormScreen() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [typeMenuOpen]);
 
+  // Web keyboard nav for the Mode dropdown (Normal/Advance/Fuel). Active only
+  // while the menu is open. Capture phase so it wins over the rail handler —
+  // ArrowUp/Down move WITHIN the dropdown, Enter commits, Escape closes.
+  useEffect(() => {
+    if (Platform.OS !== 'web' || isMobile || !biltyModeMenuOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setBiltyModeHighlight((i) => (i + 1) % 3);
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setBiltyModeHighlight((i) => (i - 1 + 3) % 3);
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        selectBiltyMode(biltyModeHighlight as 0 | 1 | 2);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        setBiltyModeMenuOpen(false);
+      }
+    };
+    document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [biltyModeMenuOpen, biltyModeHighlight, isMobile]);
+
+  // When the Mode dropdown opens, start the highlight on the current mode.
+  useEffect(() => {
+    if (biltyModeMenuOpen) setBiltyModeHighlight(biltyMode);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [biltyModeMenuOpen]);
+
   // Commit a rail pick — flip the red active mark and jump cursor to the
   // first form field. Triggered on mouse click OR Enter on a focused rail
   // item (Pressable maps Enter → onPress via accessibilityRole="button").
@@ -563,7 +842,46 @@ export function VoucherFormScreen() {
     lastRailCommitRef.current = Date.now();
     setVchTypeId(id);
     setCommittedVchTypeId(id);
-    setTimeout(() => firstFieldRef.current?.focus?.(), 0);
+    // If the committed type is Bilty (or one of its children), land the cursor
+    // on the Bilty Type picker; otherwise on the normal first form field.
+    const picked = vchTypes.find((t) => t.id === id);
+    const pickedRoot = picked ? (picked.parent_id ?? picked.id) : null;
+    const isBiltyPick = biltyPrimaryId !== null && pickedRoot === biltyPrimaryId;
+    if (isBiltyPick) {
+      // Start the Bilty Type picker blank every time Bilty is chosen — no prefix
+      // until the user actually picks a type.
+      setBiltyTypeText('');
+    }
+    setTimeout(() => {
+      if (isBiltyPick) biltyTypeRef.current?.focus?.();
+      else firstFieldRef.current?.focus?.();
+    }, 0);
+  };
+
+  // Rail-click entry point. While EDITING a voucher, switching to a different
+  // voucher type would discard the loaded entry, so stage the pick and ask for
+  // confirmation first. Outside edit mode it commits immediately.
+  const onRailSelect = (id: number) => {
+    if (inEditMode) {
+      const picked = vchTypes.find((t) => t.id === id);
+      const pickedRoot = picked ? (picked.parent_id ?? picked.id) : null;
+      // Only guard a genuine type change — re-picking the current type is a no-op.
+      if (pickedRoot !== committedRootId) {
+        setPendingTypeId(id);
+        return;
+      }
+    }
+    selectVchType(id);
+  };
+
+  // Confirmed in the dialog: abandon the loaded voucher's data and switch to the
+  // chosen type with a clean slate (edit mode doesn't auto-reset on type change).
+  const confirmTypeChange = () => {
+    const id = pendingTypeId;
+    setPendingTypeId(null);
+    if (id == null) return;
+    resetVoucherForm();
+    selectVchType(id);
   };
 
   // Web keyboard nav for the party dropdown — capture-phase listener so the
@@ -649,6 +967,26 @@ export function VoucherFormScreen() {
   );
   const journalBalanced = Math.abs(journalDr - journalCr) < 0.01;
   const effectiveTotal = isJournalType ? journalDr : grandTotal;
+
+  // Advance/Fuel cap: the journal's Dr total may not exceed the bilty's
+  // remaining transport budget. Only meaningful once a bilty + budget are loaded.
+  const biltyBudgetActive =
+    biltyEligible && biltyMode !== 0 && selectedBiltyId !== null && biltyBudget !== null;
+  // Live remaining = DB remaining (transport − already-saved spend) minus what's
+  // typed into THIS voucher right now. Recomputes on every Dr keystroke.
+  const biltyRemainingLive = biltyBudgetActive
+    ? +(biltyBudget!.remaining - journalDr).toFixed(2)
+    : 0;
+  const biltyOverBudget = biltyBudgetActive && biltyRemainingLive < -0.01;
+
+  // Auto-clear a stale validation error once the journal becomes valid again
+  // (Dr = Cr and within the transport budget). Without this the "Dr must equal
+  // Cr" / over-budget message lingers after the user has already fixed the rows.
+  useEffect(() => {
+    if (error && isJournalType && journalBalanced && !biltyOverBudget) {
+      setError(null);
+    }
+  }, [error, isJournalType, journalBalanced, biltyOverBudget]);
 
   // ── Bill allocation totals
   const billAllocSigned = +billRefs.reduce(
@@ -743,6 +1081,10 @@ export function VoucherFormScreen() {
       const valid = journalRows.filter((r) => r.ledger_id && r.amount > 0);
       if (valid.length < 2) { setError('Add at least 2 ledger rows.'); return; }
       if (!journalBalanced) { setError(`Dr (${fmt(journalDr)}) must equal Cr (${fmt(journalCr)}).`); return; }
+      if (biltyOverBudget) {
+        setError(`Debit ${fmt(journalDr)} exceeds the bilty's remaining transport budget of ${fmt(biltyBudget!.remaining)}.`);
+        return;
+      }
       // Journal mode does not require an explicit party; first ledger acts as anchor.
       const anchorId = partyId ?? valid[0].ledger_id!;
       if (billByBill && !billBalanced) { setError('Bill allocation must balance.'); return; }
@@ -758,6 +1100,9 @@ export function VoucherFormScreen() {
           amount: r.drOrCr === 'Dr' ? r.amount : -r.amount,
         })),
         bill_allocation: billByBill ? billRefs.map((r) => ({ type: r.type, refno: r.refno, amount: r.amount, direction: r.direction })) : undefined,
+        bilty_mode: biltyEligible && biltyMode !== 0 ? biltyMode : null,
+        // Persist the picked bilty so the Bilty No can be restored on edit.
+        bilty_id: biltyEligible && biltyMode !== 0 ? selectedBiltyId : null,
       };
     } else {
       if (!partyId) { setError('Pick a party first.'); return; }
@@ -788,15 +1133,18 @@ export function VoucherFormScreen() {
     try {
       if (isEdit && editId !== null) {
         await voucherService.update(editId, payload);
-        // Edits go back to wherever the user came from (typically the list).
-        navigation.goBack();
+        // Edits are always launched from the Day Book (the voucher list), so
+        // return there explicitly (goBack() could pop past the Daybook to the
+        // Dashboard) and surface a "Voucher updated" toast on arrival.
+        (navigation as any).navigate('Daybook', { notice: 'Voucher updated' });
       } else {
         await voucherService.create(payload);
         // After creating a new voucher, stay on the form with a clean draft
         // so the user can keep entering vouchers of the same type. Refetch
         // the next voucher number explicitly — the vchTypeId effect won't
-        // re-run because vchTypeId didn't change.
+        // re-run because vchTypeId didn't change. Confirm with a toast.
         resetVoucherForm();
+        setNotice('Voucher created');
         if (vchTypeId !== null) {
           voucherService.nextNo(vchTypeId).then(setVchNo).catch(() => { /* ignore */ });
         }
@@ -825,6 +1173,9 @@ export function VoucherFormScreen() {
   }, [canSave, currentUser, navigation]);
 
   if (loading || !canSave) return <Loader />;
+  // Editing a bilty in-place: wait until the Bilty type is selected so we don't
+  // flash the generic voucher UI before the embedded bilty form mounts.
+  if (biltyEditId !== null && !isBilty) return <Loader />;
 
   // ─── Mobile Bilty: render the wizard full-height ─────────────────────────────
   // The Bilty wizard manages its own scroll + pinned bottom action bar, so it
@@ -835,6 +1186,12 @@ export function VoucherFormScreen() {
     return (
       <View style={styles.shell}>
         <BiltyCreateFormEmbedded
+          // Remount on Bilty-type change so the form (bilty_no, branch, etc.)
+          // resets to the new type instead of carrying over stale state.
+          key={`bilty-${biltyEditId ?? biltySubTypeId ?? 'none'}`}
+          editingId={biltyEditId}
+          prefixOverride={biltySelectedPrefix}
+          branchOverride={biltySelectedBranch}
           onExit={() => {
             const fb = vchTypes.find((t) => t.parent_id === t.id && t.name.toLowerCase() !== 'bilty');
             if (fb) selectVchType(fb.id);
@@ -847,6 +1204,7 @@ export function VoucherFormScreen() {
   // ─── Render ────────────────────────────────────────────────────────────────
   return (
     <View style={styles.shell}>
+      <Toast message={notice} onDone={() => setNotice(null)} />
       <ScrollView
         style={styles.wrap}
         contentContainerStyle={[
@@ -858,7 +1216,40 @@ export function VoucherFormScreen() {
         ]}
       >
         <View style={[styles.formCard, isBilty && isMobile && styles.formCardBiltyMobile]}>
-        {!isMobile ? <Text style={styles.pageTitle}>Vouchers</Text> : null}
+        {!isMobile ? (
+          <View style={styles.titleRowDesktop}>
+            <Text style={styles.pageTitle}>Vouchers</Text>
+            {/* Bilty sub-type picker — a small searchable field beside the title.
+                Lists "Bilty" + its child types; the pick drives only the prefix
+                on the Bilty No field below. */}
+            {isBilty ? (
+              <View style={styles.biltyTypePicker}>
+                <AutocompleteField
+                  ref={biltyTypeRef}
+                  compact
+                  label="Bilty Type"
+                  value={biltyTypeText}
+                  options={biltyFamily.map((t) => t.name)}
+                  onChangeText={setBiltyTypeText}
+                  placeholder="Bilty"
+                  // Skippable: Enter/Tab always jump to Bilty No — picking a type
+                  // first applies its prefix, leaving it blank keeps numbering plain.
+                  submitAlways
+                  onSubmitNext={() => {
+                    if (Platform.OS === 'web') {
+                      const focusBiltyNo = (tries: number) => {
+                        const el = document.querySelector('[data-guided="bilty_no"]') as HTMLElement | null;
+                        if (el) { el.focus(); return; }
+                        if (tries > 0) setTimeout(() => focusBiltyNo(tries - 1), 30);
+                      };
+                      setTimeout(() => focusBiltyNo(5), 0);
+                    }
+                  }}
+                />
+              </View>
+            ) : null}
+          </View>
+        ) : null}
 
         {/* TITLE + compact primary-type selector on ONE row — the selector box
             pinned to the top-right corner (the requested "box at the corner"). */}
@@ -886,7 +1277,7 @@ export function VoucherFormScreen() {
                       return (
                         <Pressable
                           key={t.id}
-                          onPress={() => { selectVchType(t.id); setPrimaryMenuOpen(false); }}
+                          onPress={() => { onRailSelect(t.id); setPrimaryMenuOpen(false); }}
                           style={[styles.selectMenuItem, active && styles.selectMenuItemActive]}
                           accessibilityRole="button"
                           accessibilityLabel={`Switch to ${t.name} voucher`}
@@ -904,6 +1295,12 @@ export function VoucherFormScreen() {
 
         {isBilty ? (
           <BiltyCreateFormEmbedded
+            // Remount on Bilty-type change so the form (bilty_no, branch, etc.)
+            // resets to the new type instead of carrying over stale state.
+            key={`bilty-${biltyEditId ?? biltySubTypeId ?? 'none'}`}
+            editingId={biltyEditId}
+            prefixOverride={biltySelectedPrefix}
+            branchOverride={biltySelectedBranch}
             onExit={() => {
               // Return to the normal voucher form on a non-Bilty primary instead
               // of navigating away (which previously dumped the user to Dashboard).
@@ -955,6 +1352,60 @@ export function VoucherFormScreen() {
               </>
             ) : null}
           </View>
+          ) : null}
+
+          {/* Advance / Fuel sub-mode + Bilty No — between Voucher Type and
+              Voucher No, for Contra/Journal/Payment/Receipt only. Picking
+              Advance/Fuel reveals the Bilty No search; selecting a bilty
+              auto-fills + locks its owner into ledger row 1. */}
+          {biltyEligible ? (
+            <View style={[styles.field, isMobile ? styles.headerColMobile : { minWidth: 120, flexBasis: 140, flexGrow: 0 }, biltyModeMenuOpen && styles.fieldOpen]}>
+              <Text style={styles.fieldLabel}>Mode</Text>
+              <Pressable
+                onPress={() => setBiltyModeMenuOpen((v) => !v)}
+                style={styles.selectField}
+                accessibilityRole="button"
+                accessibilityLabel="Select advance or fuel mode"
+              >
+                <Text style={styles.selectText}>{biltyMode === 1 ? 'Advance' : biltyMode === 2 ? 'Fuel' : 'Normal'}</Text>
+                <Text style={styles.caret}>{biltyModeMenuOpen ? '▴' : '▾'}</Text>
+              </Pressable>
+              {biltyModeMenuOpen ? (
+                <>
+                  <Pressable style={styles.menuScrim} onPress={() => setBiltyModeMenuOpen(false)} />
+                  <View style={styles.selectMenu}>
+                    {([{ v: 0, l: 'Normal' }, { v: 1, l: 'Advance' }, { v: 2, l: 'Fuel' }] as const).map((o) => {
+                      const active = biltyMode === o.v;
+                      const hi = biltyModeHighlight === o.v;
+                      return (
+                        <Pressable
+                          key={o.v}
+                          onPressIn={() => selectBiltyMode(o.v)}
+                          {...(Platform.OS === 'web' ? ({ onMouseEnter: () => setBiltyModeHighlight(o.v) } as any) : {})}
+                          style={[styles.selectMenuItem, hi && !active && styles.selectMenuItemHover, active && styles.selectMenuItemActive]}
+                        >
+                          <Text style={[styles.selectMenuItemText, active && styles.selectMenuItemTextActive]}>{o.l}</Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                </>
+              ) : null}
+            </View>
+          ) : null}
+
+          {biltyEligible && biltyMode !== 0 ? (
+            <View style={[styles.field, styles.headerCol, isMobile && styles.headerColMobile]}>
+              <AutocompleteField
+                compact
+                usePortal
+                label="Bilty No"
+                value={biltyNoText}
+                options={biltyList.map((b) => b.bilty_no)}
+                onChangeText={(t) => { suppressBiltyHydrateRef.current = false; setBiltyNoText(t); }}
+                placeholder="Search bilty no..."
+              />
+            </View>
           ) : null}
 
           <View style={[styles.field, styles.headerCol, isMobile && styles.headerColMobile]}>
@@ -1112,6 +1563,8 @@ export function VoucherFormScreen() {
                 onChange={(patch) => setJournalRows((p) => p.map((r) => r.id === row.id ? { ...r, ...patch } : r))}
                 onRemove={() => setJournalRows((p) => p.length > 2 ? p.filter((r) => r.id !== row.id) : p)}
                 editable={canSave}
+                locked={biltyLocked && idx === 0}
+                groupFilter={biltyEligible && biltyMode === 2 && selectedBiltyId !== null && idx === 0 ? 'Fuel' : undefined}
               />
             ))}
             {canSave && (
@@ -1119,6 +1572,22 @@ export function VoucherFormScreen() {
                 <Text style={styles.addLinkText}>+ Add Row</Text>
               </Pressable>
             )}
+            {biltyBudgetActive ? (
+              <View style={styles.budgetBox}>
+                <View style={styles.budgetRow}>
+                  <Text style={styles.budgetLabel}>Freight Expense</Text>
+                  <Text style={styles.budgetValue}>{fmt(biltyBudget!.transport_total)}</Text>
+                </View>
+                <View style={styles.budgetRow}>
+                  <Text style={styles.budgetLabel}>Used</Text>
+                  <Text style={styles.budgetValue}>{fmt(biltyBudget!.used)}</Text>
+                </View>
+                <View style={styles.budgetRow}>
+                  <Text style={styles.budgetLabel}>Remaining</Text>
+                  <Text style={[styles.budgetValue, biltyOverBudget && styles.budgetTextOver]}>{fmt(biltyRemainingLive)}</Text>
+                </View>
+              </View>
+            ) : null}
             <View style={styles.grandTotalRow}>
               <Text style={styles.grandTotalLabel}>Grand Total</Text>
               {isMobile ? (
@@ -1137,6 +1606,11 @@ export function VoucherFormScreen() {
             {!journalBalanced ? (
               <Text style={styles.balanceWarn}>
                 Dr and Cr must match · diff ₹{fmt(Math.abs(journalDr - journalCr))}
+              </Text>
+            ) : null}
+            {biltyOverBudget ? (
+              <Text style={styles.balanceWarn}>
+                Debit ₹{fmt(journalDr)} exceeds remaining transport budget ₹{fmt(biltyBudget!.remaining)}
               </Text>
             ) : null}
           </View>
@@ -1274,7 +1748,7 @@ export function VoucherFormScreen() {
               <Pressable
                 key={t.id}
                 ref={(el) => { railRefs.current[idx] = el; }}
-                onPress={() => selectVchType(t.id)}
+                onPress={() => onRailSelect(t.id)}
                 onFocus={() => setRailIdx(idx)}
                 onBlur={() => {
                   // Defer so we can check whether focus moved to ANOTHER rail
@@ -1369,6 +1843,17 @@ export function VoucherFormScreen() {
       </Modal>
 
       {/* QUICK-ADD PARTY MODAL */}
+      {/* Confirm before switching voucher type while editing (discards data). */}
+      <ConfirmDialog
+        visible={pendingTypeId !== null}
+        title="Change voucher type?"
+        message="The voucher type can't be changed in place. If you switch it, the current voucher's information will be lost."
+        confirmLabel="OK"
+        cancelLabel="Cancel"
+        onConfirm={confirmTypeChange}
+        onCancel={() => setPendingTypeId(null)}
+      />
+
       <AddPartyModal
         visible={addPartyOpen}
         onClose={() => setAddPartyOpen(false)}
@@ -1735,13 +2220,19 @@ function LedgerPickerInline({ row, ledgers, onChange, editable }: {
   );
 }
 
-function JournalRowEditor({ row, idx, onChange, onRemove, editable, isMobile }: {
+function JournalRowEditor({ row, idx, onChange, onRemove, editable, isMobile, locked, groupFilter }: {
   row: JournalRow;
   idx: number;
   onChange: (patch: Partial<JournalRow>) => void;
   onRemove: () => void;
   editable: boolean;
   isMobile: boolean;
+  // Advance flow: row 1's ledger is the bilty truck — name is fixed and not
+  // searchable until the Bilty No changes/clears. Dr/Cr + amount stay open.
+  locked?: boolean;
+  // Fuel flow: when set, the ledger search is restricted to this ledger group
+  // (e.g. 'Fuel') and the full list opens on focus (no typing required).
+  groupFilter?: string;
 }) {
   const [typeOpen, setTypeOpen] = useState(false);
   const [results, setResults] = useState<OtherLedger[]>([]);
@@ -1750,23 +2241,28 @@ function JournalRowEditor({ row, idx, onChange, onRemove, editable, isMobile }: 
   const [suppressDrop, setSuppressDrop] = useState(false);
   // Keyboard highlight index for the open dropdown.
   const [highlight, setHighlight] = useState(0);
+  // Focus state — only used by group-filtered rows, which open on focus.
+  const [focused, setFocused] = useState(false);
 
-  // Debounced ledger search — only fires after 2+ chars typed.
+  // Debounced ledger search. Normal rows fire after 2+ chars; a group-filtered
+  // row (Fuel) fetches the whole group even with an empty query.
   useEffect(() => {
-    if (row.search.length < 2) { setResults([]); return; }
+    if (!groupFilter && row.search.length < 2) { setResults([]); return; }
     const t = setTimeout(() => {
-      voucherService.ledgerSearch(row.search).then(setResults).catch(() => setResults([]));
+      voucherService.ledgerSearch(row.search, groupFilter)
+        .then(setResults)
+        .catch(() => setResults([]));
     }, 200);
     return () => clearTimeout(t);
-  }, [row.search]);
+  }, [row.search, groupFilter]);
 
-  // The list opens ONLY when the user is actively typing (search has 2+
-  // chars, hasn't selected yet, and isn't suppressed by a recent pick).
-  // Tabbing into / clicking the field does NOT open it.
+  // Normal rows open ONLY while typing (2+ chars). A group-filtered row also
+  // opens on focus so its restricted list shows without typing.
   const open =
+    !locked &&
     !suppressDrop &&
     row.ledger_id === null &&
-    row.search.length >= 2 &&
+    (row.search.length >= 2 || (!!groupFilter && focused)) &&
     results.length > 0;
 
   // Reset highlight whenever the visible results change.
@@ -1852,7 +2348,7 @@ function JournalRowEditor({ row, idx, onChange, onRemove, editable, isMobile }: 
       <View style={[styles.tableRow, (open || typeOpen) && styles.tableRowOpen, styles.rowCardMobile]}>
         <View style={styles.rowCardHeadMobile}>
           <Text style={styles.rowCardIndexMobile}>Entry {idx + 1}</Text>
-          {editable && (
+          {editable && !locked && (
             <Pressable onPress={onRemove} style={styles.removeBtn}>
               <Text style={styles.removeBtnText}>×</Text>
             </Pressable>
@@ -1860,15 +2356,18 @@ function JournalRowEditor({ row, idx, onChange, onRemove, editable, isMobile }: 
         </View>
         <View style={{ width: '100%' }}>
           <TextInput
-            value={row.search}
+            value={locked ? row.ledger_name : row.search}
             onChangeText={(v) => {
+              if (locked) return;
               onChange({ search: v, ledger_id: null, ledger_name: '' });
               setSuppressDrop(false);
             }}
-            placeholder="Search ledger..."
+            onFocus={() => { setFocused(true); if (groupFilter) setSuppressDrop(false); }}
+            onBlur={() => setTimeout(() => setFocused(false), 150)}
+            placeholder={locked ? 'Truck (from bilty)' : groupFilter ? 'Select fuel ledger…' : 'Search ledger...'}
             placeholderTextColor={colors.textMuted}
-            style={[styles.input, row.ledger_id !== null && styles.inputBound, !editable && styles.inputDisabled]}
-            editable={editable}
+            style={[styles.input, (row.ledger_id !== null || locked) && styles.inputBound, (!editable || locked) && styles.inputDisabled]}
+            editable={editable && !locked}
           />
           {open ? (
             <View style={styles.dropdown}>
@@ -1903,16 +2402,19 @@ function JournalRowEditor({ row, idx, onChange, onRemove, editable, isMobile }: 
       {drCrSelect}
       <View style={{ flex: 1 }}>
         <TextInput
-          value={row.search}
+          value={locked ? row.ledger_name : row.search}
           onChangeText={(v) => {
+            if (locked) return;
             // Re-typing invalidates the previous selection and re-arms the dropdown.
             onChange({ search: v, ledger_id: null, ledger_name: '' });
             setSuppressDrop(false);
           }}
-          placeholder="Search ledger..."
+          onFocus={() => { setFocused(true); if (groupFilter) setSuppressDrop(false); }}
+          onBlur={() => setTimeout(() => setFocused(false), 150)}
+          placeholder={locked ? 'Truck (from bilty)' : groupFilter ? 'Select fuel ledger…' : 'Search ledger...'}
           placeholderTextColor={colors.textMuted}
-          style={[styles.input, row.ledger_id !== null && styles.inputBound, !editable && styles.inputDisabled]}
-          editable={editable}
+          style={[styles.input, (row.ledger_id !== null || locked) && styles.inputBound, (!editable || locked) && styles.inputDisabled]}
+          editable={editable && !locked}
         />
         {open ? (
           <View style={styles.dropdown}>
@@ -1959,11 +2461,12 @@ function JournalRowEditor({ row, idx, onChange, onRemove, editable, isMobile }: 
           <Text style={{ color: colors.textMuted }}>—</Text>
         </View>
       )}
-      {editable && (
+      {editable && !locked && (
         <Pressable onPress={onRemove} style={styles.removeBtn}>
           <Text style={styles.removeBtnText}>×</Text>
         </Pressable>
       )}
+      {locked ? <View style={{ width: 28 }} /> : null}
     </View>
   );
 }
@@ -2277,6 +2780,20 @@ const styles = StyleSheet.create({
     color: colors.textStrong,
     letterSpacing: 0.2,
     marginBottom: 0,
+  },
+  // Title + Bilty sub-type picker on one row (the picker sits beside "Vouchers").
+  titleRowDesktop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.md,
+    marginBottom: spacing.xs,
+    // The picker's dropdown must render in front of the header row below it.
+    ...(Platform.OS === 'web' ? ({ position: 'relative', zIndex: 4000 } as any) : { zIndex: 4000 }),
+  },
+  biltyTypePicker: {
+    width: 240,
+    ...(Platform.OS === 'web' ? ({ position: 'relative', zIndex: 4100 } as any) : { zIndex: 4100 }),
   },
 
   // ── Header row
@@ -2722,6 +3239,22 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontFamily: typography.uiMedium,
     textAlign: 'right',
+  },
+
+  budgetBox: {
+    paddingHorizontal: spacing.md,
+    paddingTop: 4,
+  },
+  budgetRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 2,
+  },
+  budgetLabel: { color: colors.textMuted, fontSize: 13, lineHeight: 18, fontFamily: typography.ui },
+  budgetValue: { color: colors.text, fontSize: 14, lineHeight: 19, fontFamily: typography.mono },
+  budgetTextOver: {
+    color: colors.danger,
   },
 
   remarkInput: { minHeight: 42 },

@@ -467,7 +467,7 @@ CREATE TABLE `vch_details` (
   KEY `fk_vch_details_goods_type_id` (`goods_type_id`),
   KEY `fk_vch_details_zone_id` (`zone_id`),
   KEY `fk_vch_details_parent_vch_id` (`parent_vch_id`),
-  CONSTRAINT `fk_vch_details_agent_id` FOREIGN KEY (`agent_id`) REFERENCES `agent_master` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `fk_vch_details_agent_id` FOREIGN KEY (`agent_id`) REFERENCES `ledger_master` (`id`) ON DELETE SET NULL,
   CONSTRAINT `fk_vch_details_bill_to_id` FOREIGN KEY (`bill_to_id`) REFERENCES `ledger_master` (`id`) ON DELETE SET NULL,
   CONSTRAINT `fk_vch_details_branch_id` FOREIGN KEY (`branch_id`) REFERENCES `branch_master` (`id`) ON DELETE SET NULL,
   CONSTRAINT `fk_vch_details_created_by` FOREIGN KEY (`created_by`) REFERENCES `users` (`id`) ON DELETE SET NULL,
@@ -504,7 +504,7 @@ CREATE TABLE `vchtype` (
 
 LOCK TABLES `vchtype` WRITE;
 /*!40000 ALTER TABLE `vchtype` DISABLE KEYS */;
-INSERT INTO `vchtype` VALUES (1,'Sales',1,'YES',1,'2026-05-29 06:17:38','2026-05-29 06:17:38'),(2,'Purchase',2,'NO',1,'2026-05-29 06:17:38','2026-05-29 06:17:38'),(3,'Receipt',3,NULL,1,'2026-05-29 06:17:38','2026-05-29 06:17:38'),(4,'Payment',4,NULL,1,'2026-05-29 06:17:38','2026-05-29 06:17:38'),(5,'Journal',5,NULL,1,'2026-05-29 06:17:38','2026-05-29 06:17:38'),(6,'Contra',6,NULL,1,'2026-05-29 06:17:38','2026-05-29 06:17:38'),(7,'Debit Note',7,'YES',1,'2026-05-29 06:17:38','2026-05-29 06:17:38'),(8,'Credit Note',8,'NO',1,'2026-05-29 06:17:38','2026-05-29 06:17:38'),(9,'Bilty',9,'YES',1,'2026-05-29 06:20:11','2026-05-29 06:20:11'),(10,'Freight Journal',5,'YES',0,'2026-05-29 06:20:50','2026-05-29 06:20:50');
+INSERT INTO `vchtype` VALUES (1,'Sales',1,'YES',1,'2026-05-29 06:17:38','2026-05-29 06:17:38'),(2,'Purchase',2,'NO',1,'2026-05-29 06:17:38','2026-05-29 06:17:38'),(3,'Receipt',3,NULL,1,'2026-05-29 06:17:38','2026-05-29 06:17:38'),(4,'Payment',4,NULL,1,'2026-05-29 06:17:38','2026-05-29 06:17:38'),(5,'Journal',5,NULL,1,'2026-05-29 06:17:38','2026-05-29 06:17:38'),(6,'Contra',6,NULL,1,'2026-05-29 06:17:38','2026-05-29 06:17:38'),(7,'Debit Note',7,'YES',1,'2026-05-29 06:17:38','2026-05-29 06:17:38'),(8,'Credit Note',8,'NO',1,'2026-05-29 06:17:38','2026-05-29 06:17:38'),(9,'Bilty',9,'YES',1,'2026-05-29 06:20:11','2026-05-29 06:20:11');
 /*!40000 ALTER TABLE `vchtype` ENABLE KEYS */;
 UNLOCK TABLES;
 DROP TABLE IF EXISTS `zone_master`;

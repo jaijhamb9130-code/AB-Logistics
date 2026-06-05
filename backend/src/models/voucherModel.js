@@ -13,6 +13,61 @@ const pool = require('../db/pool');
 // All voucher mutations run inside a transaction via pool.withTransaction().
 // ============================================================================
 
+// Normalise the advance/fuel sub-mode to its stored code: 1 = advance,
+// 2 = fuel, NULL = normal. Anything else collapses to NULL.
+function _normBiltyMode(v) {
+  const n = Number(v);
+  return n === 1 || n === 2 ? n : null;
+}
+
+function _round2(n) {
+  return Math.round((Number(n) || 0) * 100) / 100;
+}
+
+// Compute a bilty's Advance/Fuel budget. transport_total = Σ(qty × l_rate) over
+// the bilty's batch (line item) rows; used = Σ(Dr) of existing Advance+Fuel
+// journals tied to the bilty (a single shared pool across both modes); remaining
+// is what a new/edited Advance/Fuel journal's Dr total may not exceed.
+// `excludeId` drops one voucher from `used` (the voucher being edited).
+async function _computeBiltyBudget(conn, biltyId, excludeId) {
+  const [ttRows] = await conn.execute(
+    'SELECT COALESCE(SUM(qty * l_rate), 0) AS t FROM batch WHERE vch_id = :id',
+    { id: biltyId }
+  );
+  const transportTotal = _round2(ttRows[0] ? ttRows[0].t : 0);
+
+  let usedSql = `SELECT COALESCE(SUM(amount), 0) AS u FROM vch_details
+                  WHERE bilty_id = :id AND bilty_mode IN (1, 2)`;
+  const params = { id: biltyId };
+  if (excludeId !== null && excludeId !== undefined) {
+    usedSql += ' AND id != :ex';
+    params.ex = excludeId;
+  }
+  const [usedRows] = await conn.execute(usedSql, params);
+  const used = _round2(usedRows[0] ? usedRows[0].u : 0);
+
+  return { transport_total: transportTotal, used, remaining: _round2(transportTotal - used) };
+}
+
+// Reject a save whose Dr total would push the bilty's Advance/Fuel spend past
+// its Transport Total. No-op for non-bilty (Normal) vouchers.
+async function _assertBiltyBudget(conn, data, excludeId) {
+  const mode = _normBiltyMode(data.bilty_mode);
+  const biltyId = data.bilty_id || null;
+  if (!mode || !biltyId) return;
+  const attempted = _round2(_computeGrandTotal(data.items, data.ledgers)); // Dr total (journal mode)
+  const { transport_total, used, remaining } = await _computeBiltyBudget(conn, biltyId, excludeId);
+  if (attempted > remaining + 0.01) {
+    const e = new Error(
+      `Debit ${attempted} exceeds the bilty's remaining transport budget ` +
+      `(transport ${transport_total}, already used ${used}, remaining ${remaining}).`
+    );
+    e.code = 'bilty_budget_exceeded';
+    e.details = { transport_total, used, remaining, attempted };
+    throw e;
+  }
+}
+
 async function _lookupLedgerIdByName(conn, name) {
   const [rows] = await conn.execute(
     'SELECT id FROM ledger_master WHERE name = :name LIMIT 1',
@@ -219,10 +274,11 @@ async function create(data, userId) {
       err.code = 'duplicate_vch_no';
       throw err;
     }
+    await _assertBiltyBudget(conn, data, null);
     const headerAmount = _computeGrandTotal(data.items, data.ledgers);
     const [r] = await conn.execute(
-      `INSERT INTO vch_details (vch_type_id, vch_no, vch_date, ledger_master_id, amount, remark, created_by)
-       VALUES (:vchTypeId, :vchNo, :vchDate, :ledgerMasterId, :amount, :remark, :userId)`,
+      `INSERT INTO vch_details (vch_type_id, vch_no, vch_date, ledger_master_id, amount, remark, bilty_mode, bilty_id, created_by)
+       VALUES (:vchTypeId, :vchNo, :vchDate, :ledgerMasterId, :amount, :remark, :biltyMode, :biltyId, :userId)`,
       {
         vchTypeId: data.vch_type_id || null,
         vchNo: data.vch_no || null,
@@ -230,6 +286,8 @@ async function create(data, userId) {
         ledgerMasterId: data.ledger_master_id,
         amount: headerAmount,
         remark: data.remark || null,
+        biltyMode: _normBiltyMode(data.bilty_mode),
+        biltyId: data.bilty_id || null,
         userId: userId == null ? null : userId,
       }
     );
@@ -246,6 +304,7 @@ async function update(id, data) {
       err.code = 'duplicate_vch_no';
       throw err;
     }
+    await _assertBiltyBudget(conn, data, id);
     // Delete children in FK-safe order.
     await conn.execute('DELETE FROM bill_allocation WHERE vchid = :id', { id });
     await conn.execute('DELETE FROM batch WHERE vch_id = :id', { id });
@@ -259,7 +318,8 @@ async function update(id, data) {
     await conn.execute(
       `UPDATE vch_details
          SET vch_type_id = :vchTypeId, vch_no = :vchNo, vch_date = :vchDate,
-             ledger_master_id = :ledgerMasterId, amount = :amount, remark = :remark
+             ledger_master_id = :ledgerMasterId, amount = :amount, remark = :remark,
+             bilty_mode = :biltyMode, bilty_id = :biltyId
        WHERE id = :id`,
       {
         id,
@@ -269,6 +329,8 @@ async function update(id, data) {
         ledgerMasterId: data.ledger_master_id,
         amount: headerAmount,
         remark: data.remark || null,
+        biltyMode: _normBiltyMode(data.bilty_mode),
+        biltyId: data.bilty_id || null,
       }
     );
     await _insertChildEntries(conn, id, data);
@@ -382,22 +444,38 @@ async function findAll({ page, limit, vchType, search, dateFrom, dateTo } = {}) 
   return { data: rows, total: Number(countRows[0] ? countRows[0].total : 0), page: p, limit: lim };
 }
 
+// NOTE: keep this SQL free of `--` line comments — mysql2's named-placeholder
+// tokenizer doesn't skip them, so an apostrophe inside a comment (e.g. "ledger's")
+// is read as a string delimiter and breaks :fromDate/:toDate substitution.
+//
+// The aggregated `ple` subquery nets the anchor (party) ledger's lines into ONE
+// amount per voucher: a voucher can post the anchor ledger on several rows
+// (e.g. an Advance with two Dr truck lines), and without this the join fans out
+// and the voucher shows as multiple Daybook rows. GROUP BY collapses them to one.
+//
+// ORDER BY: within a day the most recently touched voucher floats to the top —
+// create OR edit bumps updated_at (ON UPDATE CURRENT_TIMESTAMP). Across days,
+// vch_date drives the order (normal date sequence).
 async function getDaybook(fromDate, toDate) {
   const [rows] = await pool.execute(
-    `SELECT v.id, v.vch_no, v.vch_date, v.remark, v.amount,
+    `SELECT v.id, v.vch_no, v.vch_date, v.remark, v.amount, v.parent_vch_id,
             pl.name AS party_name,
             COALESCE(par.name, vt.name) AS vch_type_name,
             vt.name AS vch_subtype_name,
             CASE WHEN ple.amount > 0 THEN ABS(ple.amount) ELSE 0 END AS dr_amount,
             CASE WHEN ple.amount < 0 THEN ABS(ple.amount) ELSE 0 END AS cr_amount,
-            v.created_at
+            v.created_at, v.updated_at
      FROM vch_details v
      LEFT JOIN ledger_master pl ON v.ledger_master_id = pl.id
      LEFT JOIN vchtype vt ON v.vch_type_id = vt.id
      LEFT JOIN vchtype par ON vt.parent_id = par.id AND vt.parent_id != vt.id
-     LEFT JOIN ledger_entries ple ON ple.vch_id = v.id AND ple.ledger_id = v.ledger_master_id
+     LEFT JOIN (
+       SELECT vch_id, ledger_id, SUM(amount) AS amount
+       FROM ledger_entries
+       GROUP BY vch_id, ledger_id
+     ) ple ON ple.vch_id = v.id AND ple.ledger_id = v.ledger_master_id
      WHERE DATE(v.vch_date) >= :fromDate AND DATE(v.vch_date) <= :toDate
-     ORDER BY v.vch_date DESC, v.created_at DESC`,
+     ORDER BY v.vch_date DESC, GREATEST(v.created_at, v.updated_at) DESC, v.id DESC`,
     { fromDate, toDate }
   );
   return rows;
@@ -475,23 +553,54 @@ async function findOtherLedgers() {
   return rows;
 }
 
-// All-ledger search across every group (used by Journal/Receipt/Payment Dr/Cr picker).
-async function searchAllLedgers(q) {
-  const like = `%${q}%`;
+// All-ledger search across every group (used by Journal/Receipt/Payment Dr/Cr
+// picker). When `group` is given, results are restricted to ledgers in that
+// ledger group (used by the Fuel voucher mode's first row).
+async function searchAllLedgers(q, group) {
+  const like = `%${q || ''}%`;
+  const params = { like };
+  let groupCond = '';
+  if (group) { groupCond = 'AND lg.group_name = :group'; params.group = group; }
   const [rows] = await pool.execute(
     `SELECT pl.id, pl.name, pl.ledger_group_id, pl.billbybill,
             lg.group_name AS ledger_group_name
      FROM ledger_master pl
      LEFT JOIN ledger_group lg ON pl.ledger_group_id = lg.id
-     WHERE pl.name LIKE :like
+     WHERE pl.name LIKE :like ${groupCond}
      ORDER BY pl.name ASC LIMIT 50`,
-    { like }
+    params
   );
   return rows;
+}
+
+// Resolve the bilty's vehicle (truck) ledger to lock into row 1 of an ADVANCE
+// voucher. The truck already lives in ledger_master (Vehicles group) and is
+// referenced directly by vch_details.vehicle_id, so no creation is needed.
+// Returns { ledger_id, ledger_name, truck_no } (ledger_id null if the bilty has
+// no vehicle), or null when the bilty id doesn't exist.
+async function resolveBiltyVehicleLedger(biltyId) {
+  const [rows] = await pool.execute(
+    `SELECT v.vehicle_id AS ledger_id, veh.name AS ledger_name
+       FROM vch_details v
+       LEFT JOIN ledger_master veh ON veh.id = v.vehicle_id
+      WHERE v.id = :id LIMIT 1`,
+    { id: biltyId }
+  );
+  const r = rows[0];
+  if (!r) return null;
+  return { ledger_id: r.ledger_id || null, ledger_name: r.ledger_name || null, truck_no: r.ledger_name || null };
+}
+
+// Public read-only budget lookup for the Advance/Fuel form. Returns
+// { transport_total, used, remaining } for a bilty; `excludeId` (optional)
+// drops the voucher being edited from `used`.
+async function getBiltyBudget(biltyId, excludeId) {
+  return _computeBiltyBudget(pool, biltyId, excludeId);
 }
 
 module.exports = {
   create, update, remove, findById, findAll,
   getDaybook, getNextVoucherNo, getPendingRefs,
-  findOtherLedgers, searchAllLedgers,
+  findOtherLedgers, searchAllLedgers, resolveBiltyVehicleLedger,
+  getBiltyBudget,
 };

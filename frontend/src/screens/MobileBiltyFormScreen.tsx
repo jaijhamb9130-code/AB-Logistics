@@ -35,15 +35,13 @@ import { ledgerGroupService } from '../services/ledgerGroupService';
 import { itemMasterService } from '../services/itemMasterService';
 import { vehicleMasterService } from '../services/vehicleMasterService';
 import { destinationService } from '../services/destinationService';
-import { ownerService } from '../services/ownerService';
-import { zoneService } from '../services/zoneService';
 import { colors, radius, spacing, typography } from '../constants/theme';
 import { useBiltyCreate, useBiltyUpdate } from '../hooks/useBiltyUpdate';
 import { biltyService } from '../services/biltyService';
 import { vchTypeService } from '../services/vchTypeService';
 import { CreateBiltySchema } from '../../../shared/schemas/bilty.schema';
 import type { CreateBiltyInput } from '../../../shared/schemas/bilty.schema';
-import { itemsTotal, netPayable, toNum } from '../utils/biltyValidation';
+import { toNum, transportTotal } from '../utils/biltyValidation';
 import { getTodayISO } from '../utils/dateUtils';
 
 interface Props {
@@ -51,6 +49,17 @@ interface Props {
   onClose: () => void;
   onSaved: (id?: number) => void;
   canSave: boolean;
+  /**
+   * Host-controlled prefix for the Bilty No field (set by the Vouchers screen's
+   * Bilty-type picker). `undefined` → standalone page, use the Bilty type's own
+   * prefix; `null`/'' → no prefix (numbering starts directly).
+   */
+  prefixOverride?: string | null;
+  /**
+   * Host-controlled branch (from the selected voucher type). When set, the
+   * Branch field is auto-filled from it.
+   */
+  branchOverride?: string | null;
 }
 
 const EMPTY_HEADER: CreateBiltyInput['header'] = {
@@ -61,7 +70,6 @@ const EMPTY_HEADER: CreateBiltyInput['header'] = {
   owner_name: '',
   agent_name: '',
   branch: '',
-  zone_name: '',
   truck_no: '',
   goods_type: '',
 };
@@ -118,7 +126,7 @@ const filterDate = (v: string) => v.replace(/[^0-9\-]/g, '').slice(0, 10);
 
 type StepNum = 1 | 2 | 3;
 
-export function MobileBiltyFormScreen({ editingId, onClose, onSaved, canSave }: Props) {
+export function MobileBiltyFormScreen({ editingId, onClose, onSaved, canSave, prefixOverride, branchOverride }: Props) {
   const navigation = useNavigation();
   const isEdit = editingId != null;
   const { mutateAsync: createBilty, isPending: creating } = useBiltyCreate();
@@ -139,6 +147,8 @@ export function MobileBiltyFormScreen({ editingId, onClose, onSaved, canSave }: 
       .then((types) => setBiltyPrefix(types.find((t) => t.name === 'Bilty')?.prefix ?? null))
       .catch(() => { /* ignore — falls back to plain numbering */ });
   }, []);
+  // Host (Vouchers screen) can override the prefix via the Bilty-type picker.
+  const effectivePrefix = prefixOverride !== undefined ? prefixOverride : biltyPrefix;
 
   // Hide the React Navigation header — the wizard renders its own top bar.
   useEffect(() => {
@@ -153,10 +163,12 @@ export function MobileBiltyFormScreen({ editingId, onClose, onSaved, canSave }: 
   const [agentOptions, setAgentOptions] = useState<string[]>([]);
   const [itemOptions, setItemOptions] = useState<string[]>([]);
   const [vehicleNoOptions, setVehicleNoOptions] = useState<string[]>([]);
+  const [truckOwnerMap, setTruckOwnerMap] = useState<Record<string, string>>({});
   const [branchOptions, setBranchOptions] = useState<string[]>([]);
   const [destinationOptions, setDestinationOptions] = useState<string[]>([]);
-  const [ownerOptions, setOwnerOptions] = useState<string[]>([]);
-  const [zoneOptions, setZoneOptions] = useState<string[]>([]);
+  // Owner Name has no master list — it's free text, auto-filled from the picked
+  // truck's current owner (truckOwnerMap). Empty options ⇒ no dropdown.
+  const ownerOptions: string[] = [];
 
   useEffect(() => {
     Promise.allSettled([
@@ -175,17 +187,21 @@ export function MobileBiltyFormScreen({ editingId, onClose, onSaved, canSave }: 
         setAgentOptions(agents.map((r) => r.name).sort());
       }),
       itemMasterService.list().then((rs) => setItemOptions(rs.map((r) => r.name).sort())),
-      vehicleMasterService.list().then((rs) =>
-        setVehicleNoOptions(rs.map((r) => r.name).sort())
-      ),
+      vehicleMasterService.list().then((rs) => {
+        setVehicleNoOptions(rs.map((r) => r.name).sort());
+        const om: Record<string, string> = {};
+        rs.forEach((r) => {
+          const owner = (r as any).owner_name;
+          if (r.name && owner && String(owner).trim() !== '') om[r.name] = String(owner).trim();
+        });
+        setTruckOwnerMap(om);
+      }),
       destinationService.listBranches().then(setBranchOptions),
       destinationService.list().then((rs) =>
         setDestinationOptions(
           [...new Set(rs.map((r) => r.name).filter((v): v is string => Boolean(v)))].sort()
         )
       ),
-      ownerService.list().then((rs) => setOwnerOptions(rs.map((r) => r.name).sort())),
-      zoneService.list().then((rs) => setZoneOptions(rs.map((r) => r.name).sort())),
     ]);
   }, []);
 
@@ -227,7 +243,6 @@ export function MobileBiltyFormScreen({ editingId, onClose, onSaved, canSave }: 
             owner_name: detail.owner_name ?? '',
             agent_name: detail.agent_name ?? '',
             branch: detail.branch ?? '',
-            zone_name: detail.zone_name ?? '',
             truck_no: detail.truck_no ?? '',
             goods_type: detail.goods_type ?? '',
           },
@@ -258,6 +273,34 @@ export function MobileBiltyFormScreen({ editingId, onClose, onSaved, canSave }: 
 
   const watchedItems = useWatch({ control, name: 'items' });
   const watchedHeader = useWatch({ control, name: 'header' });
+
+  // Truck → Owner: auto-fill Owner Name from the picked truck's owner. When the
+  // truck is changed to one without an owner — or cleared — the owner clears too
+  // (owner follows the truck). `prevTruckRef` skips the first mount / map load so
+  // an edit-mode preloaded owner isn't wiped.
+  const prevTruckRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    const truck = String(watchedHeader?.truck_no ?? '').trim();
+    const truckChanged = prevTruckRef.current !== undefined && prevTruckRef.current !== truck;
+    prevTruckRef.current = truck;
+    const owner = truck ? truckOwnerMap[truck] : undefined;
+    if (owner) {
+      if ((getValues('header.owner_name') || '') !== owner) {
+        setValue('header.owner_name', owner, { shouldDirty: false });
+      }
+    } else if (truckChanged && (getValues('header.owner_name') || '') !== '') {
+      setValue('header.owner_name', '', { shouldDirty: false });
+    }
+  }, [watchedHeader?.truck_no, truckOwnerMap, getValues, setValue]);
+
+  // Branch driven by the selected voucher type. Auto-fill when set.
+  useEffect(() => {
+    const b = (branchOverride ?? '').trim();
+    if (isEdit || !b) return;
+    if ((getValues('header.branch') || '') !== branchOverride) {
+      setValue('header.branch', branchOverride as string, { shouldDirty: false });
+    }
+  }, [branchOverride, isEdit, getValues, setValue]);
 
   const goNext = () => { setSaveError(null); setStep((s) => (Math.min(3, s + 1) as StepNum)); };
   const goPrev = () => { setSaveError(null); setStep((s) => (Math.max(1, s - 1) as StepNum)); };
@@ -396,11 +439,10 @@ export function MobileBiltyFormScreen({ editingId, onClose, onSaved, canSave }: 
             branchOptions={branchOptions}
             gstNo={gstNo}
             setGstNo={setGstNo}
-            biltyPrefix={isEdit ? null : biltyPrefix}
+            biltyPrefix={isEdit ? null : effectivePrefix}
             getValues={getValues}
             onLastField={() => goNext()}
             ownerOptions={ownerOptions}
-            zoneOptions={zoneOptions}
           />
         ) : null}
 
@@ -490,7 +532,6 @@ function Step1Details({
   getValues,
   onLastField,
   ownerOptions,
-  zoneOptions,
 }: {
   control: any;
   errors: any;
@@ -505,12 +546,11 @@ function Step1Details({
   getValues: any;
   onLastField?: () => void;
   ownerOptions: string[];
-  zoneOptions: string[];
 }) {
   // Guided entry (mobile-web): Enter/Tab walks field-by-field, each gated.
   // Dropdowns force a listed pick; free-text (Bilty No / Zone / GST / Owner)
   // require non-empty. After the last field, advance to the next wizard step.
-  const MOB_ORDER = ['bilty_no', 'branch', 'consignor', 'bill_to', 'truck_no', 'goods_type', 'zone', 'gst', 'owner_name', 'agent_name'];
+  const MOB_ORDER = ['bilty_no', 'branch', 'consignor', 'bill_to', 'truck_no', 'goods_type', 'gst', 'owner_name', 'agent_name'];
   const mobRefs = useRef<Record<string, { focus: () => void } | null>>({});
   const setMobRef = (k: string) => (r: { focus: () => void } | null) => { mobRefs.current[k] = r; };
   const onLastFieldRef = useRef(onLastField);
@@ -671,19 +711,6 @@ function Step1Details({
                   error={errors.header?.goods_type?.message ?? null}
                   onSubmitNext={() => focusMobNext('goods_type')}
                 />
-              )}
-            />
-          </View>
-        </View>
-
-        {/* Row 5 — Zone */}
-        <View style={[styles.fieldRow, styles.zRow4]}>
-          <View style={styles.fieldCol}>
-            <Controller
-              control={control}
-              name="header.zone_name"
-              render={({ field: { value, onChange } }) => (
-                <AutocompleteField ref={setMobRef('zone')} compact label="Zone" value={value ?? ''} options={zoneOptions} onChangeText={onChange} placeholder="" onSubmitNext={() => focusMobNext('zone')} />
               )}
             />
           </View>
@@ -1363,8 +1390,7 @@ function PreviewView({
   items: CreateBiltyInput['items'];
   gstNo: string;
 }) {
-  const freightTotal = itemsTotal(items as any);
-  const net = netPayable(items as any);
+  const expense = transportTotal(items as any); // Freight Expense = Σ(qty × l_rate)
   return (
     <View style={styles.previewWrap}>
       <View style={styles.previewSheet}>
@@ -1386,7 +1412,6 @@ function PreviewView({
           </View>
           <View style={styles.gridRow}>
             <Cell label="Goods Type" value={header.goods_type || '—'} />
-            <Cell label="Zone" value={header.zone_name || '—'} />
             <Cell label="Owner" value={header.owner_name || '—'} />
           </View>
           <View style={styles.gridRow}>
@@ -1421,7 +1446,7 @@ function PreviewView({
                 <View style={styles.gridRow}>
                   <Cell label="L-Rate" value={fmt(toNum(it.l_rate))} num />
                   <Cell label="E-Rate" value={fmt(toNum(it.e_rate))} num />
-                  <Cell label="Line Total" value={fmt(toNum(it.qty) * toNum(it.rate))} num bold />
+                  <Cell label="Freight Exp." value={fmt(toNum(it.qty) * toNum(it.l_rate))} num bold />
                 </View>
               </View>
             ))
@@ -1430,9 +1455,7 @@ function PreviewView({
 
         <View style={styles.totalsBox}>
           <View style={styles.gridRow}>
-            <Cell label="Freight Total" value={fmt(freightTotal)} num />
-            <Cell />
-            <Cell label="Net Payable" value={fmt(net)} num bold />
+            <Cell label="Freight Expense" value={fmt(expense)} num bold />
           </View>
         </View>
       </View>

@@ -20,7 +20,6 @@
  *   bilty.agent_name  → vch_details.agent_id          (FK; optional, looked up by name)
  *   bilty.owner_name  → vch_details.owner_name        (text; future owner_id)
  *   bilty.branch      → vch_details.branch
- *   bilty.zone_name   → vch_details.zone
  *   bilty.truck_no    → vch_details.vehicle_id        (FK ledger_master in Vehicles group)
  *   bilty.goods_type  → vch_details.goods_type_id     (FK item_master; looked up by name)
  *   (new)             → vch_details.gst_no
@@ -43,15 +42,9 @@ const env = require('../config/env');
 
 const ER_DUP_ENTRY = 1062;
 
-// Cached id of the system ledgers used by the Bilty + Freight Journal pair.
-//   freightIncome  → Cr side of the Bilty voucher (revenue)
-//   freightExpense → Dr side of the Freight Journal (truck cost)
-// The Cr side of the Freight Journal is per-vehicle, resolved through
-// vehicle_master.ledger_id (which lives in the dedicated "Vehicles" sub-group
-// of Sundry Creditors — see resolveVehicleLedgerId below).
+// Cached id of the system ledger used by the (legacy) Bilty revenue posting.
 const SYSTEM_LEDGER_NAMES = {
   freightIncome: 'Sales',
-  freightExpense: 'Freight Expense',
 };
 // Name of the dedicated child group that holds every vehicle's payable ledger.
 const VEHICLES_GROUP = 'Vehicles';
@@ -87,51 +80,9 @@ async function getBiltyTypeId(conn = pool) {
   return _biltyTypeId;
 }
 
-let _freightJournalTypeId = null;
-async function getFreightJournalTypeId(conn = pool) {
-  if (_freightJournalTypeId !== null) return _freightJournalTypeId;
-  const [rows] = await conn.execute(
-    "SELECT id FROM vchtype WHERE name = 'Freight Journal' LIMIT 1"
-  );
-  if (!rows.length) {
-    const e = new Error('freight_journal_vchtype_missing');
-    e.code = 'freight_journal_vchtype_missing';
-    throw e;
-  }
-  _freightJournalTypeId = rows[0].id;
-  return _freightJournalTypeId;
-}
-
-// Insert the companion Freight Journal voucher tied to a bilty.
-//   Dr Freight Expense                            +amount
-//   Cr <Vehicle's ledger (Vehicles group)>        -amount
-// `vehicleLedgerId` is the ledger_master.id of the vehicle (vehicles ARE
-// ledger rows now — no separate vehicle_master table).
-// Voucher links back to the bilty via parent_vch_id (ON DELETE CASCADE), so
-// deleting a bilty removes its journal automatically.
-async function createFreightJournal(conn, parentVchId, amount, vchDate, userId, vehicleLedgerId) {
-  if (!vehicleLedgerId) return null;
-  const fjTypeId = await getFreightJournalTypeId(conn);
-  const expenseId = await getSystemLedgerId(conn, 'freightExpense');
-  const a = round2(amount);
-
-  const [h] = await conn.execute(
-    `INSERT INTO vch_details (vch_type_id, vch_no, parent_vch_id, vch_date, amount, created_by)
-     VALUES (:vch_type_id, NULL, :parent_vch_id, :vch_date, :amount, :userId)`,
-    { vch_type_id: fjTypeId, parent_vch_id: parentVchId, vch_date: vchDate, amount: a, userId: userId ?? null }
-  );
-  const journalId = h.insertId;
-
-  await conn.execute(
-    `INSERT INTO ledger_entries (vch_id, ledger_id, amount) VALUES (:vch_id, :ledger_id, :amount)`,
-    { vch_id: journalId, ledger_id: expenseId, amount: a }
-  );
-  await conn.execute(
-    `INSERT INTO ledger_entries (vch_id, ledger_id, amount) VALUES (:vch_id, :ledger_id, :amount)`,
-    { vch_id: journalId, ledger_id: vehicleLedgerId, amount: -a }
-  );
-  return journalId;
-}
+// NOTE: The companion "Freight Journal" feature was removed — bilties no longer
+// auto-post a Dr Freight Expense / Cr Vehicle voucher. The helpers
+// getFreightJournalTypeId() and createFreightJournal() were deleted with it.
 
 function toNum(v) {
   if (v === null || v === undefined || v === '') return 0;
@@ -204,33 +155,7 @@ async function resolveItemId(conn, name, { required = false, label = 'goods_type
   return rows[0].id;
 }
 
-// Owner now lives in its own `owner_master` table (no longer a slice of
-// ledger_master). Resolves a free-text owner name to its id; auto-creates
-// a new owner_master row if the name doesn't match anything yet (the bilty
-// form lets users type freely — keeping their input live in the DB).
-async function resolveOwnerLedgerId(conn, name, { required = false, label = 'owner', userId = null } = {}) {
-  const trimmed = emptyToNull(name);
-  if (trimmed === null) {
-    if (required) {
-      const e = new Error(`${label}_required`);
-      e.code = `${label}_required`;
-      throw e;
-    }
-    return null;
-  }
-  const [rows] = await conn.execute(
-    'SELECT id FROM owner_master WHERE name = :name LIMIT 1',
-    { name: trimmed }
-  );
-  if (rows.length) return rows[0].id;
-  const [r] = await conn.execute(
-    'INSERT INTO owner_master (name, created_by) VALUES (:name, :uid)',
-    { name: trimmed, uid: userId ?? null }
-  );
-  return r.insertId;
-}
-
-// Agent now lives in its own `agent_master` table. Auto-creates on first use.
+// Agents are ledgers in the 'agent' ledger group. Auto-creates on first use.
 async function resolveAgentId(conn, name, { required = false, label = 'agent', userId = null } = {}) {
   const trimmed = emptyToNull(name);
   if (trimmed === null) {
@@ -242,12 +167,15 @@ async function resolveAgentId(conn, name, { required = false, label = 'agent', u
     return null;
   }
   const [rows] = await conn.execute(
-    'SELECT id FROM agent_master WHERE name = :name LIMIT 1',
+    `SELECT lm.id FROM ledger_master lm
+       JOIN ledger_group lg ON lg.id = lm.ledger_group_id
+      WHERE lm.name = :name AND lg.group_name = 'agent' LIMIT 1`,
     { name: trimmed }
   );
   if (rows.length) return rows[0].id;
   const [r] = await conn.execute(
-    'INSERT INTO agent_master (name, created_by) VALUES (:name, :uid)',
+    `INSERT INTO ledger_master (ledger_group_id, name, created_by, billbybill)
+     VALUES ((SELECT id FROM ledger_group WHERE group_name='agent' LIMIT 1), :name, :uid, 'No')`,
     { name: trimmed, uid: userId ?? null }
   );
   return r.insertId;
@@ -263,16 +191,24 @@ async function resolveVehicleId(conn, name, { required = false, label = 'truck' 
     }
     return null;
   }
-  // Vehicles live in ledger_master under the dedicated "Vehicles" group.
-  const [rows] = await conn.execute(
-    `SELECT lm.id
-       FROM ledger_master lm
-       JOIN ledger_group  lg ON lg.id = lm.ledger_group_id
-      WHERE lm.name = :name AND lg.group_name = 'Vehicles'
-      LIMIT 1`,
+  // Vehicles live in vehicle_master now; their accounting ledger can be filed
+  // under ANY ledger group (it follows the vehicle's picked owner group), so
+  // resolve the truck's ledger through vehicle_master, falling back to a plain
+  // name match for safety.
+  const [vm] = await conn.execute(
+    `SELECT ledger_master_id FROM vehicle_master
+      WHERE vehicle_no = :name AND is_current = 1 AND ledger_master_id IS NOT NULL LIMIT 1`,
     { name: trimmed }
   );
-  if (!rows.length) {
+  let ledgerId = vm.length ? vm[0].ledger_master_id : null;
+  if (!ledgerId) {
+    const [lm] = await conn.execute(
+      'SELECT id FROM ledger_master WHERE name = :name LIMIT 1',
+      { name: trimmed }
+    );
+    ledgerId = lm.length ? lm[0].id : null;
+  }
+  if (!ledgerId) {
     if (required) {
       const e = new Error(`${label}_not_found`);
       e.code = `${label}_not_found`;
@@ -280,7 +216,7 @@ async function resolveVehicleId(conn, name, { required = false, label = 'truck' 
     }
     return null;
   }
-  return rows[0].id;
+  return ledgerId;
 }
 
 async function resolveBranchId(conn, name, { required = false, label = 'branch' } = {}) {
@@ -306,29 +242,6 @@ async function resolveBranchId(conn, name, { required = false, label = 'branch' 
     return null;
   }
   return rows[0].id;
-}
-
-// Zone name auto-creates on first use (free-text master, no extra metadata).
-async function resolveZoneId(conn, name, { required = false, label = 'zone', userId = null } = {}) {
-  const trimmed = emptyToNull(name);
-  if (trimmed === null) {
-    if (required) {
-      const e = new Error(`${label}_required`);
-      e.code = `${label}_required`;
-      throw e;
-    }
-    return null;
-  }
-  const [rows] = await conn.execute(
-    'SELECT id FROM zone_master WHERE name = :name LIMIT 1',
-    { name: trimmed }
-  );
-  if (rows.length) return rows[0].id;
-  const [r] = await conn.execute(
-    'INSERT INTO zone_master (name, created_by) VALUES (:name, :uid)',
-    { name: trimmed, uid: userId ?? null }
-  );
-  return r.insertId;
 }
 
 async function resolveDestinationId(conn, name, { required = false, label = 'destination' } = {}) {
@@ -391,14 +304,11 @@ const HEADER_SELECT = `
   agent.name AS agent_name,
   v.bill_to_id,
   bt.name    AS bill_to,
-  v.owner_id,
-  own.name   AS owner_name,
+  v.owner_name,
   v.vehicle_id,
   veh.name   AS truck_no,
   v.goods_type_id,
   gt.name    AS goods_type,
-  v.zone_id,
-  zn.name    AS zone_name,
   v.created_by,
   v.created_at,
   v.updated_at
@@ -406,12 +316,10 @@ const HEADER_SELECT = `
 const HEADER_FROM = `
   vch_details v
   LEFT JOIN ledger_master      cons  ON cons.id  = v.ledger_master_id
-  LEFT JOIN agent_master       agent ON agent.id = v.agent_id
+  LEFT JOIN ledger_master      agent ON agent.id = v.agent_id
   LEFT JOIN ledger_master      bt    ON bt.id    = v.bill_to_id
-  LEFT JOIN owner_master       own   ON own.id   = v.owner_id
   LEFT JOIN ledger_master      veh   ON veh.id   = v.vehicle_id
   LEFT JOIN item_master        gt    ON gt.id    = v.goods_type_id
-  LEFT JOIN zone_master        zn    ON zn.id    = v.zone_id
   LEFT JOIN branch_master      br    ON br.id    = v.branch_id
 `;
 
@@ -533,9 +441,7 @@ async function createWithChildren({ header, items, userId }, externalConn) {
     });
     const agentId = await resolveAgentId(conn, header.agent_name, { label: 'agent', userId });
     const billToId = await resolveLedgerId(conn, header.bill_to, { label: 'bill_to' });
-    const ownerId = await resolveOwnerLedgerId(conn, header.owner_name, { label: 'owner', userId });
     const vehicleId = await resolveVehicleId(conn, header.truck_no, { label: 'truck' });
-    const zoneId = await resolveZoneId(conn, header.zone_name ?? header.zone, { label: 'zone', userId });
     const branchId = await resolveBranchId(conn, header.branch, { label: 'branch' });
     // goods_type required when there are line items (we need item_id to write
     // batch rows). With zero items it's still valid to omit.
@@ -553,8 +459,11 @@ async function createWithChildren({ header, items, userId }, externalConn) {
       const lineToId   = await resolveDestinationId(conn, it.to_loc,   { label: 'to' });
       const qty = toNum(it.qty);
       const rate = toNum(it.rate);
-      const amount = round2(qty * rate);
-      freightSubtotal += amount;
+      const amount = round2(qty * rate); // per-line freight (batch.amount)
+      // Freight Expense = Σ(qty × l_rate). This is what posts to the companion
+      // Freight Journal (Dr Freight Expense / Cr Vehicle) and is stored as the
+      // bilty's amount — i.e. it replaces the old qty×rate "freight total".
+      freightSubtotal += round2(qty * toNum(it.l_rate));
       resolvedItems.push({ ...it, _consignee_id: lineConsigneeId, _from_id: lineFromId, _to_id: lineToId, _qty: qty, _rate: rate, _amount: amount });
     }
     freightSubtotal = round2(freightSubtotal);
@@ -568,13 +477,13 @@ async function createWithChildren({ header, items, userId }, externalConn) {
       [h] = await conn.execute(
         `INSERT INTO vch_details
            (vch_type_id, vch_no, vch_date, branch_id,
-            ledger_master_id, agent_id, bill_to_id, owner_id,
-            vehicle_id, goods_type_id, zone_id,
+            ledger_master_id, agent_id, bill_to_id, owner_name,
+            vehicle_id, goods_type_id,
             amount, created_by)
          VALUES
            (:vch_type_id, :vch_no, :vch_date, :branch_id,
-            :ledger_master_id, :agent_id, :bill_to_id, :owner_id,
-            :vehicle_id, :goods_type_id, :zone_id,
+            :ledger_master_id, :agent_id, :bill_to_id, :owner_name,
+            :vehicle_id, :goods_type_id,
             :amount, :created_by)`,
         {
           vch_type_id: vchTypeId,
@@ -584,10 +493,9 @@ async function createWithChildren({ header, items, userId }, externalConn) {
           ledger_master_id: consignorId,
           agent_id: agentId,
           bill_to_id: billToId,
-          owner_id: ownerId,
+          owner_name: emptyToNull(header.owner_name),
           vehicle_id: vehicleId,
           goods_type_id: goodsTypeId,
-          zone_id: zoneId,
           amount: freightSubtotal,
           created_by: userId ?? null,
         }
@@ -607,11 +515,9 @@ async function createWithChildren({ header, items, userId }, externalConn) {
     // ledger entry (matches the opening-stock pattern, allowed by schema).
     await insertLineItems(conn, vchId, goodsTypeId, resolvedItems, null);
 
-    // Companion Freight Journal voucher tied to this bilty via parent_vch_id.
-    //   Dr Freight Expense / Cr <vehicle's per-truck ledger>
-    if (freightSubtotal > 0 && vehicleId) {
-      await createFreightJournal(conn, vchId, freightSubtotal, toDateOrNull(header.bilty_date), userId, vehicleId);
-    }
+    // NOTE: Bilties intentionally do NOT post a companion Freight Journal.
+    // The freight-expense figure (Σ qty × l_rate) is stored on the bilty's
+    // amount; the Advance/Fuel budget reads it from the line items directly.
 
     if (ownConn) await conn.commit();
     return { id: vchId, bilty_no };
@@ -716,9 +622,7 @@ async function updateWithChildren(id, { header, items, userId = null }) {
     });
     const agentId = await resolveAgentId(conn, header.agent_name, { label: 'agent', userId });
     const billToId = await resolveLedgerId(conn, header.bill_to, { label: 'bill_to' });
-    const ownerId = await resolveOwnerLedgerId(conn, header.owner_name, { label: 'owner', userId });
     const vehicleId = await resolveVehicleId(conn, header.truck_no, { label: 'truck' });
-    const zoneId = await resolveZoneId(conn, header.zone_name ?? header.zone, { label: 'zone', userId });
     const branchId = await resolveBranchId(conn, header.branch, { label: 'branch' });
     const goodsTypeId = await resolveItemId(conn, header.goods_type, {
       required: Array.isArray(items) && items.length > 0,
@@ -734,8 +638,11 @@ async function updateWithChildren(id, { header, items, userId = null }) {
       const lineToId   = await resolveDestinationId(conn, it.to_loc,   { label: 'to' });
       const qty = toNum(it.qty);
       const rate = toNum(it.rate);
-      const amount = round2(qty * rate);
-      freightSubtotal += amount;
+      const amount = round2(qty * rate); // per-line freight (batch.amount)
+      // Freight Expense = Σ(qty × l_rate). This is what posts to the companion
+      // Freight Journal (Dr Freight Expense / Cr Vehicle) and is stored as the
+      // bilty's amount — i.e. it replaces the old qty×rate "freight total".
+      freightSubtotal += round2(qty * toNum(it.l_rate));
       resolvedItems.push({ ...it, _consignee_id: lineConsigneeId, _from_id: lineFromId, _to_id: lineToId, _qty: qty, _rate: rate, _amount: amount });
     }
     freightSubtotal = round2(freightSubtotal);
@@ -751,10 +658,9 @@ async function updateWithChildren(id, { header, items, userId = null }) {
            ledger_master_id  = :ledger_master_id,
            agent_id          = :agent_id,
            bill_to_id        = :bill_to_id,
-           owner_id          = :owner_id,
+           owner_name        = :owner_name,
            vehicle_id        = :vehicle_id,
            goods_type_id     = :goods_type_id,
-           zone_id           = :zone_id,
            amount            = :amount
          WHERE id = :id AND vch_type_id = :vch_type_id`,
         {
@@ -766,10 +672,9 @@ async function updateWithChildren(id, { header, items, userId = null }) {
           ledger_master_id: consignorId,
           agent_id: agentId,
           bill_to_id: billToId,
-          owner_id: ownerId,
+          owner_name: emptyToNull(header.owner_name),
           vehicle_id: vehicleId,
           goods_type_id: goodsTypeId,
-          zone_id: zoneId,
           amount: freightSubtotal,
         }
       );
@@ -796,15 +701,12 @@ async function updateWithChildren(id, { header, items, userId = null }) {
       { id }
     ).catch(() => { /* batch already deleted; rollup may already be orphaned */ });
 
-    // Drop the old companion Freight Journal voucher (cascade clears its
-    // ledger_entries via FK ON DELETE CASCADE).
+    // Bilties no longer post a companion Freight Journal. Still clear any
+    // legacy journal left over from before this change (cascade removes its
+    // ledger_entries via FK ON DELETE CASCADE) so editing an old bilty cleans up.
     await conn.execute('DELETE FROM vch_details WHERE parent_vch_id = :id', { id });
 
     await insertLineItems(conn, id, goodsTypeId, resolvedItems, null);
-
-    if (freightSubtotal > 0 && vehicleId) {
-      await createFreightJournal(conn, id, freightSubtotal, toDateOrNull(header.bilty_date), null, vehicleId);
-    }
 
     await conn.commit();
     return true;

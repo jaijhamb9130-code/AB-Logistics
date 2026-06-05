@@ -6,7 +6,7 @@
  * (Party / Owner / Agent — ids 1/2/3) cannot be deleted.
  */
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   Alert,
   Pressable,
@@ -26,24 +26,10 @@ import { AutocompleteField } from '../components/AutocompleteField';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { colors, radius, spacing, text, typography } from '../constants/theme';
 import { ledgerGroupService } from '../services/ledgerGroupService';
-import { ledgerMasterService } from '../services/ledgerMasterService';
 import { validateRequired } from '../utils/masterValidators';
 import type { LedgerGroupItem } from '../../../shared/types/ledgerGroup';
 import { useAuth } from '../context/AuthContext';
 import { canDoAction } from '../navigation/guards';
-
-// Accounting-standard groups that the user shouldn't delete by accident.
-// Compared by name so the protection survives id reshuffles.
-const SYSTEM_GROUP_NAMES = new Set<string>([
-  'Sales Accounts',
-  'Purchase Accounts',
-  'Duties & Taxes',
-  'Indirect Income',
-  'Bank Accounts',
-  'Cash-in-Hand',
-  'Direct Expenses',
-  'Sundry Debtors',
-]);
 
 const EMPTY_FORM = { group_name: '', parent_name: '' };
 type FormState = typeof EMPTY_FORM;
@@ -85,8 +71,9 @@ export function LedgerGroupsScreen() {
     return rows.filter((r) => r.group_name.toLowerCase().includes(q));
   }, [rows, search]);
 
-  // All group names — fed into the parent autocomplete inside the form.
-  // When editing, exclude the row itself so it can't pick itself as parent.
+  // Parent options = EVERY ledger group (permanent parents AND user-created
+  // children), so a group can be nested under any other. Only the row itself is
+  // excluded (a group can't be its own parent).
   const parentOptions = useMemo(() => {
     if (!rows) return [];
     const excludeId = editTarget?.id;
@@ -95,20 +82,6 @@ export function LedgerGroupsScreen() {
       .map((r) => r.group_name)
       .sort();
   }, [rows, editTarget]);
-
-  const [ledgerMasterOptions, setLedgerMasterOptions] = useState<string[]>([]);
-
-  useEffect(() => {
-    if (form.group_name.length >= 3) {
-      ledgerMasterService.search(undefined, form.group_name)
-        .then(res => {
-          setLedgerMasterOptions(res.map(r => r.name));
-        })
-        .catch(() => { });
-    } else {
-      setLedgerMasterOptions([]);
-    }
-  }, [form.group_name]);
 
   const openCreate = useCallback(() => {
     setEditTarget(null);
@@ -138,6 +111,9 @@ export function LedgerGroupsScreen() {
     const e: FormErrors = {};
     const nameErr = validateRequired(s.group_name, 'Ledger name');
     if (nameErr) e.group_name = nameErr;
+    // New / edited groups must sit under one of the 28 permanent parents.
+    const parentErr = validateRequired(s.parent_name, 'Parent group');
+    if (parentErr) e.parent_name = parentErr;
     return e;
   };
 
@@ -182,8 +158,10 @@ export function LedgerGroupsScreen() {
       const codeMap: Record<string, string> = {
         name_taken: 'A ledger group with that name already exists.',
         invalid_name: 'Ledger name is required.',
+        parent_required: 'Pick a parent group — new groups must be a child of one of the 28 standard groups.',
         parent_not_found: 'The selected parent group no longer exists.',
         cannot_be_self_parent: 'A group cannot be its own parent.',
+        system_group_locked: 'This is a permanent group and cannot be changed.',
       };
       setFormError(serverMessage || codeMap[code] || 'Could not save. Try again.');
     } finally {
@@ -201,7 +179,11 @@ export function LedgerGroupsScreen() {
     } catch (err: any) {
       const msg = err?.response?.data?.message
         || 'Could not delete the group.';
-      Alert.alert('Cannot delete', msg);
+      // react-native-web's Alert.alert is a no-op, so the failure would be
+      // invisible on web (looking like the button "did nothing"). Use the
+      // browser alert there; fall back to RN Alert on native.
+      if (typeof window !== 'undefined' && typeof window.alert === 'function') window.alert(msg);
+      else Alert.alert('Cannot delete', msg);
       setDeleteTarget(null);
     } finally {
       setDeleting(false);
@@ -223,7 +205,10 @@ export function LedgerGroupsScreen() {
     {
       key: 'actions', label: 'Actions', width: 130, align: 'right',
       render: (r) => {
-        const isSystem = SYSTEM_GROUP_NAMES.has(r.group_name);
+        // The 28 permanent groups have no Edit/Delete — they can't be changed.
+        if (r.is_system) {
+          return <Text style={styles.permanentTag}>Permanent</Text>;
+        }
         return (
           <View style={styles.rowActions}>
             {canDoAction(user, 'ledgergroup', 'edit') && (
@@ -238,20 +223,12 @@ export function LedgerGroupsScreen() {
             )}
             {canDoAction(user, 'ledgergroup', 'delete') && (
               <Pressable
-                onPress={() => !isSystem && setDeleteTarget(r)}
-                disabled={isSystem}
+                onPress={() => setDeleteTarget(r)}
                 accessibilityRole="button"
-                accessibilityLabel={
-                  isSystem
-                    ? `${r.group_name} is a system group and cannot be deleted`
-                    : `Delete ${r.group_name}`
-                }
-                accessibilityState={{ disabled: isSystem }}
+                accessibilityLabel={`Delete ${r.group_name}`}
                 testID={`delete-group-${r.id}`}
               >
-                <Text style={[styles.deleteAction, isSystem && styles.actionDisabled]}>
-                  Delete
-                </Text>
+                <Text style={styles.deleteAction}>Delete</Text>
               </Pressable>
             )}
           </View>
@@ -327,10 +304,12 @@ export function LedgerGroupsScreen() {
             </View>
           ) : null}
 
-          <AutocompleteField
+          {/* Ledger group names are created here and stand on their own — they
+              are NOT looked up against existing ledger names, so this is a
+              plain free-text input (no autocomplete / dropdown). */}
+          <InputField
             label="Ledger Name *"
             value={form.group_name}
-            options={ledgerMasterOptions}
             onChangeText={(v) => setForm((f) => ({ ...f, group_name: v }))}
             error={errs.group_name ?? null}
             placeholder="e.g. Sundry Debtors"
@@ -338,11 +317,12 @@ export function LedgerGroupsScreen() {
           />
 
           <AutocompleteField
-            label="Parent Group"
+            label="Parent Group *"
             value={form.parent_name}
             options={parentOptions}
             onChangeText={(v) => setForm((f) => ({ ...f, parent_name: v }))}
-            placeholder="(leave blank for Primary)"
+            error={errs.parent_name ?? null}
+            placeholder="Select a parent group..."
             testID="ledger-group-parent-input"
           />
 
@@ -429,6 +409,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm, paddingVertical: spacing.xs,
   },
   actionDisabled: { color: colors.textMuted, opacity: 0.4 },
+  permanentTag: {
+    ...text.label, color: colors.textMuted, fontStyle: 'italic',
+    textAlign: 'right',
+  },
   formScroll: { maxHeight: 420 },
   formContent: { paddingBottom: spacing.sm },
   formError: {

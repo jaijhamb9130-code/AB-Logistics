@@ -6,6 +6,8 @@ import type {
   DaybookEntry,
   PendingRef,
   OtherLedger,
+  BiltyVehicleLedger,
+  BiltyBudget,
 } from '../../../shared/types/voucher';
 
 const BASE = '/api/vouchers';
@@ -63,8 +65,24 @@ export const voucherService = {
     return data;
   },
 
-  async ledgerSearch(q: string): Promise<OtherLedger[]> {
-    const { data } = await http.get<OtherLedger[]>(`${BASE}/ledger-search`, { params: { q } });
+  // `group` (optional) restricts the search to one ledger group (Fuel mode row 1).
+  async ledgerSearch(q: string, group?: string): Promise<OtherLedger[]> {
+    const { data } = await http.get<OtherLedger[]>(`${BASE}/ledger-search`, { params: { q, ...(group ? { group } : {}) } });
+    return data;
+  },
+
+  // Resolve a bilty's vehicle (truck) ledger for the Advance flow's row 1.
+  async biltyVehicleLedger(biltyId: number): Promise<BiltyVehicleLedger> {
+    const { data } = await http.get<BiltyVehicleLedger>(`${BASE}/bilty-vehicle-ledger`, { params: { bilty_id: biltyId } });
+    return data;
+  },
+
+  // Advance/Fuel spend cap for a bilty. `excludeId` (the voucher being edited)
+  // is dropped from `used` so an edit measures against everyone else's spend.
+  async biltyBudget(biltyId: number, excludeId?: number | null): Promise<BiltyBudget> {
+    const { data } = await http.get<BiltyBudget>(`${BASE}/bilty-budget`, {
+      params: { bilty_id: biltyId, ...(excludeId ? { exclude_id: excludeId } : {}) },
+    });
     return data;
   },
 };

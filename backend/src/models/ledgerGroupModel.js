@@ -7,21 +7,26 @@ const pool = require('../db/pool');
 // Note: the Docker-managed `ledger_group` table only has `created_at`
 // (no `updated_at`) — query reflects that.
 const SELECT_WITH_PARENT = `
-  SELECT lg.id, lg.group_name, lg.parent_id,
+  SELECT lg.id, lg.group_name, lg.parent_id, lg.is_system,
          p.group_name AS parent_name,
          lg.created_at
     FROM ledger_group lg
     LEFT JOIN ledger_group p ON p.id = lg.parent_id
 `;
 
+// The 28 permanent (system) groups list FIRST — alphabetically — then every
+// user-created group after them, never interleaved. Within the custom band,
+// top-level groups come before child groups, both alphabetical.
 async function findAll() {
-  const [rows] = await pool.execute(`${SELECT_WITH_PARENT} ORDER BY lg.group_name ASC`);
+  const [rows] = await pool.execute(
+    `${SELECT_WITH_PARENT} ORDER BY lg.is_system DESC, (lg.parent_id IS NOT NULL), lg.group_name ASC`
+  );
   return rows;
 }
 
 async function findById(id) {
   const [rows] = await pool.execute(
-    `SELECT id, group_name, parent_id, created_at
+    `SELECT id, group_name, parent_id, is_system, created_at
        FROM ledger_group WHERE id = :id LIMIT 1`,
     { id }
   );
@@ -91,8 +96,13 @@ async function countChildren(id) {
 }
 
 async function countReferences(id) {
+  // A group is "in use" if any ledger OR any vehicle is filed under it. Counting
+  // vehicle_master here makes deletion return a clean 409 instead of a raw FK
+  // 500 (vehicle_master.ledger_group_id → ledger_group is a real foreign key).
   const [rows] = await pool.execute(
-    `SELECT COUNT(*) AS c FROM ledger_master WHERE ledger_group_id = :id`,
+    `SELECT
+       (SELECT COUNT(*) FROM ledger_master  WHERE ledger_group_id = :id)
+     + (SELECT COUNT(*) FROM vehicle_master WHERE ledger_group_id = :id) AS c`,
     { id }
   );
   return rows[0].c;

@@ -20,6 +20,8 @@ export interface VchType {
   is_system: 0 | 1;
   /** Optional voucher-number prefix; null/empty = plain numbering. */
   prefix: string | null;
+  /** Optional branch (name). When set, the bilty form auto-fills + locks Branch. */
+  branch?: string | null;
 }
 
 export interface OtherLedger {
@@ -73,6 +75,30 @@ export interface CreateVoucherRequest {
   items?: VoucherItemInput[];
   ledgers?: VoucherLedgerInput[];
   bill_allocation?: BillAllocationInput[];
+  /** Advance/Fuel sub-mode (Contra/Journal/Payment/Receipt only): 1 = advance, 2 = fuel, null/0 = normal. */
+  bilty_mode?: number | null;
+  /** Bilty selected in Advance/Fuel mode — persisted so the Bilty No can be restored on edit. */
+  bilty_id?: number | null;
+}
+
+/** Response of GET /api/vouchers/bilty-vehicle-ledger — truck ledger to lock into row 1 (Advance). */
+export interface BiltyVehicleLedger {
+  ledger_id: number | null;
+  ledger_name: string | null;
+  truck_no: string | null;
+}
+
+/**
+ * Response of GET /api/vouchers/bilty-budget — Advance/Fuel spend cap for a bilty.
+ * transport_total = Σ(qty × l_rate) over the bilty's line items.
+ * used            = Σ(Dr) of existing Advance+Fuel journals on the bilty (shared pool).
+ * remaining       = transport_total − used. A new Advance/Fuel journal's Dr total
+ *                   may not exceed `remaining` (enforced both client- and server-side).
+ */
+export interface BiltyBudget {
+  transport_total: number;
+  used: number;
+  remaining: number;
 }
 
 // ── List + detail responses ─────────────────────────────────────────────────
@@ -129,6 +155,9 @@ export interface VoucherDetail extends VoucherListItem {
   vch_type_id: number | null;
   ledger_master_id: number;
   deemed_positive: DeemedPositive;
+  bilty_mode?: number | null;
+  /** Bilty selected in Advance/Fuel mode (restores the Bilty No on edit). */
+  bilty_id?: number | null;
   ledgerEntries: VoucherLedgerEntry[];
   billAllocations: VoucherBillAllocation[];
 }
@@ -141,12 +170,16 @@ export interface DaybookEntry {
   vch_date: string | null;
   remark: string | null;
   amount: number | string;
+  /** For child vouchers (e.g. Freight Journal) → the source bilty's vch id. */
+  parent_vch_id: number | null;
   party_name: string | null;
   vch_type_name: string | null;
   vch_subtype_name: string | null;
   dr_amount: number | string;
   cr_amount: number | string;
   created_at: string;
+  /** Last create/update timestamp — drives same-day ordering in the Daybook. */
+  updated_at: string;
 }
 
 export interface PendingRef {

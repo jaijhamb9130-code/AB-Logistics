@@ -25,6 +25,9 @@ exports.create = async (req, res, next) => {
     if (err && err.code === 'duplicate_vch_no') {
       return res.status(409).json({ error: 'duplicate_vch_no', message: err.message });
     }
+    if (err && err.code === 'bilty_budget_exceeded') {
+      return res.status(422).json({ error: 'bilty_budget_exceeded', message: err.message, details: err.details });
+    }
     return next(err);
   }
 };
@@ -83,13 +86,42 @@ exports.otherLedgers = async (_req, res, next) => {
   } catch (err) { return next(err); }
 };
 
-// GET /api/vouchers/ledger-search?q=
+// GET /api/vouchers/ledger-search?q=&group=
+// `group` (optional) restricts results to one ledger group — used by the Fuel
+// voucher mode's first row. When a group is given, an empty query lists every
+// ledger in that group; otherwise 2+ chars are required.
 exports.ledgerSearch = async (req, res, next) => {
   try {
     const q = String(req.query.q || '').trim();
-    if (q.length < 2) return res.status(200).json([]);
-    const rows = await voucherModel.searchAllLedgers(q);
+    const group = req.query.group ? String(req.query.group).trim() : null;
+    if (!group && q.length < 2) return res.status(200).json([]);
+    const rows = await voucherModel.searchAllLedgers(q, group);
     return res.status(200).json(rows);
+  } catch (err) { return next(err); }
+};
+
+// GET /api/vouchers/bilty-vehicle-ledger?bilty_id=
+// Resolves a bilty's vehicle (truck) ledger for the ADVANCE flow, where it
+// auto-fills + locks the first journal row.
+exports.biltyVehicleLedger = async (req, res, next) => {
+  try {
+    const biltyId = parseId(req.query.bilty_id);
+    if (biltyId === null) return res.status(400).json({ error: 'invalid_bilty_id' });
+    const result = await voucherModel.resolveBiltyVehicleLedger(biltyId);
+    if (!result) return res.status(404).json({ error: 'not_found' });
+    return res.status(200).json(result);
+  } catch (err) { return next(err); }
+};
+
+// GET /api/vouchers/bilty-budget?bilty_id=&exclude_id=
+// Advance/Fuel spend cap for a bilty: { transport_total, used, remaining }.
+exports.biltyBudget = async (req, res, next) => {
+  try {
+    const biltyId = parseId(req.query.bilty_id);
+    if (biltyId === null) return res.status(400).json({ error: 'invalid_bilty_id' });
+    const excludeId = req.query.exclude_id ? parseId(req.query.exclude_id) : null;
+    const result = await voucherModel.getBiltyBudget(biltyId, excludeId);
+    return res.status(200).json(result);
   } catch (err) { return next(err); }
 };
 
@@ -118,6 +150,9 @@ exports.update = async (req, res, next) => {
   } catch (err) {
     if (err && err.code === 'duplicate_vch_no') {
       return res.status(409).json({ error: 'duplicate_vch_no', message: err.message });
+    }
+    if (err && err.code === 'bilty_budget_exceeded') {
+      return res.status(422).json({ error: 'bilty_budget_exceeded', message: err.message, details: err.details });
     }
     return next(err);
   }

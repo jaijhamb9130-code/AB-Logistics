@@ -292,7 +292,6 @@ export function BiltyDetailScreen() {
           <KV label="Owner" value={data.owner_name} />
           <KV label="Agent" value={data.agent_name} />
           <KV label="Branch" value={data.branch} />
-          <KV label="Zone" value={data.zone_name} />
           <KV label="Goods Type" value={data.goods_type} />
         </View>
       </View>
@@ -478,14 +477,6 @@ function MobileBiltyPreviewView({
                     </Text>
                   </View>
                 </View>
-                <View style={mStyles.mkvHalfRow}>
-                  <View style={mStyles.mkvHalf}>
-                    <Text style={mStyles.mkvLabel}>Zone</Text>
-                    <Text style={[mStyles.mkvValue, mStyles.mkvValueLeft]} numberOfLines={1}>
-                      {data.zone_name || '—'}
-                    </Text>
-                  </View>
-                </View>
               </>
             )}
           </PSection>
@@ -597,7 +588,6 @@ function BiltyHeaderEdit({ control }: { control: any; biltyNo?: string }) {
         <EditCell control={control} name="header.truck_no" label="Truck No" />
       </View>
       <View style={mStyles.gridRow}>
-        <EditCell control={control} name="header.zone_name" label="Zone" />
         <EditCell control={control} name="header.goods_type" label="Goods Type" />
         <View style={mStyles.cellWrap} />
       </View>
@@ -672,7 +662,6 @@ function dataToFormValues(data: BiltyDetail): CreateBiltyInput {
       owner_name: data.owner_name ?? '',
       agent_name: data.agent_name ?? '',
       branch: data.branch ?? '',
-      zone_name: data.zone_name ?? '',
       truck_no: data.truck_no ?? '',
       goods_type: data.goods_type ?? '',
     } as any,
