@@ -56,7 +56,6 @@ const TAB_TO_PAGE: Partial<Record<TabName, PermissionPage>> = {
   LedgerMaster: 'ledgermaster',
   Customers: 'customermaster',
   OtherLedgers: 'ledgermaster', // Other ledgers sharing the general ledger master perm
-  OwnerMaster: 'ownermaster',
   AgentMaster: 'agentmaster',
   ItemMaster: 'itemmaster',
   ItemGroup: 'itemgroup',
@@ -64,7 +63,6 @@ const TAB_TO_PAGE: Partial<Record<TabName, PermissionPage>> = {
   VehicleMaster: 'vehiclemaster',
   DestinationMaster: 'destinationmaster',
   BranchMaster: 'branchmaster',
-  ZoneMaster: 'zonemaster',
   LedgerGroups: 'ledgergroup',
   VoucherType: 'voucher',
   Users: 'user',
@@ -144,9 +142,9 @@ export function pickInitialTab(
   // 1. Ledger dropdown items, in the order shown in the dropdown.
   const ledgerOrder: TabName[] = [
     'LedgerMaster', 'Customers', 'OtherLedgers',
-    'OwnerMaster', 'AgentMaster',
+    'AgentMaster',
     'ItemMaster', 'ItemGroup', 'ItemCategory',
-    'VehicleMaster', 'DestinationMaster', 'BranchMaster', 'ZoneMaster', 'LedgerGroups', 'VoucherType',
+    'VehicleMaster', 'DestinationMaster', 'BranchMaster', 'LedgerGroups', 'VoucherType',
   ];
   for (const t of ledgerOrder) {
     if (canAccessTab(t, user)) return t;

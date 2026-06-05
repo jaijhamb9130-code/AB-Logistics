@@ -16,7 +16,9 @@ import { colors, radius, spacing, typography } from '../constants/theme';
 const ReactDOM: any = Platform.OS === 'web' ? require('react-dom') : null;
 
 const ITEM_HEIGHT = 42;
-const VISIBLE_ITEMS = 7;
+// Show a tall window so typical lists (e.g. all ledger groups) are visible at
+// once; anything longer scrolls with an always-visible scrollbar.
+const VISIBLE_ITEMS = 12;
 
 interface Props {
   label: string;
@@ -50,6 +52,7 @@ interface AnchorRect {
   top: number;
   left: number;
   width: number;
+  maxHeight: number;
 }
 
 export function SelectDropdown({
@@ -90,7 +93,23 @@ export function SelectDropdown({
     const node = wrapRef.current;
     if (!node || typeof node.getBoundingClientRect !== 'function') return;
     const r = node.getBoundingClientRect();
-    setAnchor({ top: r.bottom + 4, left: r.left, width: r.width });
+    const MARGIN = 12;
+    // Height we'd like (cap at VISIBLE_ITEMS rows) and the space each way.
+    const desiredH = ITEM_HEIGHT * Math.min(Math.max(visibleOptions.length, 1), VISIBLE_ITEMS) + 8;
+    const spaceBelow = window.innerHeight - r.bottom - MARGIN;
+    const spaceAbove = r.top - MARGIN;
+    // Open downward unless there's clearly more room above. Either way the menu
+    // is capped to the available space so the WHOLE list stays on-screen and
+    // scrolls — the bottom entries (e.g. child groups) are always reachable.
+    const up = spaceBelow < desiredH && spaceAbove > spaceBelow;
+    const avail = up ? spaceAbove : spaceBelow;
+    const maxHeight = Math.max(ITEM_HEIGHT * 2, Math.min(desiredH, avail));
+    setAnchor({
+      top: up ? Math.max(MARGIN, r.top - maxHeight - 4) : r.bottom + 4,
+      left: r.left,
+      width: r.width,
+      maxHeight,
+    });
   };
 
   useLayoutEffect(() => {
@@ -166,7 +185,12 @@ export function SelectDropdown({
   const onChangeSearchText = (t: string) => setSearchText(t);
 
   const onFieldFocus = () => {
-    // searchable mode: don't reveal the list on focus alone — wait for typing.
+    if (disabled) return;
+    // searchable mode: reveal the FULL list as soon as the field gains focus
+    // (click or tab-in). Seeding searchText to '' makes `isSearching` true with
+    // every option visible; typing then filters. Without this the menu only
+    // appeared after the first keystroke, so a plain click showed nothing.
+    setSearchText((t) => (t === null ? '' : t));
   };
 
   const onFieldBlur = () => {
@@ -221,8 +245,12 @@ export function SelectDropdown({
           <div
             ref={listScrollRef}
             style={{
-              maxHeight: ITEM_HEIGHT * VISIBLE_ITEMS,
+              // Sized to the available viewport space (computed in measure), so
+              // the entire list — including the bottom child groups — is always
+              // reachable by scrolling on-screen.
+              maxHeight: anchor.maxHeight,
               overflowY: 'auto',
+              scrollbarWidth: 'thin' as any,
             }}
           >
             {visibleOptions.length === 0 ? (

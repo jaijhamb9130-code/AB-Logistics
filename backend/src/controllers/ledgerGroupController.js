@@ -3,20 +3,9 @@
 const ledgerGroupModel = require('../models/ledgerGroupModel');
 const { isNonEmptyString, parseId } = require('../utils/validators');
 
-// IDs 1, 2, 3 are the system-seeded Party / Owner / Agent groups that the
-// hardcoded UI screens depend on. Block deletion to prevent orphaned data.
-// Accounting-standard groups that the user shouldn't delete by accident.
-// Compared by name so the protection survives id reshuffles.
-const SYSTEM_GROUP_NAMES = new Set([
-  'Sales Accounts',
-  'Purchase Accounts',
-  'Duties & Taxes',
-  'Indirect Income',
-  'Bank Accounts',
-  'Cash-in-Hand',
-  'Direct Expenses',
-  'Sundry Debtors',
-]);
+// Permanent groups are flagged with ledger_group.is_system = 1 (the 28 standard
+// Tally groups). They are non-editable, non-deletable top-level parents. Every
+// user-created group is a non-system CHILD of one of them.
 
 exports.list = async (_req, res, next) => {
   try {
@@ -60,6 +49,8 @@ exports.create = async (req, res, next) => {
 
     const { parentId, error } = await resolveParentId(body.parent_id);
     if (error) return res.status(400).json({ error });
+    // Every user-created group must be a child — a parent is required.
+    if (parentId === null) return res.status(400).json({ error: 'parent_required' });
 
     const { id } = await ledgerGroupModel.create({
       group_name: body.group_name,
@@ -91,13 +82,23 @@ exports.update = async (req, res, next) => {
     const existing = await ledgerGroupModel.findById(id);
     if (!existing) return res.status(404).json({ error: 'not_found' });
 
+    // The 28 permanent groups can't be renamed or re-parented.
+    if (existing.is_system) {
+      return res.status(409).json({
+        error: 'system_group_locked',
+        message: `${existing.group_name} is a permanent group and cannot be edited.`,
+      });
+    }
+
     const body = req.body || {};
     if (!isNonEmptyString(body.group_name)) return res.status(400).json({ error: 'invalid_name' });
 
     const { parentId, error } = await resolveParentId(body.parent_id);
     if (error) return res.status(400).json({ error });
+    // User groups stay children — a parent is always required.
+    if (parentId === null) return res.status(400).json({ error: 'parent_required' });
 
-    if (parentId !== null && parentId === id) {
+    if (parentId === id) {
       return res.status(400).json({ error: 'cannot_be_self_parent' });
     }
 
@@ -124,10 +125,10 @@ exports.remove = async (req, res, next) => {
     const existing = await ledgerGroupModel.findById(id);
     if (!existing) return res.status(404).json({ error: 'not_found' });
 
-    if (SYSTEM_GROUP_NAMES.has(existing.group_name)) {
+    if (existing.is_system) {
       return res.status(409).json({
         error: 'system_group_locked',
-        message: `${existing.group_name} is a standard accounting group and cannot be deleted.`,
+        message: `${existing.group_name} is a permanent group and cannot be deleted.`,
       });
     }
 
@@ -143,7 +144,7 @@ exports.remove = async (req, res, next) => {
     if (refCount > 0) {
       return res.status(409).json({
         error: 'has_references',
-        message: `Cannot delete: ${refCount} ledger entry(ies) still use this group.`,
+        message: `Cannot delete: ${refCount} ledger(s)/vehicle(s) still use this group. Reassign them first.`,
       });
     }
 

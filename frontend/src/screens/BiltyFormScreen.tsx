@@ -36,16 +36,13 @@ import { ledgerGroupService } from '../services/ledgerGroupService';
 import { itemMasterService } from '../services/itemMasterService';
 import { vehicleMasterService } from '../services/vehicleMasterService';
 import { destinationService } from '../services/destinationService';
-import { zoneService } from '../services/zoneService';
-import { ownerService } from '../services/ownerService';
-import { agentService } from '../services/agentService';
 import { branchService } from '../services/branchService';
 import { colors, radius, spacing, typography } from '../constants/theme';
 import { useBiltyCreate, useBiltyUpdate } from '../hooks/useBiltyUpdate';
 import { biltyService } from '../services/biltyService';
 import { CreateBiltySchema } from '../../../shared/schemas/bilty.schema';
 import type { CreateBiltyInput } from '../../../shared/schemas/bilty.schema';
-import { itemsTotal, netPayable, toNum } from '../utils/biltyValidation';
+import { toNum, transportTotal } from '../utils/biltyValidation';
 import { getTodayISO } from '../utils/dateUtils';
 import type { BiltyStackParamList } from '../navigation/types';
 import { useResponsive } from '../hooks/useResponsive';
@@ -74,7 +71,6 @@ const EMPTY_HEADER: CreateBiltyInput['header'] = {
   owner_name: '',
   agent_name: '',
   branch: '',
-  zone_name: '',
   truck_no: '',
   goods_type: '',
 };
@@ -102,6 +98,9 @@ export function BiltyFormScreen() {
   // it to an id via /api/bilty/by-no/:no and then load as usual.
   const routeId = route.params?.id ?? null;
   const routeBiltyNo = route.params?.bilty_no ?? null;
+  // When opened from a Day Book row, return there on save/cancel instead of
+  // BiltyList / dashboard.
+  const returnTo = route.params?.returnTo ?? null;
   const [editingId, setEditingId] = useState<number | null>(routeId);
   useEffect(() => {
     if (routeId !== null) { setEditingId(routeId); return; }
@@ -122,63 +121,79 @@ export function BiltyFormScreen() {
     ? canDoAction(user, 'bilty', 'edit') || canDoAction(user, 'voucher', 'edit')
     : canDoAction(user, 'bilty', 'create') || canDoAction(user, 'voucher', 'create');
 
+  // Where save/cancel should land. Day Book origin → back to the Daybook.
+  const goToLanding = () => {
+    if (returnTo === 'daybook') {
+      (navigation as any).navigate('Billing', { screen: 'Daybook' });
+    } else if (canDoAction(user, 'bilty', 'view')) {
+      navigation.navigate('BiltyList');
+    } else {
+      (navigation as any).navigate('Billing', { screen: 'Daybook' });
+    }
+  };
+
   if (isMobile) {
     return (
       <MobileBiltyFormScreen
         editingId={editingId}
-        onClose={() => navigation.goBack()}
-        onSaved={() => {
-          // After save, land where the user can actually go: BiltyList for
-          // users with `bilty.view`, otherwise the Daybook (which is the
-          // entry point for staff who edit bilty rows via voucher perms
-          // without owning the Bilty page itself).
-          if (canDoAction(user, 'bilty', 'view')) {
-            navigation.navigate('BiltyList');
-          } else {
-            (navigation as any).navigate('Billing', { screen: 'Daybook' });
-          }
-        }}
+        onClose={() => { if (returnTo === 'daybook') goToLanding(); else navigation.goBack(); }}
+        onSaved={goToLanding}
         canSave={canSave}
       />
     );
   }
-  return <DesktopBiltyForm canSave={canSave} editingId={editingId} />;
+  return <DesktopBiltyForm canSave={canSave} editingId={editingId} returnTo={returnTo} />;
 }
 
 /**
- * Embeddable "create bilty" form for the Vouchers screen's "Bilty" vch type.
- * Always opens in new mode (no route params). On desktop it renders the
- * single-page bilty form; on mobile it renders the step1 → step2 → preview →
- * save wizard (same as the standalone mobile bilty flow). On save it navigates
- * to the Reports (bilty list) screen.
+ * Embeddable bilty form for the Vouchers screen's "Bilty" vch type. Opens in
+ * create mode by default; pass `editingId` to edit an existing bilty in-place
+ * (used when a Bilty / Freight Journal row is edited from the Day Book, so it
+ * opens here on the Vouchers page instead of the standalone Bilty edit screen).
+ * On desktop it renders the single-page bilty form; on mobile the step wizard.
+ * On save it returns to the Daybook.
  */
-export function BiltyCreateFormEmbedded({ onExit }: { onExit?: () => void }) {
+export function BiltyCreateFormEmbedded({ onExit, prefixOverride, branchOverride, editingId = null }: { onExit?: () => void; prefixOverride?: string | null; branchOverride?: string | null; editingId?: number | null }) {
   const { user } = useAuth();
   const { isMobile } = useResponsive();
   const navigation = useNavigation<Nav>();
-  const canSave =
-    canDoAction(user, 'bilty', 'create') || canDoAction(user, 'voucher', 'create');
+  const isEditing = editingId != null;
+  const canSave = isEditing
+    ? canDoAction(user, 'bilty', 'edit') || canDoAction(user, 'voucher', 'edit')
+    : canDoAction(user, 'bilty', 'create') || canDoAction(user, 'voucher', 'create');
   if (isMobile) {
     return (
       <MobileBiltyFormScreen
-        editingId={null}
+        editingId={editingId}
         canSave={canSave}
-        // Close (X) returns to the voucher form (host resets the type) rather
-        // than navigating out of the page.
-        onClose={() => { if (onExit) onExit(); else navigation.goBack(); }}
+        prefixOverride={prefixOverride}
+        branchOverride={branchOverride}
+        // Close (X): when editing, return to the Daybook (where we came from);
+        // when creating, hand back to the host so it resets the voucher type.
+        onClose={() => { if (!isEditing && onExit) onExit(); else (navigation as any).navigate('Daybook'); }}
         // Embedded in the Billing stack — go to the Daybook (BiltyList lives in
-        // the Bilty tab and isn't reachable from here).
-        onSaved={() => { (navigation as any).navigate('Daybook'); }}
+        // the Bilty tab and isn't reachable from here) with a success toast.
+        onSaved={() => { (navigation as any).navigate('Daybook', { notice: isEditing ? 'Bilty updated' : 'Bilty saved' }); }}
       />
     );
   }
-  return <DesktopBiltyForm canSave={canSave} editingId={null} embedded />;
+  return <DesktopBiltyForm canSave={canSave} editingId={editingId} embedded returnTo={isEditing ? 'daybook' : null} prefixOverride={prefixOverride} branchOverride={branchOverride} />;
 }
 
-function DesktopBiltyForm({ canSave, editingId, embedded = false }: { canSave: boolean; editingId: number | null; embedded?: boolean }) {
+function DesktopBiltyForm({ canSave, editingId, embedded = false, prefixOverride, branchOverride, returnTo = null }: { canSave: boolean; editingId: number | null; embedded?: boolean; prefixOverride?: string | null; branchOverride?: string | null; returnTo?: 'daybook' | null }) {
   const { user } = useAuth();
   const navigation = useNavigation<Nav>();
   const isEdit = editingId != null;
+
+  // Day Book origin → return to the Daybook on cancel. Returns true if it
+  // handled navigation, false to fall through to the default goBack().
+  const goBackToOrigin = (): boolean => {
+    if (returnTo === 'daybook') {
+      (navigation as any).navigate('Billing', { screen: 'Daybook' });
+      return true;
+    }
+    return false;
+  };
 
   const { mutateAsync: createBilty, isPending: creating } = useBiltyCreate();
   const { mutateAsync: updateBilty, isPending: updating } = useBiltyUpdate(editingId ?? 0);
@@ -199,9 +214,6 @@ function DesktopBiltyForm({ canSave, editingId, embedded = false }: { canSave: b
   // Map consignor name → GST so the form can auto-fill GST No when a known
   // consignor is selected.
   const [partyGstMap, setPartyGstMap] = useState<Record<string, string>>({});
-  const [agentOptions, setAgentOptions] = useState<string[]>([]);
-  const [ownerOptions, setOwnerOptions] = useState<string[]>([]);
-  const [zoneOptions, setZoneOptions] = useState<string[]>([]);
   const [itemOptions, setItemOptions] = useState<string[]>([]);
   // Map item-name → batch flag, so the bilty form can decide whether the
   // selected goods_type allows multiple per-line entries (batch=Yes) or just
@@ -213,6 +225,12 @@ function DesktopBiltyForm({ canSave, editingId, embedded = false }: { canSave: b
   // name → unit (e.g. "ton" / "bag") shown next to Qty in the items table.
   const [itemUnitMap, setItemUnitMap] = useState<Record<string, string>>({});
   const [vehicleNoOptions, setVehicleNoOptions] = useState<string[]>([]);
+  // truck registration → owner name (from Vehicle Master). Drives the auto-fill
+  // + lock of the Owner Name field when a truck is picked.
+  const [truckOwnerMap, setTruckOwnerMap] = useState<Record<string, string>>({});
+  // Owner Name is read-only while it's driven by the picked truck's owner. When
+  // the truck has no owner on file, it unlocks so the user can type one.
+  const [ownerLocked, setOwnerLocked] = useState(false);
   const [branchOptions, setBranchOptions] = useState<string[]>([]);
   const [destinationOptions, setDestinationOptions] = useState<string[]>([]);
 
@@ -244,9 +262,6 @@ function DesktopBiltyForm({ canSave, editingId, embedded = false }: { canSave: b
           setDebtorOptions(debtors.map((r) => r.name).sort());
         }),
         // Owner / Agent now live in their own master tables.
-        ownerService.list().then((rs) => setOwnerOptions(rs.map((r) => r.name).sort())),
-        agentService.list().then((rs) => setAgentOptions(rs.map((r) => r.name).sort())),
-        zoneService.list().then((rs) => setZoneOptions(rs.map((r) => r.name).sort())),
         itemMasterService.list().then((rs) => {
           // Bilty Goods Type is restricted to items with batch = Yes — line
           // items inside a bilty always need per-batch tracking, so non-batch
@@ -268,9 +283,16 @@ function DesktopBiltyForm({ canSave, editingId, embedded = false }: { canSave: b
           setItemUnitMap(unitMap);
         }),
 
-        vehicleMasterService.list().then((rs) =>
-          setVehicleNoOptions(rs.map((r) => r.name).sort())
-        ),
+        vehicleMasterService.list().then((rs) => {
+          setVehicleNoOptions(rs.map((r) => r.name).sort());
+          // Build truck → owner map (only trucks that actually have an owner).
+          const om: Record<string, string> = {};
+          rs.forEach((r) => {
+            const owner = (r as any).owner_name;
+            if (r.name && owner && String(owner).trim() !== '') om[r.name] = String(owner).trim();
+          });
+          setTruckOwnerMap(om);
+        }),
         // Branch is now a real master (branch_master). Stored as branch_id FK.
         branchService.list().then((rs) => setBranchOptions(rs.map((r) => r.name).sort())),
         destinationService.list().then((rs) =>
@@ -340,7 +362,6 @@ function DesktopBiltyForm({ canSave, editingId, embedded = false }: { canSave: b
             owner_name: detail.owner_name ?? '',
             agent_name: detail.agent_name ?? '',
             branch: detail.branch ?? '',
-            zone_name: detail.zone_name ?? '',
             truck_no: detail.truck_no ?? '',
             goods_type: detail.goods_type ?? '',
           },
@@ -390,6 +411,45 @@ function DesktopBiltyForm({ canSave, editingId, embedded = false }: { canSave: b
     setGstNo((prev) => (prev === gst ? prev : gst));
   }, [watchedConsignor, partyGstMap]);
 
+  // Truck → Owner: when a truck is picked, auto-fill Owner Name from Vehicle
+  // Master and lock the field. If the truck has no owner on file, unlock so the
+  // user can type one. When the truck is CHANGED to one without an owner — or
+  // cleared — the owner is cleared immediately (owner always follows the truck).
+  // `prevTruckRef` distinguishes a real user change from the first mount / the
+  // async owner-map load, so an edit-mode preloaded owner isn't wiped.
+  const watchedTruck = useWatch({ control, name: 'header.truck_no' });
+  const prevTruckRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    const truck = typeof watchedTruck === 'string' ? watchedTruck.trim() : '';
+    const truckChanged = prevTruckRef.current !== undefined && prevTruckRef.current !== truck;
+    prevTruckRef.current = truck;
+    const owner = truck ? truckOwnerMap[truck] : undefined;
+    if (owner) {
+      setOwnerLocked(true);
+      if ((getValues('header.owner_name') || '') !== owner) {
+        setValue('header.owner_name', owner, { shouldDirty: false });
+      }
+    } else {
+      setOwnerLocked(false);
+      // Clear the owner only when the user actually changed/removed the truck —
+      // never on first mount or owner-map load (edit mode keeps its preloaded owner).
+      if (truckChanged && (getValues('header.owner_name') || '') !== '') {
+        setValue('header.owner_name', '', { shouldDirty: false });
+      }
+    }
+  }, [watchedTruck, truckOwnerMap, getValues, setValue]);
+
+  // Branch driven by the selected voucher type (embedded mode). When the type
+  // carries a branch, fill + lock the Branch field; otherwise it behaves
+  // normally. `undefined` (standalone page) → never touched.
+  const branchLocked = !!(branchOverride && branchOverride.trim());
+  useEffect(() => {
+    if (isEdit || !branchLocked) return;
+    if ((getValues('header.branch') || '') !== branchOverride) {
+      setValue('header.branch', branchOverride as string, { shouldDirty: false });
+    }
+  }, [branchOverride, branchLocked, isEdit, getValues, setValue]);
+
   // The Bilty voucher type's own prefix (e.g. "blt") — locks the Bilty No lead.
   const [biltyPrefix, setBiltyPrefix] = useState<string | null>(null);
   useEffect(() => {
@@ -398,13 +458,35 @@ function DesktopBiltyForm({ canSave, editingId, embedded = false }: { canSave: b
       .catch(() => { /* ignore — falls back to plain numbering */ });
   }, []);
 
+  // When embedded in the Vouchers screen, the host's Bilty-type picker controls
+  // the prefix (Bilty itself, or one of its children). `prefixOverride` is
+  // `undefined` only for the standalone Bilty page, where we keep using the
+  // Bilty type's own prefix.
+  const hasPrefixOverride = prefixOverride !== undefined;
+  const effectivePrefix = hasPrefixOverride ? prefixOverride : biltyPrefix;
+
+  // Re-stamp the chosen prefix onto whatever digits are already in the field
+  // (so the saved number matches the picked sub-type). Runs only in the
+  // host-controlled embedded mode and only while creating. Guarded by
+  // `next !== cur` so it can't loop. No prefix → bare digits.
+  const watchedBiltyNoForPrefix = useWatch({ control, name: 'header.bilty_no' });
+  useEffect(() => {
+    if (isEdit || !hasPrefixOverride) return;
+    const cur = String(watchedBiltyNoForPrefix ?? '');
+    const digits = cur.replace(/\D/g, '');
+    if (!digits) return;
+    const pfx = (effectivePrefix ?? '').trim();
+    const next = pfx ? `${pfx}-${digits}` : digits;
+    if (next !== cur) setValue('header.bilty_no', next, { shouldDirty: false });
+  }, [watchedBiltyNoForPrefix, effectivePrefix, hasPrefixOverride, isEdit, setValue]);
+
   // ── Guided entry (Tally-style): Enter validates the current header field and
   // jumps to the next, left-to-right. Dropdown fields require a listed pick;
   // free-text fields (GST / Owner / Zone) require non-empty text. Refs are
   // registered per field key; focusNext walks to the next registered field.
   const GUIDED_ORDER = [
-    'bilty_no', 'branch', 'gst', 'date', 'consignor', 'owner_name',
-    'agent_name', 'bill_to', 'truck_no', 'goods_type', 'zone',
+    'bilty_no', 'branch', 'gst', 'date', 'consignor', 'goods_type',
+    'agent_name', 'bill_to', 'truck_no', 'owner_name',
   ];
   const guidedRefs = useRef<Record<string, { focus: () => void } | null>>({});
   const setGuidedRef = (key: string) => (r: { focus: () => void } | null) => {
@@ -425,10 +507,10 @@ function DesktopBiltyForm({ canSave, editingId, embedded = false }: { canSave: b
       }, 0);
     }
   };
-  // Enter handler for free-text header inputs (Bilty No / GST): advance only
-  // when non-empty (the field is gated).
+  // Enter handler for free-text header inputs (Bilty No / GST). GST No is
+  // optional/skippable — it always advances. Other gated fields require text.
   const guidedTextNext = (key: string, raw: unknown) => {
-    if (String(raw ?? '').trim() !== '') focusNext(key);
+    if (key === 'gst' || String(raw ?? '').trim() !== '') focusNext(key);
   };
 
   // Tab gating for the plain-TextInput header fields (Bilty No, GST). RNW
@@ -447,9 +529,10 @@ function DesktopBiltyForm({ canSave, editingId, embedded = false }: { canSave: b
       const key = el?.dataset?.guided;
       if (key !== 'bilty_no' && key !== 'gst') return;
       e.preventDefault();
-      const filled = key === 'bilty_no'
-        ? String(getValues('header.bilty_no') ?? '').trim() !== ''
-        : gstNoRef.current.trim() !== '';
+      // GST No is skippable — Tab always advances. Bilty No stays required.
+      const filled = key === 'gst'
+        ? true
+        : String(getValues('header.bilty_no') ?? '').trim() !== '';
       if (filled) focusNextRef.current(key);
     };
     document.addEventListener('keydown', onKey, true);
@@ -467,7 +550,8 @@ function DesktopBiltyForm({ canSave, editingId, embedded = false }: { canSave: b
   advanceItemCellRef.current = (i, col) => {
     const v = getValues(`items.${i}.${col}` as any);
     let ok: boolean;
-    if (ITEM_NUM_COLS.has(col)) ok = Number(v) > 0;
+    // Numeric cells are skippable now — 0/empty is allowed, so always advance.
+    if (ITEM_NUM_COLS.has(col)) ok = true;
     else if (ITEM_DL_COLS.has(col)) {
       const opts = col === 'consignee' ? itemOptsRef.current.cons : itemOptsRef.current.dest;
       ok = !!v && opts.some((o) => o.toLowerCase() === String(v).trim().toLowerCase());
@@ -502,27 +586,8 @@ function DesktopBiltyForm({ canSave, editingId, embedded = false }: { canSave: b
     return () => document.removeEventListener('keydown', onKey, true);
   }, []);
 
-  // Auto-suggest next bilty number per branch — only when creating, and only
-  // when the user hasn't typed a number yet. Editing existing bilties keeps
-  // their current number untouched.
-  const watchedBranch = useWatch({ control, name: 'header.branch' });
-  useEffect(() => {
-    if (isEdit) return;
-    const branch = typeof watchedBranch === 'string' ? watchedBranch.trim() : '';
-    if (!branch) return;
-    const current = (getValues('header.bilty_no') || '').trim();
-    if (current) return;
-    let cancelled = false;
-    biltyService
-      .nextNo(branch)
-      .then((next) => {
-        if (cancelled) return;
-        const stillEmpty = (getValues('header.bilty_no') || '').trim() === '';
-        if (stillEmpty) setValue('header.bilty_no', next, { shouldDirty: false });
-      })
-      .catch(() => { /* silent — user can still type one manually */ });
-    return () => { cancelled = true; };
-  }, [watchedBranch, isEdit, getValues, setValue]);
+  // Bilty number is entered manually — the field shows only the type's prefix
+  // (e.g. "snp-") with a blank number. No next-number auto-suggest.
 
   const watchedItems = useWatch({ control, name: 'items' });
 
@@ -532,24 +597,24 @@ function DesktopBiltyForm({ canSave, editingId, embedded = false }: { canSave: b
   // field-by-field gating). Returns a human message for the first gap, or null.
   const firstMissing = (data: CreateBiltyInput): string | null => {
     const h = data.header;
+    // Owner / Agent / Zone are now skippable (optional), so they're not checked.
+    // GST No is optional/skippable — not validated.
     const headerChecks: Array<[string, unknown]> = [
-      ['Bilty No', h.bilty_no], ['Branch', h.branch], ['GST No', gstNo],
-      ['Consignor', h.consignor], ['Owner Name', h.owner_name], ['Agent Name', h.agent_name],
-      ['Bill To', h.bill_to], ['Truck No', h.truck_no], ['Goods Type', h.goods_type], ['Zone', h.zone_name],
+      ['Bilty No', h.bilty_no], ['Branch', h.branch],
+      ['Consignor', h.consignor],
+      ['Bill To', h.bill_to], ['Truck No', h.truck_no], ['Goods Type', h.goods_type],
     ];
     for (const [label, v] of headerChecks) {
       if (String(v ?? '').trim() === '') return `${label} is required.`;
     }
     if (!data.items || data.items.length === 0) return 'Add at least one item.';
+    // Text columns stay required; numeric columns (Qty/Rate/Inc/L-Rate/E-Rate)
+    // are skippable now — 0 is allowed — so they aren't validated.
     const TEXT_LABELS: Record<string, string> = { challan_no: 'Challan', lr_no: 'LR No', shipment_no: 'Shipment No', from_loc: 'From', to_loc: 'To', consignee: 'Consignee' };
-    const NUM_LABELS: Record<string, string> = { qty: 'Qty', rate: 'Rate', inc_rate: 'Inc', l_rate: 'L-Rate', e_rate: 'E-Rate' };
     for (let idx = 0; idx < data.items.length; idx++) {
       const it: any = data.items[idx];
       for (const c of Object.keys(TEXT_LABELS)) {
         if (String(it[c] ?? '').trim() === '') return `Item ${idx + 1}: ${TEXT_LABELS[c]} is required.`;
-      }
-      for (const c of Object.keys(NUM_LABELS)) {
-        if (!(Number(it[c]) > 0)) return `Item ${idx + 1}: ${NUM_LABELS[c]} must be greater than 0.`;
       }
     }
     return null;
@@ -565,15 +630,20 @@ function DesktopBiltyForm({ canSave, editingId, embedded = false }: { canSave: b
       } else {
         await createBilty(data);
       }
-      // Post-save navigation. When embedded in the Vouchers (Billing) stack,
-      // BiltyList doesn't exist here — go to the Daybook (same stack). Standalone
-      // (Bilty tab) → BiltyList for bilty.view users, else Daybook.
-      if (embedded) {
-        (navigation as any).navigate('Daybook');
+      // Post-save navigation. Day Book origin → back to the Daybook. When
+      // embedded in the Vouchers (Billing) stack, BiltyList doesn't exist here
+      // — go to the Daybook (same stack). Standalone (Bilty tab) → BiltyList
+      // for bilty.view users, else Daybook. A success toast rides along to
+      // whichever Daybook we land on.
+      const notice = isEdit ? 'Bilty updated' : 'Bilty saved';
+      if (returnTo === 'daybook') {
+        (navigation as any).navigate('Billing', { screen: 'Daybook', params: { notice } });
+      } else if (embedded) {
+        (navigation as any).navigate('Daybook', { notice });
       } else if (canDoAction(user, 'bilty', 'view')) {
         navigation.navigate('BiltyList');
       } else {
-        (navigation as any).navigate('Billing', { screen: 'Daybook' });
+        (navigation as any).navigate('Billing', { screen: 'Daybook', params: { notice } });
       }
     } catch (err: any) {
       const apiErr = err?.response?.data?.error;
@@ -620,7 +690,7 @@ function DesktopBiltyForm({ canSave, editingId, embedded = false }: { canSave: b
   return (
     <ScrollView
       style={styles.wrap}
-      contentContainerStyle={styles.content}
+      contentContainerStyle={[styles.content, embedded && { paddingTop: 0 }]}
       keyboardShouldPersistTaps="handled"
     >
       {formError ? (
@@ -639,7 +709,7 @@ function DesktopBiltyForm({ canSave, editingId, embedded = false }: { canSave: b
               <PrefixedNumberInput
                 ref={setGuidedRef('bilty_no')}
                 label="Bilty No *"
-                prefix={isEdit ? null : biltyPrefix}
+                prefix={isEdit ? null : effectivePrefix}
                 value={value ?? ''}
                 onChangeText={onChange}
                 placeholder="e.g. 8400153862"
@@ -657,15 +727,29 @@ function DesktopBiltyForm({ canSave, editingId, embedded = false }: { canSave: b
             control={control}
             name="header.branch"
             render={({ field: { value, onChange } }) => (
-              <AutocompleteField
-                ref={setGuidedRef('branch')}
-                label="Branch"
-                value={value ?? ''}
-                options={branchOptions}
-                onChangeText={onChange}
-                placeholder=""
-                onSubmitNext={() => focusNext('branch')}
-              />
+              branchLocked ? (
+                // Branch is fixed by the selected voucher type → read-only.
+                <InputField
+                  ref={setGuidedRef('branch')}
+                  label="Branch"
+                  value={value ?? ''}
+                  onChangeText={() => { /* locked */ }}
+                  editable={false}
+                  placeholder=""
+                  onSubmitEditing={() => focusNext('branch')}
+                  blurOnSubmit={false}
+                />
+              ) : (
+                <AutocompleteField
+                  ref={setGuidedRef('branch')}
+                  label="Branch"
+                  value={value ?? ''}
+                  options={branchOptions}
+                  onChangeText={onChange}
+                  placeholder=""
+                  onSubmitNext={() => focusNext('branch')}
+                />
+              )
             )}
           />
         </View>
@@ -737,7 +821,7 @@ function DesktopBiltyForm({ canSave, editingId, embedded = false }: { canSave: b
         </View>
       </View>
 
-      {/* Row 2 — Consignor · Owner Name · Agent Name · Bill To */}
+      {/* Row 2 — Consignor · Goods Type · Agent Name · Bill To */}
       <View style={[styles.gridRow, { zIndex: 20 }]}>
         <View style={styles.fieldThird}>
           <Controller
@@ -754,80 +838,6 @@ function DesktopBiltyForm({ canSave, editingId, embedded = false }: { canSave: b
                 error={errors.header?.consignor?.message ?? null}
                 testID="consignor-input"
                 onSubmitNext={() => focusNext('consignor')}
-              />
-            )}
-          />
-        </View>
-        <View style={styles.fieldThird}>
-          <Controller
-            control={control}
-            name="header.owner_name"
-            render={({ field: { value, onChange } }) => (
-              <AutocompleteField
-                ref={setGuidedRef('owner_name')}
-                label="Owner Name"
-                value={value ?? ''}
-                options={ownerOptions}
-                onChangeText={onChange}
-                placeholder=""
-                onSubmitNext={() => focusNext('owner_name')}
-              />
-            )}
-          />
-        </View>
-        <View style={styles.fieldThird}>
-          <Controller
-            control={control}
-            name="header.agent_name"
-            render={({ field: { value, onChange } }) => (
-              <AutocompleteField
-                ref={setGuidedRef('agent_name')}
-                label="Agent Name"
-                value={value ?? ''}
-                options={agentOptions}
-                onChangeText={onChange}
-                placeholder=""
-                onSubmitNext={() => focusNext('agent_name')}
-              />
-            )}
-          />
-        </View>
-        <View style={styles.fieldThird}>
-          <Controller
-            control={control}
-            name="header.bill_to"
-            render={({ field: { value, onChange } }) => (
-              <AutocompleteField
-                ref={setGuidedRef('bill_to')}
-                label="Bill To"
-                value={value ?? ''}
-                options={consignorOptions}
-                onChangeText={onChange}
-                placeholder=""
-                onSubmitNext={() => focusNext('bill_to')}
-              />
-            )}
-          />
-        </View>
-      </View>
-
-      {/* Row 3 — Truck No · Truck Type · Goods Type · Zone */}
-      <View style={[styles.gridRow, { zIndex: 10 }]}>
-        <View style={styles.fieldThird}>
-          <Controller
-            control={control}
-            name="header.truck_no"
-            render={({ field: { value, onChange } }) => (
-              <AutocompleteField
-                ref={setGuidedRef('truck_no')}
-                label="Truck No *"
-                value={value ?? ''}
-                options={vehicleNoOptions}
-                onChangeText={(v) => onChange(v.toUpperCase())}
-                error={errors.header?.truck_no?.message ?? null}
-                placeholder=""
-                testID="truck-no-input"
-                onSubmitNext={() => focusNext('truck_no')}
               />
             )}
           />
@@ -853,16 +863,78 @@ function DesktopBiltyForm({ canSave, editingId, embedded = false }: { canSave: b
         <View style={styles.fieldThird}>
           <Controller
             control={control}
-            name="header.zone_name"
+            name="header.agent_name"
             render={({ field: { value, onChange } }) => (
-              <AutocompleteField
-                ref={setGuidedRef('zone')}
-                label="Zone"
+              // Free text, skippable — no master dropdown. Saved as typed.
+              <InputField
+                ref={setGuidedRef('agent_name')}
+                label="Agent Name"
                 value={value ?? ''}
-                options={zoneOptions}
                 onChangeText={onChange}
                 placeholder=""
-                onSubmitNext={() => focusNext('zone')}
+                onSubmitEditing={() => focusNext('agent_name')}
+                blurOnSubmit={false}
+              />
+            )}
+          />
+        </View>
+        <View style={styles.fieldThird}>
+          <Controller
+            control={control}
+            name="header.bill_to"
+            render={({ field: { value, onChange } }) => (
+              <AutocompleteField
+                ref={setGuidedRef('bill_to')}
+                label="Bill To"
+                value={value ?? ''}
+                options={consignorOptions}
+                onChangeText={onChange}
+                placeholder=""
+                onSubmitNext={() => focusNext('bill_to')}
+              />
+            )}
+          />
+        </View>
+      </View>
+
+      {/* Row 3 — Truck No · Owner Name */}
+      <View style={[styles.gridRow, { zIndex: 10 }]}>
+        <View style={styles.fieldThird}>
+          <Controller
+            control={control}
+            name="header.truck_no"
+            render={({ field: { value, onChange } }) => (
+              <AutocompleteField
+                ref={setGuidedRef('truck_no')}
+                label="Truck No *"
+                value={value ?? ''}
+                options={vehicleNoOptions}
+                onChangeText={(v) => onChange(v.toUpperCase())}
+                error={errors.header?.truck_no?.message ?? null}
+                placeholder=""
+                testID="truck-no-input"
+                onSubmitNext={() => focusNext('truck_no')}
+              />
+            )}
+          />
+        </View>
+        <View style={styles.fieldThird}>
+          <Controller
+            control={control}
+            name="header.owner_name"
+            render={({ field: { value, onChange } }) => (
+              // Driven by the picked truck's owner (Vehicle Master). Locked while
+              // the truck has an owner; editable (manual) when it doesn't.
+              // Skippable — empty is fine.
+              <InputField
+                ref={setGuidedRef('owner_name')}
+                label={ownerLocked ? 'Owner Name (from truck)' : 'Owner Name'}
+                value={value ?? ''}
+                onChangeText={ownerLocked ? () => { /* locked */ } : onChange}
+                editable={!ownerLocked}
+                placeholder=""
+                onSubmitEditing={() => focusNext('owner_name')}
+                blurOnSubmit={false}
               />
             )}
           />
@@ -929,18 +1001,19 @@ function DesktopBiltyForm({ canSave, editingId, embedded = false }: { canSave: b
 
       {/* ---- Totals preview ---- */}
       {(() => {
-        const total = itemsTotal(watchedItems as any);
+        // Freight Expense = Σ(qty × l_rate) — the value saved on the bilty.
+        const expense = transportTotal(watchedItems as any);
         return (
           <View style={styles.totalsRow}>
-            <Text style={styles.totalsLabel}>Total Freight</Text>
-            <Text style={styles.totalsValue}>{fmt(total)}</Text>
+            <Text style={styles.totalsLabel}>Freight Expense</Text>
+            <Text style={styles.totalsValue}>{fmt(expense)}</Text>
           </View>
         );
       })()}
 
       <View style={styles.actions}>
         <Pressable
-          onPress={() => navigation.goBack()}
+          onPress={() => { if (!goBackToOrigin()) navigation.goBack(); }}
           style={styles.cancelBtn}
           accessibilityRole="button"
           testID="bilty-cancel-btn"

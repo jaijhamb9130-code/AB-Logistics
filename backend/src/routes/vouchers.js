@@ -25,6 +25,8 @@ router.get('/pending-refs',  view,             ctrl.pendingRefs);
 router.get('/daybook',       daybookView,      ctrl.daybook);
 router.get('/other-ledgers', otherLedgersView, ctrl.otherLedgers);
 router.get('/ledger-search', view,             ctrl.ledgerSearch);
+router.get('/bilty-vehicle-ledger', view,      ctrl.biltyVehicleLedger);
+router.get('/bilty-budget',         view,      ctrl.biltyBudget);
 
 router.get('/',       view,   ctrl.list);
 router.post('/',      create, ctrl.create);

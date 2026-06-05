@@ -29,12 +29,13 @@ import { AutocompleteField } from '../components/AutocompleteField';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { colors, radius, spacing, text, typography } from '../constants/theme';
 import { vchTypeService } from '../services/vchTypeService';
+import { branchService } from '../services/branchService';
 import { validateRequired } from '../utils/masterValidators';
 import type { VchType } from '../../../shared/types/voucher';
 import { useAuth } from '../context/AuthContext';
 import { canDoAction } from '../navigation/guards';
 
-const EMPTY_FORM = { name: '', parent_name: '', prefix: '' };
+const EMPTY_FORM = { name: '', parent_name: '', prefix: '', branch: '' };
 type FormState = typeof EMPTY_FORM;
 type FormErrors = Partial<Record<keyof FormState, string>>;
 
@@ -46,6 +47,8 @@ export function VoucherTypeScreen() {
   const [rows, setRows] = useState<VchType[] | null>(null);
   const [listError, setListError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
+  // Branch options for the modal's Branch picker (from branch_master).
+  const [branchOptions, setBranchOptions] = useState<string[]>([]);
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<VchType | null>(null);
@@ -80,6 +83,13 @@ export function VoucherTypeScreen() {
   }, []);
 
   useAutoRefresh(load);
+
+  // Load branch names once for the modal's Branch picker.
+  React.useEffect(() => {
+    branchService.list()
+      .then((rs) => setBranchOptions(rs.map((r) => r.name).sort()))
+      .catch(() => { /* picker just has no options */ });
+  }, []);
 
   const visibleRows = useMemo(() => {
     if (!rows) return null;
@@ -118,7 +128,7 @@ export function VoucherTypeScreen() {
     setEditTarget(row);
     // A primary's "parent" is itself (parent_name is null from the API), so
     // show it blank in the edit form — blank means "primary".
-    setForm({ name: row.name, parent_name: row.parent_name ?? '', prefix: row.prefix ?? '' });
+    setForm({ name: row.name, parent_name: row.parent_name ?? '', prefix: row.prefix ?? '', branch: row.branch ?? '' });
     setErrs({});
     setFormError(null);
     setModalOpen(true);
@@ -161,10 +171,11 @@ export function VoucherTypeScreen() {
     setFormError(null);
     try {
       const prefix = form.prefix.trim();
+      const branch = form.branch.trim();
       if (editTarget) {
-        await vchTypeService.update(editTarget.id, { name: form.name.trim(), parent_id, prefix });
+        await vchTypeService.update(editTarget.id, { name: form.name.trim(), parent_id, prefix, branch });
       } else {
-        await vchTypeService.create({ name: form.name.trim(), parent_id, prefix });
+        await vchTypeService.create({ name: form.name.trim(), parent_id, prefix, branch });
       }
       await load();
       closeModal();
@@ -253,6 +264,18 @@ export function VoucherTypeScreen() {
       // Primaries show their own name (they're their own parent); children show
       // the parent's name — matches the master table mockup.
       render: (r) => <Text style={styles.parentCell}>{r.parent_name ?? r.name}</Text>,
+    },
+    {
+      key: 'branch', label: 'Branch', width: 180,
+      // Optional branch tied to the type — auto-fills + locks the bilty Branch.
+      render: (r) => {
+        const has = !!(r.branch && r.branch.trim());
+        return (
+          <Text style={[styles.parentCell, !has && styles.prefixValueEmpty]} numberOfLines={1}>
+            {has ? r.branch : '—'}
+          </Text>
+        );
+      },
     },
     {
       key: 'actions', label: 'Actions', width: 130, align: 'right',
@@ -371,15 +394,31 @@ export function VoucherTypeScreen() {
             </View>
           </View>
 
-          {/* Row 2 — Parent */}
-          <AutocompleteField
-            label="Parent"
-            value={form.parent_name}
-            options={parentOptions}
-            onChangeText={(v) => setForm((f) => ({ ...f, parent_name: v }))}
-            placeholder="Search & select parent... (blank = primary)"
-            testID="vchtype-parent-input"
-          />
+          {/* Row 2 — Parent + Branch side by side */}
+          <View style={styles.formRow}>
+            <View style={styles.formColHalf}>
+              <AutocompleteField
+                label="Parent"
+                value={form.parent_name}
+                options={parentOptions}
+                onChangeText={(v) => setForm((f) => ({ ...f, parent_name: v }))}
+                placeholder="Search & select parent... (blank = primary)"
+                testID="vchtype-parent-input"
+                usePortal
+              />
+            </View>
+            <View style={styles.formColHalf}>
+              <AutocompleteField
+                label="Branch"
+                value={form.branch}
+                options={branchOptions}
+                onChangeText={(v) => setForm((f) => ({ ...f, branch: v }))}
+                placeholder="Search & select branch... (blank = none)"
+                testID="vchtype-branch-input"
+                usePortal
+              />
+            </View>
+          </View>
 
           <View style={styles.actions}>
             <Pressable onPress={closeModal} style={styles.cancelBtn} testID="vchtype-cancel-btn">
@@ -489,6 +528,7 @@ const styles = StyleSheet.create({
   formRow: { flexDirection: 'row', gap: spacing.md },
   formColName: { flex: 2, minWidth: 0 },
   formColPrefix: { flex: 1, minWidth: 0 },
+  formColHalf: { flex: 1, minWidth: 0 },
   prefixHint: { ...text.label, color: colors.textMuted, marginBottom: spacing.sm },
   prefixHintBold: { color: colors.text, fontFamily: typography.mono, fontWeight: '600' },
   fieldLabel: { ...text.label, color: colors.textLabel, marginBottom: spacing.xs },

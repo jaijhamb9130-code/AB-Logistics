@@ -1,10 +1,12 @@
 /**
- * VehicleMasterScreen — one row per truck. `name` = registration number (plate);
- * UNIQUE in DB so each truck appears once in Bilty Truck No autocomplete.
+ * VehicleMasterScreen — the central truck + owner master. Each row is the
+ * CURRENT owner-version of a vehicle number; owner details live on the record.
  *
- * Vehicles live as ledger_master rows in the dedicated "Vehicles" sub-group
- * of Sundry Creditors; optional metadata (vehicle_type, owner) sits in
- * `vehicle_meta` keyed by the ledger id.
+ * Editing pops a "Maintain vs Create" chooser:
+ *   • Maintain — update the current record in place (normal edit).
+ *   • Create   — keep history: add a NEW current owner-version against the same
+ *                vehicle number (used when the truck changes hands). Wherever the
+ *                owner name is read, the latest version is the live owner.
  */
 
 import React, { useCallback, useEffect, useState } from 'react';
@@ -23,15 +25,19 @@ import { InputField } from '../components/InputField';
 import { AutocompleteField } from '../components/AutocompleteField';
 import { Loader } from '../components/Loader';
 import { Modal } from '../components/Modal';
-import { colors, radius, spacing, text } from '../constants/theme';
+import { colors, radius, spacing, text, typography } from '../constants/theme';
 import { vehicleMasterService } from '../services/vehicleMasterService';
-import { ownerService } from '../services/ownerService';
+import { ledgerGroupService } from '../services/ledgerGroupService';
 import { validateRequired } from '../utils/masterValidators';
 import type { VehicleMasterItem } from '../../../shared/types/vehicleMaster';
 import { useAuth } from '../context/AuthContext';
 import { canDoAction } from '../navigation/guards';
 
-const EMPTY_FORM = { name: '', vehicle_type: '', owner_name: '' };
+const EMPTY_FORM = {
+  name: '', vehicle_type: '', ledger_group: '',
+  mobile: '', gst_no: '', pan_no: '',
+  address: '', city: '', state: '', pincode: '',
+};
 
 type FormState = typeof EMPTY_FORM;
 type FormErrors = Partial<Record<keyof FormState, string>>;
@@ -47,13 +53,15 @@ export function VehicleMasterScreen() {
   const [errs, setErrs] = useState<FormErrors>({});
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
-  const [ownerOptions, setOwnerOptions] = useState<string[]>([]);
+  const [ledgerGroupOptions, setLedgerGroupOptions] = useState<string[]>([]);
+  // Edit-time "Maintain vs Create" chooser.
+  const [chooserOpen, setChooserOpen] = useState(false);
 
-  // Pull Owner Master rows for the autocomplete. Reused on every modal open.
+  // Ledger group names feed the "Ledger Group" dropdown.
   useEffect(() => {
-    ownerService.list()
-      .then((rs) => setOwnerOptions(rs.map((r) => r.name).sort()))
-      .catch(() => setOwnerOptions([]));
+    ledgerGroupService.list()
+      .then((rs) => setLedgerGroupOptions(rs.map((r) => r.group_name).sort()))
+      .catch(() => setLedgerGroupOptions([]));
   }, []);
 
   const load = useCallback(async () => {
@@ -81,7 +89,14 @@ export function VehicleMasterScreen() {
     setForm({
       name: row.name ?? '',
       vehicle_type: row.vehicle_type ?? '',
-      owner_name: (row as any).owner_name ?? '',
+      ledger_group: row.ledger_group ?? '',
+      mobile: row.mobile ?? '',
+      gst_no: row.gst_no ?? '',
+      pan_no: row.pan_no ?? '',
+      address: row.address ?? '',
+      city: row.city ?? '',
+      state: row.state ?? '',
+      pincode: row.pincode ?? '',
     });
     setErrs({});
     setFormError(null);
@@ -91,47 +106,73 @@ export function VehicleMasterScreen() {
   const closeModal = useCallback(() => {
     setModalOpen(false);
     setEditTarget(null);
+    setChooserOpen(false);
   }, []);
 
   const validate = (s: FormState): FormErrors => {
     const e: FormErrors = {};
-    const nameErr = validateRequired(s.name, 'Registration number');
+    const nameErr = validateRequired(s.name, 'Vehicle number');
     if (nameErr) e.name = nameErr;
+    // Owner Name IS the picked ledger group (the group's name is the owner).
+    const ownerErr = validateRequired(s.ledger_group, 'Owner name');
+    if (ownerErr) e.ledger_group = ownerErr;
     return e;
   };
 
-  const onSubmit = useCallback(async () => {
+  const buildPayload = () => ({
+    name: form.name.trim().toUpperCase(),
+    vehicle_type: form.vehicle_type.trim() || null,
+    ledger_group: form.ledger_group.trim() || null,
+    mobile: form.mobile.trim() || null,
+    gst_no: form.gst_no.trim().toUpperCase() || null,
+    pan_no: form.pan_no.trim().toUpperCase() || null,
+    address: form.address.trim() || null,
+    city: form.city.trim() || null,
+    state: form.state.trim() || null,
+    pincode: form.pincode.trim() || null,
+  });
+
+  // Create (new vehicle) saves immediately; edit opens the Maintain/Create chooser.
+  const onSubmit = useCallback(() => {
     const e = validate(form);
     setErrs(e);
     if (Object.keys(e).length > 0) return;
+    // Edit → close the form modal first, THEN open the Maintain/Create chooser.
+    // Never stack two modals: react-native-web traps focus in the first one,
+    // which would make the chooser's buttons unclickable.
+    if (editTarget) { setModalOpen(false); setChooserOpen(true); return; }
+    void doSave(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form, editTarget]);
 
+  const doSave = useCallback(async (mode: 'maintain' | 'create' | null) => {
+    setChooserOpen(false);
     setSaving(true);
     setFormError(null);
     try {
-      const payload = {
-        name: form.name.trim().toUpperCase(),
-        vehicle_type: form.vehicle_type.trim() || null,
-        owner_name: form.owner_name.trim() || null,
-      };
-      if (editTarget) await vehicleMasterService.update(editTarget.id, payload);
-      else await vehicleMasterService.create(payload);
+      const payload = buildPayload();
+      if (editTarget && mode) {
+        await vehicleMasterService.update(editTarget.id, { ...payload, mode });
+      } else {
+        await vehicleMasterService.create(payload);
+      }
       await load();
       closeModal();
     } catch (err: any) {
       const code = err?.response?.data?.error;
-      if (code === 'name_taken') setFormError('A vehicle with that registration number already exists.');
+      if (code === 'name_taken') setFormError('A vehicle with that number already exists.');
       else setFormError('Could not save vehicle. Try again.');
     } finally {
       setSaving(false);
     }
-  }, [form, editTarget, load, closeModal]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editTarget, form, load, closeModal]);
 
-  // Hard delete with native confirm + 409 in_use fallback.
   const onDelete = useCallback(
     async (row: VehicleMasterItem) => {
       const ok =
         typeof window !== 'undefined' && typeof window.confirm === 'function'
-          ? window.confirm(`Delete "${row.name}"? This cannot be undone.`)
+          ? window.confirm(`Delete "${row.name}" and all its owner history? This cannot be undone.`)
           : true;
       if (!ok) return;
       try {
@@ -143,20 +184,20 @@ export function VehicleMasterScreen() {
           code === 'in_use'
             ? 'Cannot delete — vehicle is referenced by an existing record.'
             : 'Could not delete vehicle. Try again.';
-        if (typeof window !== 'undefined' && typeof window.alert === 'function') {
-          window.alert(message);
-        } else {
-          Alert.alert('Delete failed', message);
-        }
+        if (typeof window !== 'undefined' && typeof window.alert === 'function') window.alert(message);
+        else Alert.alert('Delete failed', message);
       }
     },
     [load],
   );
 
   const columns: Column<VehicleMasterItem>[] = [
-    { key: 'name', label: 'Reg No', render: (r) => r.name },
-    { key: 'vehicle_type', label: 'Type', render: (r) => r.vehicle_type || '—' },
-    { key: 'owner_name', label: 'Owner', render: (r) => (r as any).owner_name || '—' },
+    { key: 'name', label: 'Vehicle No', render: (r) => r.name },
+    // Owner Name = the picked ledger group's name (the owner IS the group).
+    { key: 'owner_name', label: 'Owner Name', render: (r) => r.owner_name || r.ledger_group || '—' },
+    { key: 'mobile', label: 'Mobile', render: (r) => r.mobile || '—' },
+    { key: 'gst_no', label: 'GST No', render: (r) => r.gst_no || '—' },
+    { key: 'city', label: 'City', render: (r) => r.city || '—' },
     {
       key: 'actions', label: '', width: 140, align: 'right',
       render: (r) => (
@@ -225,13 +266,14 @@ export function VehicleMasterScreen() {
           <View style={styles.row}>
             <View style={styles.rowHalf}>
               <InputField
-                label="Registration No *"
+                label="Vehicle Number *"
                 value={form.name}
                 onChangeText={(v) => setForm((f) => ({ ...f, name: v.toUpperCase() }))}
                 error={errs.name ?? null}
                 fieldType="alphanumeric"
                 autoCapitalize="characters"
-                placeholder="MH-12-AB-1234"
+                placeholder=""
+                inputStyle={styles.valueText}
                 testID="vehicle-name-input"
               />
             </View>
@@ -240,20 +282,110 @@ export function VehicleMasterScreen() {
                 label="Vehicle Type"
                 value={form.vehicle_type}
                 onChangeText={(v) => setForm((f) => ({ ...f, vehicle_type: v }))}
-                placeholder="e.g. 10-wheeler"
+                placeholder=""
+                inputStyle={styles.valueText}
                 testID="vehicle-type-input"
               />
             </View>
           </View>
 
-          <AutocompleteField
-            label="Owner"
-            value={form.owner_name}
-            options={ownerOptions}
-            onChangeText={(v) => setForm((f) => ({ ...f, owner_name: v }))}
-            placeholder="Pick from Owner Master"
-            testID="vehicle-owner-input"
-          />
+          <View style={styles.row}>
+            <View style={styles.rowHalf}>
+              <AutocompleteField
+                label="Owner Name *"
+                value={form.ledger_group}
+                options={ledgerGroupOptions}
+                onChangeText={(v) => setForm((f) => ({ ...f, ledger_group: v }))}
+                error={errs.ledger_group ?? null}
+                placeholder=""
+                inputStyle={styles.valueText}
+                testID="vehicle-owner-input"
+              />
+            </View>
+            <View style={styles.rowHalf}>
+              <InputField
+                label="Mobile"
+                value={form.mobile}
+                onChangeText={(v) => setForm((f) => ({ ...f, mobile: v }))}
+                fieldType="phone"
+                placeholder=""
+                inputStyle={styles.valueText}
+                testID="vehicle-mobile-input"
+              />
+            </View>
+          </View>
+
+          <View style={styles.row}>
+            <View style={styles.rowHalf}>
+              <InputField
+                label="GST No"
+                value={form.gst_no}
+                onChangeText={(v) => setForm((f) => ({ ...f, gst_no: v.toUpperCase() }))}
+                autoCapitalize="characters"
+                placeholder=""
+                inputStyle={styles.valueText}
+                testID="vehicle-gst-input"
+              />
+            </View>
+            <View style={styles.rowHalf}>
+              <InputField
+                label="PAN No"
+                value={form.pan_no}
+                onChangeText={(v) => setForm((f) => ({ ...f, pan_no: v.toUpperCase() }))}
+                autoCapitalize="characters"
+                placeholder=""
+                inputStyle={styles.valueText}
+                testID="vehicle-pan-input"
+              />
+            </View>
+          </View>
+
+          <View style={styles.row}>
+            <View style={styles.rowHalf}>
+              <InputField
+                label="Address"
+                value={form.address}
+                onChangeText={(v) => setForm((f) => ({ ...f, address: v }))}
+                placeholder=""
+                inputStyle={styles.valueText}
+                testID="vehicle-address-input"
+              />
+            </View>
+            <View style={styles.rowHalf}>
+              <InputField
+                label="City"
+                value={form.city}
+                onChangeText={(v) => setForm((f) => ({ ...f, city: v }))}
+                placeholder=""
+                inputStyle={styles.valueText}
+                testID="vehicle-city-input"
+              />
+            </View>
+          </View>
+
+          <View style={styles.row}>
+            <View style={styles.rowHalf}>
+              <InputField
+                label="State"
+                value={form.state}
+                onChangeText={(v) => setForm((f) => ({ ...f, state: v }))}
+                placeholder=""
+                inputStyle={styles.valueText}
+                testID="vehicle-state-input"
+              />
+            </View>
+            <View style={styles.rowHalf}>
+              <InputField
+                label="Pincode"
+                value={form.pincode}
+                onChangeText={(v) => setForm((f) => ({ ...f, pincode: v }))}
+                fieldType="integer"
+                placeholder=""
+                inputStyle={styles.valueText}
+                testID="vehicle-pincode-input"
+              />
+            </View>
+          </View>
 
           <View style={styles.actions}>
             <Pressable onPress={closeModal} style={styles.cancelBtn} testID="vehicle-cancel-btn">
@@ -261,14 +393,43 @@ export function VehicleMasterScreen() {
             </Pressable>
             <View style={styles.submitWrap}>
               <ButtonPrimary
-                title={editTarget ? 'Save changes' : 'Create vehicle'}
+                title={editTarget ? 'Save' : 'Create vehicle'}
                 onPress={onSubmit}
-                loading={saving}
+                loading={saving && !chooserOpen}
                 testID="vehicle-submit-btn"
               />
             </View>
           </View>
         </ScrollView>
+      </Modal>
+
+      {/* Maintain vs Create chooser (edit only). */}
+      <Modal
+        visible={chooserOpen}
+        onClose={() => { setChooserOpen(false); setModalOpen(true); }}
+        title="Save vehicle"
+        testID="vehicle-save-chooser"
+      >
+        <View style={styles.chooserBody}>
+          <Text style={styles.chooserText}>
+            How should this change be saved?
+          </Text>
+          <Pressable style={styles.chooserOption} onPress={() => doSave('maintain')} testID="vehicle-save-maintain">
+            <Text style={styles.chooserOptionTitle}>Maintain</Text>
+            <Text style={styles.chooserOptionDesc}>Update this record in place (normal edit).</Text>
+          </Pressable>
+          <Pressable style={styles.chooserOption} onPress={() => doSave('create')} testID="vehicle-save-create">
+            <Text style={styles.chooserOptionTitle}>Create</Text>
+            <Text style={styles.chooserOptionDesc}>
+              Keep history — add a new current owner for this same vehicle number (e.g. it changed hands).
+            </Text>
+          </Pressable>
+          <View style={styles.actions}>
+            <Pressable onPress={() => { setChooserOpen(false); setModalOpen(true); }} style={styles.cancelBtn}>
+              <Text style={styles.cancelBtnText}>Cancel</Text>
+            </Pressable>
+          </View>
+        </View>
       </Modal>
     </View>
   );
@@ -298,6 +459,9 @@ const styles = StyleSheet.create({
   formErrorText: { ...text.label, color: colors.danger },
   row: { flexDirection: 'row', gap: spacing.sm },
   rowHalf: { flex: 1 },
+  rowThird: { flex: 1 },
+  // Larger, bold value text so entries read clearly (placeholders removed).
+  valueText: { fontSize: 16, lineHeight: 22, fontFamily: typography.uiBold, color: colors.text },
   actions: {
     flexDirection: 'row', alignItems: 'center',
     justifyContent: 'flex-end', marginTop: spacing.md, gap: spacing.sm,
@@ -317,4 +481,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end',
     gap: spacing.xs,
   },
+  chooserBody: { padding: spacing.md, gap: spacing.sm },
+  chooserText: { ...text.label, color: colors.text, marginBottom: spacing.xs },
+  chooserOption: {
+    borderWidth: 1, borderColor: colors.border, borderRadius: radius.md,
+    padding: spacing.md, gap: 4,
+  },
+  chooserOptionTitle: { ...text.action, color: colors.primary, fontSize: 15 },
+  chooserOptionDesc: { ...text.label, color: colors.textMuted, fontSize: 12, lineHeight: 17 },
 });

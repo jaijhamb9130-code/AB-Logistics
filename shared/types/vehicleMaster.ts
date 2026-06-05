@@ -1,19 +1,26 @@
-// Shared type for vehicle_master table — `name` is the truck registration
-// number (plate). UNIQUE in DB so each truck appears once in autocomplete.
+// Shared types for vehicle_master — the central truck + owner master.
+// `name` is aliased to vehicle_no (the registration number) so existing
+// consumers (e.g. the bilty truck dropdown) keep working. Owner details live
+// on the vehicle record; "Create" keeps owner history (is_current marks live).
 
 export interface VehicleMasterItem {
   id: number;
-  name: string;
+  name: string;            // = vehicle_no (registration number)
+  vehicle_no: string;
   vehicle_type: string | null;
+  ledger_group_id: number | null;
+  ledger_group: string | null;   // ledger group name
+  ledger_master_id: number | null;
+  ledger_id: number | null;       // accounting ledger (alias of ledger_master_id)
   owner_name: string | null;
-  owner_mobile: string | null;
-  owner_pan: string | null;
-  chassis_no: string | null;
-  permit_no: string | null;
-  validity_date: string | null;
-  driver_name: string | null;
-  driver_mobile: string | null;
-  tally_master_id: string | null;
+  mobile: string | null;
+  gst_no: string | null;
+  pan_no: string | null;
+  address: string | null;
+  city: string | null;
+  state: string | null;
+  pincode: string | null;
+  is_current: number;
   created_at: string;
   updated_at: string;
 }
@@ -21,21 +28,27 @@ export interface VehicleMasterItem {
 export interface VehicleMasterSearchResult {
   id: number;
   name: string;
+  vehicle_no: string;
   vehicle_type: string | null;
   owner_name: string | null;
 }
 
 export interface CreateVehicleMasterRequest {
-  name: string;
+  name: string;                 // vehicle number (registration)
+  vehicle_no?: string;
   vehicle_type?: string | null;
+  ledger_group?: string | null; // ledger group name
   owner_name?: string | null;
-  owner_mobile?: string | null;
-  owner_pan?: string | null;
-  chassis_no?: string | null;
-  permit_no?: string | null;
-  validity_date?: string | null;
-  driver_name?: string | null;
-  driver_mobile?: string | null;
+  mobile?: string | null;
+  gst_no?: string | null;
+  pan_no?: string | null;
+  address?: string | null;
+  city?: string | null;
+  state?: string | null;
+  pincode?: string | null;
 }
 
-export type UpdateVehicleMasterRequest = CreateVehicleMasterRequest;
+export interface UpdateVehicleMasterRequest extends CreateVehicleMasterRequest {
+  /** 'maintain' = edit current version in place; 'create' = new owner-version. */
+  mode?: 'maintain' | 'create';
+}

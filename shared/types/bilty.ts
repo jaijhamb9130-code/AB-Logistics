@@ -13,7 +13,6 @@ export interface BiltyHeader {
   owner_name?: string | null;
   agent_name?: string | null;
   branch?: string | null;
-  zone_name?: string | null;
   truck_no: string;
   goods_type?: string | null;
   truck_type?: string | null;

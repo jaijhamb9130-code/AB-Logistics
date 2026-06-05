@@ -5,17 +5,20 @@ const {
   isNonEmptyString,
   validatePAN,
   validateMobile,
-  validateDate,
   parseId,
 } = require('../utils/validators');
 
+// Accept either `name` or `vehicle_no` for the registration number.
+function vehicleNoOf(body) {
+  return body.vehicle_no ?? body.name;
+}
+
 function validateBody(body) {
-  if (!isNonEmptyString(body.name)) return 'invalid_name';
+  if (!isNonEmptyString(vehicleNoOf(body))) return 'invalid_name';
+  // Owner contact fields are optional; validate format only when present.
   const checks = [
-    validateMobile(body.owner_mobile),
-    validatePAN(body.owner_pan),
-    validateMobile(body.driver_mobile),
-    validateDate(body.validity_date),
+    body.mobile ? validateMobile(body.mobile) : null,
+    body.pan_no ? validatePAN(body.pan_no) : null,
   ];
   return checks.find(Boolean) || null;
 }
@@ -52,8 +55,8 @@ exports.create = async (req, res, next) => {
     const err = validateBody(body);
     if (err) return res.status(400).json({ error: err });
 
-    // Uniqueness check on registration number (name)
-    const existing = await vehicleMasterModel.findByName(String(body.name).trim().toUpperCase());
+    // Uniqueness check on registration number
+    const existing = await vehicleMasterModel.findByName(String(vehicleNoOf(body)).trim().toUpperCase());
     if (existing) return res.status(409).json({ error: 'name_taken', message: 'A vehicle with that registration number already exists.' });
 
     const userId = req.user ? req.user.id : null;
@@ -73,15 +76,19 @@ exports.update = async (req, res, next) => {
     const err = validateBody(body);
     if (err) return res.status(400).json({ error: err });
 
-    // If renamed, ensure no other vehicle owns the new name.
-    const newName = String(body.name).trim().toUpperCase();
-    if (newName !== existing.name) {
+    // mode: 'maintain' edits the current version in place; 'create' adds a new
+    // owner-version against the same vehicle number (history preserved).
+    const mode = body.mode === 'create' ? 'create' : 'maintain';
+
+    // If renamed (maintain only), ensure no other vehicle owns the new number.
+    const newName = String(vehicleNoOf(body)).trim().toUpperCase();
+    if (mode === 'maintain' && newName !== existing.name) {
       const dup = await vehicleMasterModel.findByName(newName);
       if (dup && dup.id !== id) return res.status(409).json({ error: 'name_taken' });
     }
 
     const userId = req.user ? req.user.id : null;
-    await vehicleMasterModel.update(id, { ...body, userId });
+    await vehicleMasterModel.update(id, { ...body, userId }, mode);
     return res.status(200).json({ ok: true });
   } catch (err) { return next(err); }
 };

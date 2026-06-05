@@ -8,6 +8,8 @@ export interface LedgerGroupItem {
   group_name: string;
   parent_id: number | null;
   parent_name: string | null;
+  /** 1 = one of the 28 permanent (non-editable, non-deletable) top-level groups. */
+  is_system: number;
   created_at: string;
 }
 

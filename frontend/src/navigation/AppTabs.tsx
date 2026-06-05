@@ -9,7 +9,6 @@ import { BillingStack } from './BillingStack';
 import { LedgerMasterScreen } from '../screens/LedgerMasterScreen';
 import { CustomersMasterScreen } from '../screens/CustomersMasterScreen';
 import { OtherLedgersScreen } from '../screens/OtherLedgersScreen';
-import { OwnerMasterScreen } from '../screens/OwnerMasterScreen';
 import { AgentMasterScreen } from '../screens/AgentMasterScreen';
 import { ItemMasterScreen } from '../screens/ItemMasterScreen';
 import { ItemGroupScreen } from '../screens/ItemGroupScreen';
@@ -17,7 +16,6 @@ import { ItemCategoryScreen } from '../screens/ItemCategoryScreen';
 import { VehicleMasterScreen } from '../screens/VehicleMasterScreen';
 import { DestinationMasterScreen } from '../screens/DestinationMasterScreen';
 import { BranchMasterScreen } from '../screens/BranchMasterScreen';
-import { ZoneMasterScreen } from '../screens/ZoneMasterScreen';
 import { LedgerGroupsScreen } from '../screens/LedgerGroupsScreen';
 import { VoucherTypeScreen } from '../screens/VoucherTypeScreen';
 import { useAuth } from '../context/AuthContext';
@@ -55,7 +53,6 @@ const PaddedBillingStack = withPad(BillingStack);
 const PaddedLedgerMaster = withPad(LedgerMasterScreen);
 const PaddedCustomers = withPad(CustomersMasterScreen);
 const PaddedOtherLedgers = withPad(OtherLedgersScreen);
-const PaddedOwnerMaster = withPad(OwnerMasterScreen);
 const PaddedAgentMaster = withPad(AgentMasterScreen);
 const PaddedItemMaster = withPad(ItemMasterScreen);
 const PaddedItemGroup = withPad(ItemGroupScreen);
@@ -63,7 +60,6 @@ const PaddedItemCategory = withPad(ItemCategoryScreen);
 const PaddedVehicleMaster = withPad(VehicleMasterScreen);
 const PaddedDestinationMaster = withPad(DestinationMasterScreen);
 const PaddedBranchMaster = withPad(BranchMasterScreen);
-const PaddedZoneMaster = withPad(ZoneMasterScreen);
 const PaddedLedgerGroups = withPad(LedgerGroupsScreen);
 const PaddedVoucherType = withPad(VoucherTypeScreen);
 const PaddedUsers = withPad(UsersScreen);
@@ -106,9 +102,6 @@ export function AppTabs() {
       {canAccessTab('OtherLedgers', user) && (
         <Tab.Screen name="OtherLedgers" component={PaddedOtherLedgers} />
       )}
-      {canAccessTab('OwnerMaster', user) && (
-        <Tab.Screen name="OwnerMaster" component={PaddedOwnerMaster} />
-      )}
       {canAccessTab('AgentMaster', user) && (
         <Tab.Screen name="AgentMaster" component={PaddedAgentMaster} />
       )}
@@ -129,9 +122,6 @@ export function AppTabs() {
       )}
       {canAccessTab('BranchMaster', user) && (
         <Tab.Screen name="BranchMaster" component={PaddedBranchMaster} />
-      )}
-      {canAccessTab('ZoneMaster', user) && (
-        <Tab.Screen name="ZoneMaster" component={PaddedZoneMaster} />
       )}
       {canAccessTab('LedgerGroups', user) && (
         <Tab.Screen name="LedgerGroups" component={PaddedLedgerGroups} />

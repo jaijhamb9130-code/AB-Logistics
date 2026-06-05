@@ -57,6 +57,15 @@ export function itemsTotal(items: BiltyItem[]): number {
   );
 }
 
+// Transport Total = Σ(qty × l_rate). This is the budget that Advance/Fuel
+// journals are capped against (mirrored server-side in voucherModel).
+export function transportTotal(items: BiltyItem[]): number {
+  return (items || []).reduce(
+    (sum, it) => sum + toNum(it.qty) * toNum(it.l_rate),
+    0
+  );
+}
+
 export function netPayable(items: BiltyItem[]): number {
   return itemsTotal(items);
 }

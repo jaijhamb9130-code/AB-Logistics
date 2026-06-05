@@ -21,7 +21,8 @@
       "PowerShell(Rename-Item \"c:\\\\Users\\\\jaijh\\\\OneDrive\\\\Desktop\\\\AB LOGISTICS\\\\frontend\\\\.env.local\" \".env.local.bak\")",
       "PowerShell(Add-Type -AssemblyName System.IO.Compression.FileSystem; $zip = [System.IO.Compression.ZipFile]::OpenRead\\(\"c:\\\\Users\\\\jaijh\\\\OneDrive\\\\Desktop\\\\AB LOGISTICS\\\\ab-logistics-deploy.zip\"\\); $zip.Entries | Select-Object FullName | Format-Table -AutoSize; $zip.Dispose\\(\\))",
       "PowerShell(curl -s -o /dev/null -w \"%{http_code}\" https://ablogistics.abstechnologies.org.in 2>&1)",
-      "PowerShell(Invoke-WebRequest -Uri \"https://ablogistics.abstechnologies.org.in\" -UseBasicParsing -TimeoutSec 10 2>&1)"
+      "PowerShell(Invoke-WebRequest -Uri \"https://ablogistics.abstechnologies.org.in\" -UseBasicParsing -TimeoutSec 10 2>&1)",
+      "Bash(curl -s -o /dev/null -w \"backend: %{http_code}\\\\n\" http://localhost:3005/health)"
     ]
   }
 }
