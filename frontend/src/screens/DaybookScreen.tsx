@@ -596,7 +596,7 @@ export function DaybookScreen() {
               <MetaRow leftLabel="BRANCH" leftValue={biltyViewData.branch || '—'} rightLabel="TRUCK TYPE" rightValue={biltyViewData.truck_type || '—'} />
             </View>
 
-            <Text style={[styles.viewModalSectionTitle, { marginTop: spacing.md }]}>ITEMS</Text>
+            <Text style={styles.viewModalSectionTitle}>ITEMS</Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false}>
             <View style={styles.viewModalTable}>
               <View style={styles.viewModalTableRowHeader}>
@@ -684,22 +684,17 @@ export function DaybookScreen() {
             )}
 
             {linkedBilty ? (
-              <View style={{ marginTop: spacing.lg }}>
+              <View style={{ marginTop: spacing.sm }}>
                 <Text style={styles.viewModalSectionTitle}>BILTY SNAPSHOT</Text>
-                <View style={styles.viewModalSummaryGrid}>
-                  <InfoCard label="BILTY NO." value={linkedBilty.bilty_no || '—'} />
-                  <InfoCard label="DATE" value={fmtDate(linkedBilty.bilty_date || '')} />
-                  <InfoCard label="VEHICLE" value={linkedBilty.truck_no || '—'} />
-                  <InfoCard label="GOODS TYPE" value={linkedBilty.goods_type || '—'} />
-                  <InfoCard label="CONSIGNOR" value={linkedBilty.consignor || '—'} />
-                  <InfoCard label="BILL TO" value={linkedBilty.bill_to || '—'} />
-                  <InfoCard label="OWNER" value={linkedBilty.owner_name || '—'} />
-                  <InfoCard label="AGENT" value={linkedBilty.agent_name || '—'} />
-                  <InfoCard label="BRANCH" value={linkedBilty.branch || '—'} />
-                  <InfoCard label="TRUCK TYPE" value={linkedBilty.truck_type || '—'} />
+                <View style={styles.viewModalMetaTable}>
+                  <MetaRow leftLabel="BILTY NO." leftValue={linkedBilty.bilty_no || '—'} rightLabel="DATE" rightValue={fmtDate(linkedBilty.bilty_date || '')} />
+                  <MetaRow leftLabel="VEHICLE" leftValue={linkedBilty.truck_no || '—'} rightLabel="GOODS TYPE" rightValue={linkedBilty.goods_type || '—'} />
+                  <MetaRow leftLabel="CONSIGNOR" leftValue={linkedBilty.consignor || '—'} rightLabel="BILL TO" rightValue={linkedBilty.bill_to || '—'} />
+                  <MetaRow leftLabel="OWNER" leftValue={linkedBilty.owner_name || '—'} rightLabel="AGENT" rightValue={linkedBilty.agent_name || '—'} />
+                  <MetaRow leftLabel="BRANCH" leftValue={linkedBilty.branch || '—'} rightLabel="TRUCK TYPE" rightValue={linkedBilty.truck_type || '—'} />
                 </View>
 
-                <Text style={[styles.viewModalSectionTitle, { marginTop: spacing.lg }]}>ITEMS</Text>
+                <Text style={styles.viewModalSectionTitle}>ITEMS</Text>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                   <View style={styles.viewModalTable}>
                     <View style={styles.viewModalTableRowHeader}>
@@ -911,35 +906,21 @@ const styles = StyleSheet.create({
   btnApplyText: { fontSize: 13, fontFamily: typography.uiBold, color: '#FFF' },
 
   // View modal
-  viewModalContent: { paddingBottom: spacing.lg },
-  viewModalSectionTitle: { fontSize: 11, color: colors.textMuted, fontFamily: typography.uiBold, textTransform: 'uppercase', marginBottom: 8, letterSpacing: 0.5 },
+  viewModalContent: { paddingBottom: spacing.sm },
+  viewModalSectionTitle: { fontSize: 9, color: colors.textMuted, fontFamily: typography.uiBold, textTransform: 'uppercase', marginBottom: 4, marginTop: spacing.sm, letterSpacing: 0.5 },
   viewModalTable: { borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.card, overflow: 'hidden' },
-  viewModalTableRowHeader: { flexDirection: 'row', padding: spacing.sm, borderBottomWidth: 1, borderBottomColor: colors.border, backgroundColor: colors.background },
-  viewModalTableColH: { fontSize: 11, color: colors.textMuted, fontFamily: typography.uiBold },
-  viewModalTableRow: { flexDirection: 'row', padding: spacing.sm, borderBottomWidth: 1, borderBottomColor: colors.border },
-  viewModalTableCol: { fontSize: 13, color: colors.textStrong, fontFamily: typography.ui },
+  viewModalTableRowHeader: { flexDirection: 'row', paddingHorizontal: 10, paddingVertical: 4, borderBottomWidth: 1, borderBottomColor: colors.border, backgroundColor: colors.background },
+  viewModalTableColH: { fontSize: 10, color: colors.textMuted, fontFamily: typography.uiBold },
+  viewModalTableRow: { flexDirection: 'row', paddingHorizontal: 10, paddingVertical: 5, borderBottomWidth: 1, borderBottomColor: colors.border },
+  viewModalTableCol: { fontSize: 12, color: colors.textStrong, fontFamily: typography.ui },
   viewModalInvRow: { paddingLeft: 24, paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: colors.border, backgroundColor: '#F8FAFC' },
   viewModalInvText: { fontSize: 12, color: colors.textMuted, fontFamily: typography.uiMedium },
-  viewModalMetaTable: { borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.card, overflow: 'hidden', marginBottom: spacing.lg },
+  viewModalMetaTable: { borderWidth: 1, borderColor: colors.border, borderRadius: radius.sm, backgroundColor: colors.card, overflow: 'hidden', marginBottom: spacing.sm },
   metaRow: { flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: colors.border },
-  metaCell: { flex: 1, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, minHeight: 56, justifyContent: 'center' },
+  metaCell: { flex: 1, paddingHorizontal: 10, paddingVertical: 4, justifyContent: 'center' },
   metaCellRight: { borderLeftWidth: 1, borderLeftColor: colors.border },
-  infoLabel: { fontSize: 11, color: colors.textMuted, fontFamily: typography.uiBold, textTransform: 'uppercase', marginBottom: 4, letterSpacing: 0.3 },
-  infoValue: { fontSize: 14, color: colors.textStrong, fontFamily: typography.uiBold, lineHeight: 18 },
-  viewModalSummaryGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.sm,
-    marginBottom: spacing.lg,
-  },
-  infoCard: {
-    width: '48%',
-    minWidth: 140,
-    padding: spacing.xs,
-    backgroundColor: colors.background,
-    borderRadius: radius.sm,
-    borderWidth: 1,
-    borderColor: colors.border,
-    marginBottom: spacing.xs,
-  },
+  infoLabel: { fontSize: 9, color: colors.textMuted, fontFamily: typography.uiBold, textTransform: 'uppercase', marginBottom: 0, letterSpacing: 0.3, lineHeight: 12 },
+  infoValue: { fontSize: 12, color: colors.textStrong, fontFamily: typography.uiBold, lineHeight: 15 },
+  viewModalSummaryGrid: { marginBottom: spacing.sm },
+  infoCard: { flex: 1 },
 });

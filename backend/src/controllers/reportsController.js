@@ -30,24 +30,68 @@ async function countActiveUsers() {
   return Number(rows[0]?.c ?? 0);
 }
 
-async function countBilties() {
+async function biltyStats() {
   const vchTypeId = await biltyModel.getBiltyTypeId();
-  const [rows] = await pool.execute('SELECT COUNT(*) AS c FROM vch_details WHERE vch_type_id = ?', [vchTypeId]);
-  return Number(rows[0]?.c ?? 0);
+  const today = new Date().toISOString().slice(0, 10);
+  const now = new Date();
+  const monthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+
+  const [[totalRows], [todayRows], [monthRows], recentRows] = await Promise.all([
+    pool.execute('SELECT COUNT(*) AS c FROM vch_details WHERE vch_type_id = ?', [vchTypeId]),
+    pool.execute(
+      'SELECT COUNT(*) AS c, COALESCE(SUM(amount),0) AS total FROM vch_details WHERE vch_type_id = ? AND DATE(vch_date) = ?',
+      [vchTypeId, today]
+    ),
+    pool.execute(
+      'SELECT COUNT(*) AS c, COALESCE(SUM(amount),0) AS total FROM vch_details WHERE vch_type_id = ? AND DATE(vch_date) >= ?',
+      [vchTypeId, monthStart]
+    ),
+    pool.execute(`
+      SELECT v.id, v.vch_no AS bilty_no, v.vch_date AS bilty_date, v.amount,
+             cons.name AS consignor, vm.vehicle_no AS truck_no
+      FROM vch_details v
+      LEFT JOIN ledger_master cons ON cons.id = v.ledger_master_id
+      LEFT JOIN vehicle_master vm ON vm.id = v.vehicle_id
+      WHERE v.vch_type_id = ?
+      ORDER BY v.vch_date DESC, v.id DESC
+      LIMIT 5
+    `, [vchTypeId]),
+  ]);
+
+  return {
+    total:         Number(totalRows[0]?.c ?? 0),
+    today_count:   Number(todayRows[0]?.c ?? 0),
+    today_freight: Number(todayRows[0]?.total ?? 0),
+    month_count:   Number(monthRows[0]?.c ?? 0),
+    month_freight: Number(monthRows[0]?.total ?? 0),
+    recent:        recentRows[0],
+  };
 }
 
 // GET /api/reports/summary
 exports.getSummary = async (req, res, next) => {
   try {
     const user = req.user;
-    const canBilty = hasPerm(user, 'bilty.view');
-    const canDaybook = hasPerm(user, 'daybook.view');
+    const canBilty     = hasPerm(user, 'bilty.view');
+    const canDaybook   = hasPerm(user, 'daybook.view');
     const canLedgerGroup = hasPerm(user, 'ledgergroup.view');
-    const canUsers = hasPerm(user, 'user.view');
+    const canUsers     = hasPerm(user, 'user.view');
+
+    const [bStats, ledger_groups, active_users] = await Promise.all([
+      canBilty ? biltyStats() : Promise.resolve({ total: 0, today_count: 0, today_freight: 0, month_count: 0, month_freight: 0, recent: [] }),
+      canLedgerGroup ? countTable('ledger_group') : Promise.resolve(0),
+      canUsers ? countActiveUsers() : Promise.resolve(0),
+    ]);
+
     return res.status(200).json({
-      bilties: canBilty ? await countBilties() : 0,
-      ledger_groups: canLedgerGroup ? await countTable('ledger_group') : 0,
-      active_users: canUsers ? await countActiveUsers() : 0,
+      bilties:        bStats.total,
+      today_bilties:  bStats.today_count,
+      today_freight:  bStats.today_freight,
+      month_bilties:  bStats.month_count,
+      month_freight:  bStats.month_freight,
+      recent_bilties: bStats.recent,
+      ledger_groups,
+      active_users,
       permissions: { bilty: canBilty, daybook: canDaybook, ledgergroup: canLedgerGroup, user: canUsers },
     });
   } catch (err) { return next(err); }
