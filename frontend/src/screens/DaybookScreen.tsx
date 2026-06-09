@@ -13,8 +13,8 @@
  */
 
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
-import { Platform, StyleSheet, Text, View, Pressable, TextInput, Alert } from 'react-native';
-import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
+import { Platform, StyleSheet, Text, View, Pressable, TextInput, Alert, ScrollView } from 'react-native';
+import { useFocusEffect, useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Loader } from '../components/Loader';
 import { ConfirmDialog } from '../components/ConfirmDialog';
@@ -22,7 +22,9 @@ import { Modal } from '../components/Modal';
 import { Toast } from '../components/Toast';
 import { colors, radius, spacing, typography } from '../constants/theme';
 import { voucherService } from '../services/voucherService';
+import { biltyService } from '../services/biltyService';
 import type { DaybookEntry, VoucherDetail } from '../../../shared/types/voucher';
+import type { BiltyDetail } from '../../../shared/types/bilty';
 import type { BillingStackParamList } from '../navigation/types';
 import { useAuth } from '../context/AuthContext';
 import { canDoAction } from '../navigation/guards';
@@ -62,6 +64,12 @@ function fmtMoney(v: number | string): string {
   const n = num(v);
   if (n === 0) return '—';
   return n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function fmtQty(v: number | string): string {
+  const n = num(v);
+  if (n === 0) return '—';
+  return n.toLocaleString('en-IN', { maximumFractionDigits: 3 });
 }
 
 function todayISO(): string {
@@ -154,17 +162,14 @@ export function DaybookScreen() {
   const [deleteTarget, setDeleteTarget] = useState<DaybookEntry | null>(null);
   const [deleting, setDeleting] = useState(false);
 
-  const [viewTargetId, setViewTargetId] = useState<number | null>(null);
+  const [viewEntry, setViewEntry] = useState<DaybookEntry | null>(null);
   const [viewData, setViewData] = useState<VoucherDetail | null>(null);
+  const [biltyViewData, setBiltyViewData] = useState<BiltyDetail | null>(null);
   const [viewLoading, setViewLoading] = useState(false);
 
   const [notice, setNotice] = useState<string | null>(null);
-  useEffect(() => {
-    const n = route.params?.notice;
-    if (!n) return;
-    setNotice(n);
-    navigation.setParams({ notice: undefined } as any);
-  }, [route.params?.notice, navigation]);
+  const linkedBilty = viewEntry?.parent_vch_id ? biltyViewData : null;
+  const isViewBilty = String(viewEntry?.vch_type_name || '').toLowerCase() === 'bilty';
 
   const load = useCallback(() => {
     setError(null);
@@ -174,20 +179,46 @@ export function DaybookScreen() {
       .catch(() => { setError('Could not load daybook.'); setRows([]); });
   }, [fromDate, toDate]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    const n = route.params?.notice;
+    if (!n) return;
+    setNotice(n);
+    navigation.setParams({ notice: undefined } as any);
+  }, [route.params?.notice, navigation]);
+
+  // Refresh when the screen regains focus (e.g., after saving/updating a bilty).
+  useFocusEffect(useCallback(() => { load(); }, [load]));
 
   // Any change to the data view resets to the first page.
   useEffect(() => { setPage(1); }, [filters, sortKey, sortDir, rows]);
 
   useEffect(() => {
-    if (!viewTargetId) { setViewData(null); return; }
+    if (!viewEntry) { setViewData(null); setBiltyViewData(null); return; }
     setViewLoading(true);
-    voucherService.get(viewTargetId)
-      .then(setViewData)
+    setViewData(null);
+    setBiltyViewData(null);
+    const isBilty = String(viewEntry.vch_type_name || '').toLowerCase() === 'bilty';
+    const run = async () => {
+      if (isBilty) {
+        const d = await biltyService.get(viewEntry.id);
+        setBiltyViewData(d);
+        return;
+      }
+      const d = await voucherService.get(viewEntry.id);
+      setViewData(d);
+      if (d.parent_vch_id) {
+        try {
+          const parent = await biltyService.get(d.parent_vch_id);
+          setBiltyViewData(parent);
+        } catch {
+          setBiltyViewData(null);
+        }
+      }
+    };
+    run()
       .catch((err: any) => {
-        // Row points at a voucher that no longer exists — refresh the list.
         if (err?.response?.status === 404) {
-          setViewTargetId(null);
+          setViewEntry(null);
           setNotice('That voucher no longer exists. The list has been refreshed.');
           load();
         } else {
@@ -195,7 +226,7 @@ export function DaybookScreen() {
         }
       })
       .finally(() => setViewLoading(false));
-  }, [viewTargetId, load]);
+  }, [viewEntry, load]);
 
   // ── Derived view: filter → sort → paginate ────────────────────────────────
   const filtered = useMemo(
@@ -269,13 +300,9 @@ export function DaybookScreen() {
     }
   };
 
-  // Bilty rows edit the Bilty vch type in place; everything else edits by id.
   const editEntry = (r: DaybookEntry) => {
     const vchType = String(r.vch_type_name || '').toLowerCase();
-    const subType = String(r.vch_subtype_name || '').toLowerCase();
-    const isBilty = vchType === 'bilty' || subType === 'bilty';
-
-    if (isBilty) {
+    if (vchType === 'bilty') {
       navigation.navigate('VoucherForm', { biltyEditId: r.id });
     } else {
       navigation.navigate('VoucherForm', { id: r.id });
@@ -283,25 +310,39 @@ export function DaybookScreen() {
   };
 
   const canEditRow = (r: DaybookEntry) => {
-    const isBilty = String(r.vch_type_name || '').toLowerCase() === 'bilty';
+    const typeName = String(r.vch_type_name || '').toLowerCase();
+    const isBilty = typeName === 'bilty';
     return isBilty ? canDoAction(user, 'bilty', 'edit') : canDoAction(user, 'voucher', 'edit');
+  };
+
+  // Freight Journal entries are auto-generated from bilty — block delete to prevent orphaned data.
+  const canDeleteRow = (r: DaybookEntry) => {
+    const typeName = String(r.vch_type_name || '').toLowerCase();
+    if (typeName === 'freight journal') return false;
+    const isBilty = typeName === 'bilty';
+    return isBilty ? canDoAction(user, 'bilty', 'delete') : canDoAction(user, 'voucher', 'delete');
   };
 
   // Clicking the VCH NO link opens the voucher — edit when allowed, else view.
   const openEntry = (r: DaybookEntry) => {
     if (canEditRow(r)) editEntry(r);
-    else setViewTargetId(r.id);
+    else setViewEntry(r);
   };
 
   const onDelete = async () => {
     if (!deleteTarget) return;
     setDeleting(true);
     try {
-      await voucherService.remove(deleteTarget.id);
+      const isBilty = String(deleteTarget.vch_type_name || '').toLowerCase() === 'bilty';
+      if (isBilty) {
+        await biltyService.delete(deleteTarget.id);
+      } else {
+        await voucherService.remove(deleteTarget.id);
+      }
       setDeleteTarget(null);
       load();
     } catch (err: any) {
-      Alert.alert('Error', err?.response?.data?.message || 'Could not delete voucher.');
+      Alert.alert('Error', err?.response?.data?.message || 'Could not delete.');
       setDeleteTarget(null);
     } finally {
       setDeleting(false);
@@ -424,33 +465,41 @@ export function DaybookScreen() {
               return (
                 <View
                   key={r.id}
-                  {...(Platform.OS === 'web'
-                    ? ({ onMouseEnter: () => setHoveredId(r.id), onMouseLeave: () => setHoveredId((h) => (h === r.id ? null : h)) } as any)
-                    : {})}
                   style={[styles.row, idx % 2 === 1 && styles.rowAlt, hoveredId === r.id && styles.rowHover]}
                 >
-                  <View style={styles.colDate}><Text style={styles.dateText}>{fmtDate(r.vch_date || '')}</Text></View>
-                  <View style={styles.colParty}><Text style={styles.partyText} numberOfLines={1}>{r.party_name || '—'}</Text></View>
-                  <View style={styles.colVchNo}>
-                    {r.vch_no ? (
-                      <Pressable onPress={() => openEntry(r)}><Text style={styles.linkText} numberOfLines={1}>{r.vch_no}</Text></Pressable>
-                    ) : <Text style={styles.muted}>—</Text>}
-                  </View>
-                  <View style={styles.colType}><Text style={styles.typeText} numberOfLines={1}>{r.vch_type_name || '—'}</Text></View>
-                  <View style={[styles.colNum, styles.cellRight]}><Text style={styles.amountText}>{fmtMoney(dr)}</Text></View>
-                  <View style={[styles.colNum, styles.cellRight]}><Text style={styles.amountText}>{fmtMoney(cr)}</Text></View>
+                  {/* Clickable data area — opens detail view */}
+                  <Pressable
+                    onPress={() => setViewEntry(r)}
+                    onHoverIn={() => setHoveredId(r.id)}
+                    onHoverOut={() => setHoveredId((h) => (h === r.id ? null : h))}
+                    style={styles.rowClickable}
+                  >
+                    <View style={styles.colDate}><Text style={styles.dateText}>{fmtDate(r.vch_date || '')}</Text></View>
+                    <View style={styles.colParty}><Text style={styles.partyText} numberOfLines={1}>{r.party_name || '—'}</Text></View>
+                    <View style={styles.colVchNo}>
+                      {r.vch_no
+                        ? <Text style={styles.linkText} numberOfLines={1}>{r.vch_no}</Text>
+                        : <Text style={styles.muted}>—</Text>}
+                    </View>
+                    <View style={styles.colType}><Text style={styles.typeText} numberOfLines={1}>{r.vch_type_name || '—'}</Text></View>
+                    <View style={[styles.colNum, styles.cellRight]}><Text style={styles.amountText}>{fmtMoney(dr)}</Text></View>
+                    <View style={[styles.colNum, styles.cellRight]}><Text style={styles.amountText}>{fmtMoney(cr)}</Text></View>
+                  </Pressable>
+                  {/* Action buttons — separate so they don't trigger the row click */}
                   <View style={[styles.colAction, styles.actionCell]}>
-                    {showEdit ? (
+                    {showEdit && canEditRow(r) ? (
                       <Pressable onPress={() => editEntry(r)} style={styles.iconBtn} accessibilityLabel="Edit">
                         <Icon kind="edit" color={colors.textLabel} />
                       </Pressable>
                     ) : null}
-                    {showDelete ? (
+                    {showDelete && canDeleteRow(r) ? (
                       <Pressable onPress={() => setDeleteTarget(r)} style={styles.iconBtn} accessibilityLabel="Delete">
                         <Icon kind="trash" color={colors.danger} />
                       </Pressable>
                     ) : null}
-                    {!showEdit && !showDelete ? <Text style={styles.muted}>—</Text> : null}
+                    {!(showEdit && canEditRow(r)) && !(showDelete && canDeleteRow(r)) ? (
+                      <Text style={styles.muted}>—</Text>
+                    ) : null}
                   </View>
                 </View>
               );
@@ -523,62 +572,166 @@ export function DaybookScreen() {
         </View>
       </Modal>
 
-      {/* View modal (read-only fallback) */}
+      {/* View modal — detail for any voucher row */}
       <Modal
-        visible={!!viewTargetId}
-        onClose={() => setViewTargetId(null)}
-        title={viewData ? `Voucher Detail — ${viewData.vch_no || ''}` : 'Voucher Detail'}
-        maxWidth={700}
+        visible={!!viewEntry}
+        onClose={() => setViewEntry(null)}
+        title={
+          biltyViewData ? `Bilty — ${biltyViewData.bilty_no}`
+          : viewData ? `${viewData.vch_type_name || 'Voucher'} — ${viewData.vch_no || fmtDate(viewData.vch_date || '')}`
+          : 'Voucher Detail'
+        }
+        maxWidth={1120}
       >
         {viewLoading ? (
           <View style={{ height: 200, justifyContent: 'center' }}><Loader /></View>
-        ) : viewData ? (
+        ) : isViewBilty && biltyViewData ? (
+          /* ── Bilty detail ── */
           <View style={styles.viewModalContent}>
-            <View style={styles.viewModalHeader}>
-              <View style={styles.viewModalHeaderCol}>
-                <Text style={styles.viewModalHeaderLabel}>Voucher No.</Text>
-                <Text style={styles.viewModalHeaderValue}>{viewData.vch_no || '—'}</Text>
+            <View style={styles.viewModalMetaTable}>
+              <MetaRow leftLabel="BILTY NO." leftValue={biltyViewData.bilty_no} rightLabel="DATE" rightValue={fmtDate(biltyViewData.bilty_date || '')} />
+              <MetaRow leftLabel="VEHICLE" leftValue={biltyViewData.truck_no || '—'} rightLabel="GOODS TYPE" rightValue={biltyViewData.goods_type || '—'} />
+              <MetaRow leftLabel="CONSIGNOR" leftValue={biltyViewData.consignor || '—'} rightLabel="BILL TO" rightValue={biltyViewData.bill_to || '—'} />
+              <MetaRow leftLabel="OWNER" leftValue={biltyViewData.owner_name || '—'} rightLabel="AGENT" rightValue={biltyViewData.agent_name || '—'} />
+              <MetaRow leftLabel="BRANCH" leftValue={biltyViewData.branch || '—'} rightLabel="TRUCK TYPE" rightValue={biltyViewData.truck_type || '—'} />
+            </View>
+
+            <Text style={[styles.viewModalSectionTitle, { marginTop: spacing.md }]}>ITEMS</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+            <View style={styles.viewModalTable}>
+              <View style={styles.viewModalTableRowHeader}>
+                <Text style={[styles.viewModalTableColH, { width: 130 }]}>CONSIGNEE</Text>
+                <Text style={[styles.viewModalTableColH, { width: 120 }]}>LR NO.</Text>
+                <Text style={[styles.viewModalTableColH, { width: 90 }]}>FROM</Text>
+                <Text style={[styles.viewModalTableColH, { width: 90 }]}>TO</Text>
+                <Text style={[styles.viewModalTableColH, { width: 55, textAlign: 'right' }]}>QTY</Text>
+                <Text style={[styles.viewModalTableColH, { width: 75, textAlign: 'right' }]}>RATE</Text>
+                <Text style={[styles.viewModalTableColH, { width: 75, textAlign: 'right' }]}>L RATE</Text>
+                <Text style={[styles.viewModalTableColH, { width: 90, textAlign: 'right', paddingRight: 12 }]}>FREIGHT</Text>
+                <Text style={[styles.viewModalTableColH, { width: 100 }]}>CHALLAN</Text>
               </View>
-              <View style={styles.viewModalHeaderCol}>
-                <Text style={styles.viewModalHeaderLabel}>Date</Text>
-                <Text style={styles.viewModalHeaderValue}>{fmtDate(viewData.vch_date || '')}</Text>
-              </View>
-              <View style={styles.viewModalHeaderCol}>
-                <Text style={styles.viewModalHeaderLabel}>Party</Text>
-                <Text style={styles.viewModalHeaderValue}>{viewData.party_name || '—'}</Text>
-              </View>
+              {biltyViewData.items.length === 0 ? (
+                <View style={{ padding: spacing.md }}><Text style={{ color: colors.textMuted, fontSize: 13 }}>No items.</Text></View>
+              ) : biltyViewData.items.map((it, idx) => (
+                <View key={idx} style={styles.viewModalTableRow}>
+                  <Text style={[styles.viewModalTableCol, { width: 130 }]} numberOfLines={1}>{it.consignee || '—'}</Text>
+                  <Text style={[styles.viewModalTableCol, { width: 120 }]} numberOfLines={1}>{it.lr_no || '—'}</Text>
+                  <Text style={[styles.viewModalTableCol, { width: 90 }]} numberOfLines={1}>{it.from_loc || '—'}</Text>
+                  <Text style={[styles.viewModalTableCol, { width: 90 }]} numberOfLines={1}>{it.to_loc || '—'}</Text>
+                  <Text style={[styles.viewModalTableCol, { width: 55, textAlign: 'right' }]}>{fmtQty(it.qty)}</Text>
+                  <Text style={[styles.viewModalTableCol, { width: 75, textAlign: 'right' }]}>{fmtMoney(num(it.rate))}</Text>
+                  <Text style={[styles.viewModalTableCol, { width: 75, textAlign: 'right' }]}>{fmtMoney(num(it.l_rate ?? 0))}</Text>
+                  <Text style={[styles.viewModalTableCol, { width: 90, textAlign: 'right', paddingRight: 12 }]}>{fmtMoney(num(it.l_rate ?? 0) * num(it.qty))}</Text>
+                  <Text style={[styles.viewModalTableCol, { width: 100 }]} numberOfLines={1}>{it.challan_no || '—'}</Text>
+                </View>
+              ))}
+            </View>
+            </ScrollView>
+          </View>
+        ) : viewData ? (
+          /* ── Generic voucher / Freight Journal detail ── */
+          <View style={styles.viewModalContent}>
+            <View style={styles.viewModalMetaTable}>
+              <MetaRow leftLabel="VOUCHER NO." leftValue={viewData.vch_no || '—'} rightLabel="DATE" rightValue={fmtDate(viewData.vch_date || '')} />
+              <MetaRow leftLabel="TYPE" leftValue={viewData.vch_type_name || '—'} rightLabel="LEDGER" rightValue={viewData.party_name || '—'} />
+              <MetaRow leftLabel="AMOUNT" leftValue={fmtMoney(viewData.amount)} rightLabel="REMARK" rightValue={viewData.remark || '—'} />
+              {viewData.parent_bilty_no ? (
+                <MetaRow leftLabel="BILTY NO." leftValue={viewData.parent_bilty_no} rightLabel="SOURCE" rightValue="Freight Journal" />
+              ) : viewEntry?.parent_vch_id ? (
+                <MetaRow
+                  leftLabel="BILTY NO."
+                  leftValue={(rows || []).find((r) => r.id === viewEntry.parent_vch_id)?.vch_no || `#${viewEntry.parent_vch_id}`}
+                  rightLabel="SOURCE"
+                  rightValue="Linked Bilty"
+                />
+              ) : null}
             </View>
 
             <Text style={styles.viewModalSectionTitle}>LEDGER ENTRIES</Text>
 
-            <View style={styles.viewModalTable}>
-              <View style={styles.viewModalTableRowHeader}>
-                <Text style={[styles.viewModalTableColH, { flex: 1 }]}>LEDGER</Text>
-                <Text style={[styles.viewModalTableColH, { width: 100, textAlign: 'right' }]}>DR</Text>
-                <Text style={[styles.viewModalTableColH, { width: 100, textAlign: 'right' }]}>CR</Text>
+            {viewData.ledgerEntries.length === 0 ? (
+              <View style={{ padding: spacing.md }}>
+                <Text style={{ color: colors.textMuted, fontSize: 13 }}>No ledger entries.</Text>
               </View>
-
-              {viewData.ledgerEntries.map((le, idx) => {
-                const amt = num(le.amount);
-                const isDr = amt > 0;
-                const isCr = amt < 0;
-                const absAmt = Math.abs(amt);
-                return (
-                  <View key={idx}>
-                    <View style={styles.viewModalTableRow}>
-                      <Text style={[styles.viewModalTableCol, { flex: 1 }]}>{le.ledger_name || '—'}</Text>
-                      <Text style={[styles.viewModalTableCol, { width: 100, textAlign: 'right' }]}>{isDr ? fmtMoney(absAmt) : '—'}</Text>
-                      <Text style={[styles.viewModalTableCol, { width: 100, textAlign: 'right' }]}>{isCr ? fmtMoney(absAmt) : '—'}</Text>
+            ) : (
+              <View style={styles.viewModalTable}>
+                <View style={styles.viewModalTableRowHeader}>
+                  <Text style={[styles.viewModalTableColH, { flex: 1 }]}>LEDGER</Text>
+                  <Text style={[styles.viewModalTableColH, { width: 120, textAlign: 'right' }]}>DR</Text>
+                  <Text style={[styles.viewModalTableColH, { width: 120, textAlign: 'right' }]}>CR</Text>
+                </View>
+                {viewData.ledgerEntries.map((le, idx) => {
+                  const amt = num(le.amount);
+                  const isDr = amt > 0;
+                  const isCr = amt < 0;
+                  const absAmt = Math.abs(amt);
+                  return (
+                    <View key={idx}>
+                      <View style={styles.viewModalTableRow}>
+                        <Text style={[styles.viewModalTableCol, { flex: 1 }]}>{le.ledger_name || '—'}</Text>
+                        <Text style={[styles.viewModalTableCol, { width: 120, textAlign: 'right' }]}>{isDr ? fmtMoney(absAmt) : '—'}</Text>
+                        <Text style={[styles.viewModalTableCol, { width: 120, textAlign: 'right' }]}>{isCr ? fmtMoney(absAmt) : '—'}</Text>
+                      </View>
+                      {le.inventoryEntries && le.inventoryEntries.map((inv, iIdx) => (
+                        <View key={iIdx} style={styles.viewModalInvRow}>
+                          <Text style={styles.viewModalInvText}>↳ {inv.item_name} × {inv.qty} @ ₹{fmtMoney(inv.rate)}   ₹{fmtMoney(inv.amount)}</Text>
+                        </View>
+                      ))}
                     </View>
-                    {le.inventoryEntries && le.inventoryEntries.map((inv, iIdx) => (
-                      <View key={iIdx} style={styles.viewModalInvRow}>
-                        <Text style={styles.viewModalInvText}>↳ {inv.item_name} × {inv.qty} @ ₹{fmtMoney(inv.rate)}   ₹{fmtMoney(inv.amount)}</Text>
+                  );
+                })}
+              </View>
+            )}
+
+            {linkedBilty ? (
+              <View style={{ marginTop: spacing.lg }}>
+                <Text style={styles.viewModalSectionTitle}>BILTY SNAPSHOT</Text>
+                <View style={styles.viewModalSummaryGrid}>
+                  <InfoCard label="BILTY NO." value={linkedBilty.bilty_no || '—'} />
+                  <InfoCard label="DATE" value={fmtDate(linkedBilty.bilty_date || '')} />
+                  <InfoCard label="VEHICLE" value={linkedBilty.truck_no || '—'} />
+                  <InfoCard label="GOODS TYPE" value={linkedBilty.goods_type || '—'} />
+                  <InfoCard label="CONSIGNOR" value={linkedBilty.consignor || '—'} />
+                  <InfoCard label="BILL TO" value={linkedBilty.bill_to || '—'} />
+                  <InfoCard label="OWNER" value={linkedBilty.owner_name || '—'} />
+                  <InfoCard label="AGENT" value={linkedBilty.agent_name || '—'} />
+                  <InfoCard label="BRANCH" value={linkedBilty.branch || '—'} />
+                  <InfoCard label="TRUCK TYPE" value={linkedBilty.truck_type || '—'} />
+                </View>
+
+                <Text style={[styles.viewModalSectionTitle, { marginTop: spacing.lg }]}>ITEMS</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                  <View style={styles.viewModalTable}>
+                    <View style={styles.viewModalTableRowHeader}>
+                      <Text style={[styles.viewModalTableColH, { width: 130 }]}>CONSIGNEE</Text>
+                      <Text style={[styles.viewModalTableColH, { width: 120 }]}>LR NO.</Text>
+                      <Text style={[styles.viewModalTableColH, { width: 90 }]}>FROM</Text>
+                      <Text style={[styles.viewModalTableColH, { width: 90 }]}>TO</Text>
+                      <Text style={[styles.viewModalTableColH, { width: 55, textAlign: 'right' }]}>QTY</Text>
+                      <Text style={[styles.viewModalTableColH, { width: 75, textAlign: 'right' }]}>RATE</Text>
+                      <Text style={[styles.viewModalTableColH, { width: 75, textAlign: 'right' }]}>L RATE</Text>
+                      <Text style={[styles.viewModalTableColH, { width: 90, textAlign: 'right', paddingRight: 12 }]}>FREIGHT</Text>
+                      <Text style={[styles.viewModalTableColH, { width: 100 }]}>CHALLAN</Text>
+                    </View>
+                    {linkedBilty.items.length === 0 ? (
+                      <View style={{ padding: spacing.md }}><Text style={{ color: colors.textMuted, fontSize: 13 }}>No items.</Text></View>
+                    ) : linkedBilty.items.map((it, idx) => (
+                      <View key={idx} style={styles.viewModalTableRow}>
+                        <Text style={[styles.viewModalTableCol, { width: 130 }]} numberOfLines={1}>{it.consignee || '—'}</Text>
+                        <Text style={[styles.viewModalTableCol, { width: 120 }]} numberOfLines={1}>{it.lr_no || '—'}</Text>
+                        <Text style={[styles.viewModalTableCol, { width: 90 }]} numberOfLines={1}>{it.from_loc || '—'}</Text>
+                        <Text style={[styles.viewModalTableCol, { width: 90 }]} numberOfLines={1}>{it.to_loc || '—'}</Text>
+                        <Text style={[styles.viewModalTableCol, { width: 55, textAlign: 'right' }]}>{fmtQty(it.qty)}</Text>
+                        <Text style={[styles.viewModalTableCol, { width: 75, textAlign: 'right' }]}>{fmtMoney(num(it.rate))}</Text>
+                        <Text style={[styles.viewModalTableCol, { width: 75, textAlign: 'right' }]}>{fmtMoney(num(it.l_rate ?? 0))}</Text>
+                        <Text style={[styles.viewModalTableCol, { width: 90, textAlign: 'right', paddingRight: 12 }]}>{fmtMoney(num(it.l_rate ?? 0) * num(it.qty))}</Text>
+                        <Text style={[styles.viewModalTableCol, { width: 100 }]} numberOfLines={1}>{it.challan_no || '—'}</Text>
                       </View>
                     ))}
                   </View>
-                );
-              })}
-            </View>
+                </ScrollView>
+              </View>
+            ) : null}
           </View>
         ) : (
           <View style={{ height: 200, justifyContent: 'center', alignItems: 'center' }}>
@@ -619,6 +772,41 @@ function Field({ label, placeholder, value, onChange, half, keyboard }: {
     </View>
   );
 }
+
+function MetaRow({
+  leftLabel,
+  leftValue,
+  rightLabel,
+  rightValue,
+}: {
+  leftLabel: string;
+  leftValue: string;
+  rightLabel: string;
+  rightValue: string;
+}) {
+  return (
+    <View style={styles.metaRow}>
+      <View style={styles.metaCell}>
+        <Text style={styles.infoLabel}>{leftLabel}</Text>
+        <Text style={styles.infoValue} numberOfLines={2}>{leftValue || '—'}</Text>
+      </View>
+      <View style={[styles.metaCell, styles.metaCellRight]}>
+        <Text style={styles.infoLabel}>{rightLabel}</Text>
+        <Text style={styles.infoValue} numberOfLines={2}>{rightValue || '—'}</Text>
+      </View>
+    </View>
+  );
+}
+
+function InfoCard({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.infoCard}>
+      <Text style={styles.infoLabel}>{label}</Text>
+      <Text style={styles.infoValue} numberOfLines={2}>{value || '—'}</Text>
+    </View>
+  );
+}
+
 
 // ── Web inline styles (plain objects for raw DOM elements) ────────────────────
 const btnGhost: React.CSSProperties = {
@@ -681,6 +869,7 @@ const styles = StyleSheet.create({
 
   body: { flex: 1 },
   row: { flexDirection: 'row', alignItems: 'stretch', height: 40, borderBottomWidth: 1, borderBottomColor: colors.border, backgroundColor: colors.card },
+  rowClickable: { flex: 1, flexDirection: 'row', alignItems: 'stretch', ...(Platform.OS === 'web' ? ({ cursor: 'pointer' } as any) : {}) },
   rowAlt: { backgroundColor: '#FBFCFE' },
   // Light glow that follows the cursor across the hovered row (web only).
   rowHover: { backgroundColor: '#EEF4FF', ...(Platform.OS === 'web' ? ({ boxShadow: 'inset 0 0 0 1px rgba(37,99,235,0.18)' } as any) : null) },
@@ -723,10 +912,6 @@ const styles = StyleSheet.create({
 
   // View modal
   viewModalContent: { paddingBottom: spacing.lg },
-  viewModalHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: spacing.xl },
-  viewModalHeaderCol: { flex: 1 },
-  viewModalHeaderLabel: { fontSize: 11, color: colors.textMuted, fontFamily: typography.uiBold, textTransform: 'uppercase', marginBottom: 4 },
-  viewModalHeaderValue: { fontSize: 14, color: colors.textStrong, fontFamily: typography.uiBold },
   viewModalSectionTitle: { fontSize: 11, color: colors.textMuted, fontFamily: typography.uiBold, textTransform: 'uppercase', marginBottom: 8, letterSpacing: 0.5 },
   viewModalTable: { borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.card, overflow: 'hidden' },
   viewModalTableRowHeader: { flexDirection: 'row', padding: spacing.sm, borderBottomWidth: 1, borderBottomColor: colors.border, backgroundColor: colors.background },
@@ -735,4 +920,26 @@ const styles = StyleSheet.create({
   viewModalTableCol: { fontSize: 13, color: colors.textStrong, fontFamily: typography.ui },
   viewModalInvRow: { paddingLeft: 24, paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: colors.border, backgroundColor: '#F8FAFC' },
   viewModalInvText: { fontSize: 12, color: colors.textMuted, fontFamily: typography.uiMedium },
+  viewModalMetaTable: { borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.card, overflow: 'hidden', marginBottom: spacing.lg },
+  metaRow: { flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: colors.border },
+  metaCell: { flex: 1, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, minHeight: 56, justifyContent: 'center' },
+  metaCellRight: { borderLeftWidth: 1, borderLeftColor: colors.border },
+  infoLabel: { fontSize: 11, color: colors.textMuted, fontFamily: typography.uiBold, textTransform: 'uppercase', marginBottom: 4, letterSpacing: 0.3 },
+  infoValue: { fontSize: 14, color: colors.textStrong, fontFamily: typography.uiBold, lineHeight: 18 },
+  viewModalSummaryGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    marginBottom: spacing.lg,
+  },
+  infoCard: {
+    width: '48%',
+    minWidth: 140,
+    padding: spacing.xs,
+    backgroundColor: colors.background,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginBottom: spacing.xs,
+  },
 });

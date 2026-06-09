@@ -10,11 +10,11 @@ export type AuthStackParamList = {
 export type AppTabsParamList = {
   Dashboard: undefined;
   Bilty: undefined;
-  Freight: undefined;
   Billing: undefined;
+  Reports: undefined;
   LedgerMaster: undefined;
   // Children of the Ledger Master parent in the nav dropdown.
-  // Customers is scoped to the Sundry Debtors group; OtherLedgers shows all.
+  // Customers is scoped to customer child groups; OtherLedgers shows all.
   Customers: undefined;
   OtherLedgers: undefined;
   AgentMaster: undefined;
@@ -38,6 +38,15 @@ export type TabName = keyof AppTabsParamList;
  * BiltyForm/BiltyDetail route through the same stack so navigation.replace()
  * works after save.
  */
+export type ReportsStackParamList = {
+  ReportsHub: undefined;
+  BiltyRegister: undefined;
+  VoucherRegister: undefined;
+  LedgerStatement: { ledger_id?: number; ledger_name?: string } | undefined;
+  GroupSummary: undefined;
+  GroupLedgers: { group_id: number; group_name: string };
+};
+
 export type BiltyStackParamList = {
   BiltyList: undefined;
   // `id` is the DB primary key; `bilty_no` (e.g. "18520") is the
@@ -48,16 +57,6 @@ export type BiltyStackParamList = {
   // screen (used when the form is opened from a Day Book row), instead of the
   // default BiltyList / dashboard landing.
   BiltyForm: { id?: number; bilty_no?: string; returnTo?: 'daybook' } | undefined;
-  BiltyDetail: { id: number };
-};
-
-/**
- * Freight stack (Phase 4) — nested inside the Freight tab.
- * FreightList shows all memos; FreightDetail renders the read-only A4 ledger.
- */
-export type FreightStackParamList = {
-  FreightList: undefined;
-  FreightDetail: { id: number };
 };
 
 /**

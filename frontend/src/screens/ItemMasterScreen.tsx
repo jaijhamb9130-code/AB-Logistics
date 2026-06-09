@@ -29,7 +29,7 @@ import { itemGroupService } from '../services/itemGroupService';
 import { itemCategoryService } from '../services/itemCategoryService';
 import { validateGstRate, validateRequired } from '../utils/masterValidators';
 import { formatCurrency, formatQty } from '../utils/format';
-import type { ItemMasterItem } from '../../../shared/types/itemMaster';
+import type { ItemMasterItem, CreateItemMasterRequest } from '../../../shared/types/itemMaster';
 import type { ItemGroupItem } from '../../../shared/types/itemGroup';
 import type { ItemCategoryItem } from '../../../shared/types/itemCategory';
 import { useAuth } from '../context/AuthContext';
@@ -159,6 +159,8 @@ export function ItemMasterScreen() {
     const e: FormErrors = {};
     const nameErr = validateRequired(s.name, 'Item name');
     if (nameErr) e.name = nameErr;
+    if (!s.item_group_id) e.item_group_id = 'Item Group is required.';
+    if (!s.item_category_id) e.item_category_id = 'Item Category is required.';
     const rateErr = validateGstRate(s.gst_rate);
     if (rateErr) e.gst_rate = rateErr;
     return e;
@@ -174,7 +176,7 @@ export function ItemMasterScreen() {
     try {
       // Persisted fields. When batch=Yes, opening totals come from the
       // weighted batch breakdown; otherwise straight from the user's input.
-      const payload = {
+      const payload: CreateItemMasterRequest = {
         name: form.name.trim(),
         hsn_code: form.hsn_code.trim().toUpperCase() || null,
         gst_rate: form.gst_rate.trim() === '' ? null : Number(form.gst_rate),
@@ -203,8 +205,10 @@ export function ItemMasterScreen() {
       else await itemMasterService.create(payload);
       await load();
       closeModal();
-    } catch {
-      setFormError('Could not save item. Try again.');
+    } catch (err: any) {
+      const code = err?.response?.data?.error;
+      if (code === 'name_taken') setFormError('An item with that name already exists.');
+      else setFormError('Could not save item. Try again.');
     } finally {
       setSaving(false);
     }
@@ -447,29 +451,33 @@ export function ItemMasterScreen() {
           <View style={styles.row}>
             <View style={styles.rowHalf}>
               <SelectDropdown
-                label="Item Group"
+                label="Item Group *"
                 value={groups.find((g) => g.id === form.item_group_id)?.group_name ?? ''}
                 options={groups.map((g) => g.group_name)}
                 onSelect={(name) => {
                   const picked = groups.find((g) => g.group_name === name);
                   setForm((f) => ({ ...f, item_group_id: picked ? picked.id : 0 }));
+                  setErrs((e) => ({ ...e, item_group_id: undefined }));
                 }}
-                placeholder="Search group..."
+                placeholder="Select group..."
                 searchable
+                error={errs.item_group_id}
                 testID="item-group-input"
               />
             </View>
             <View style={styles.rowHalf}>
               <SelectDropdown
-                label="Item Category"
+                label="Item Category *"
                 value={categories.find((c) => c.id === form.item_category_id)?.category_name ?? ''}
                 options={categories.map((c) => c.category_name)}
                 onSelect={(name) => {
                   const picked = categories.find((c) => c.category_name === name);
                   setForm((f) => ({ ...f, item_category_id: picked ? picked.id : 0 }));
+                  setErrs((e) => ({ ...e, item_category_id: undefined }));
                 }}
-                placeholder="Search category..."
+                placeholder="Select category..."
                 searchable
+                error={errs.item_category_id}
                 testID="item-category-input"
               />
             </View>

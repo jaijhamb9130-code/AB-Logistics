@@ -32,16 +32,14 @@ describe('reportService.getSummary (contract)', () => {
   it('admin payload contains all numeric stats and all-true permissions', async () => {
     reportService.getSummary.mockResolvedValueOnce({
       bilties: 12,
-      freight_memos: 7,
       ledger_groups: 3,
       active_users: 3,
       permissions: {
-        bilty: true, freight: true, daybook: true, ledgergroup: true, user: true,
+        bilty: true, daybook: true, ledgergroup: true, user: true,
       },
     });
     const s = await reportService.getSummary();
     expect(s.bilties).toBe(12);
-    expect(s.freight_memos).toBe(7);
     expect(s.ledger_groups).toBe(3);
     expect(s.active_users).toBe(3);
     expect(s.permissions.bilty).toBe(true);
@@ -52,11 +50,10 @@ describe('reportService.getSummary (contract)', () => {
   it('staff payload has false flags for unpermitted stats — UI hides these cards', async () => {
     reportService.getSummary.mockResolvedValueOnce({
       bilties: 5,
-      freight_memos: 2,
       ledger_groups: 0,
       active_users: 0,
       permissions: {
-        bilty: true, freight: true, daybook: false, ledgergroup: false, user: false,
+        bilty: true, daybook: false, ledgergroup: false, user: false,
       },
     });
     const s = await reportService.getSummary();

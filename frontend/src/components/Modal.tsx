@@ -137,7 +137,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.lg,
     borderWidth: 1,
     borderColor: colors.border,
-    ...(Platform.OS === 'web' ? ({ overflow: 'visible' } as any) : { overflow: 'hidden' as const }),
+    ...(Platform.OS === 'web' ? ({ overflowX: 'hidden', overflowY: 'visible' } as any) : { overflow: 'hidden' as const }),
   },
   header: {
     flexDirection: 'row',

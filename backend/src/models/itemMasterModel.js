@@ -133,6 +133,14 @@ async function search(q) {
   return rows;
 }
 
+async function findByName(name) {
+  const [rows] = await pool.execute(
+    'SELECT id FROM item_master WHERE LOWER(name) = LOWER(:name) LIMIT 1',
+    { name }
+  );
+  return rows[0] || null;
+}
+
 async function create(payload) {
   const {
     name, hsn_code, gst_rate, batch, unit,
@@ -255,4 +263,4 @@ async function update(id, payload) {
   }
 }
 
-module.exports = { findAll, findById, search, create, update };
+module.exports = { findAll, findById, findByName, search, create, update };

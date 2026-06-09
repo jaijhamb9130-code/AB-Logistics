@@ -57,6 +57,8 @@ interface Props {
   usePortal?: boolean;
   /** Optional style override for the inner text input (e.g. larger/bold value text). */
   inputStyle?: any;
+  /** Optional callback to trigger when '+' button is pressed (only shown if value is not in options) */
+  onCreatePressed?: (value: string) => void;
 }
 
 export type AutocompleteHandle = { focus: () => void };
@@ -75,6 +77,7 @@ export const AutocompleteField = forwardRef<AutocompleteHandle, Props>(function 
   submitAlways,
   usePortal,
   inputStyle,
+  onCreatePressed,
 }: Props, ref) {
   const [focused, setFocused] = useState(false);
   // Whether the dropdown should be visible. Decoupled from `focused` because
@@ -127,9 +130,11 @@ export const AutocompleteField = forwardRef<AutocompleteHandle, Props>(function 
   // found" hint instead of silently hiding the dropdown. Strip a trailing
   // required-marker " *" from the label so it reads "No Consignor found".
   const cleanLabel = label.replace(/\s*\*\s*$/, '').trim();
+  const hasExactMatch = options.some((o) => o.toLowerCase() === valLower);
+  const showCreateOption = !!(onCreatePressed && valTrim.length > 0 && !hasExactMatch);
   const showNoResults =
     hasOptions && focused && listOpen && filtered.length === 0 && valTrim.length >= NO_RESULT_CHARS;
-  const showList = (focused && listOpen && filtered.length > 0) || showNoResults;
+  const showList = (focused && listOpen && (filtered.length > 0 || showCreateOption)) || showNoResults;
 
   const handleSelect = (opt: string) => {
     onChangeText(opt);
@@ -288,34 +293,56 @@ export const AutocompleteField = forwardRef<AutocompleteHandle, Props>(function 
       ]}
     >
       <Text style={[styles.label, compact && styles.labelCompact]}>{label}</Text>
-      <TextInput
-        ref={inputRef}
-        value={value}
-        onChangeText={handleChangeText}
-        onFocus={() => { setFocused(true); setListOpen(true); }}
-        onBlur={() => {
-          // Skip closing if user is currently pressing a dropdown item — the
-          // press handler will close the list itself once the selection commits.
-          if (pressingRef.current) return;
-          setFocused(false);
-          setListOpen(false);
-        }}
-        placeholder={placeholder}
-        placeholderTextColor={colors.textMuted}
-        // Native uses onKeyPress. Web uses a document-level keydown listener
-        // (see useEffect above), so this is a no-op on web.
-        onKeyPress={handleKeyPress}
-        style={[
-          styles.field,
-          compact && styles.fieldCompact,
-          error ? styles.fieldError : null,
-          focused && !showList && styles.fieldFocused,
-          showList && (openUp ? styles.fieldOpenUp : styles.fieldOpen),
-          Platform.OS === 'web' && ({ outlineStyle: 'none', scrollMarginBlock: '120px' } as any),
-          inputStyle,
-        ]}
-        testID={testID}
-      />
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, width: '100%', position: 'relative' }}>
+        <TextInput
+          ref={inputRef}
+          value={value}
+          onChangeText={handleChangeText}
+          onFocus={() => { setFocused(true); setListOpen(true); }}
+          onBlur={() => {
+            // Skip closing if user is currently pressing a dropdown item — the
+            // press handler will close the list itself once the selection commits.
+            if (pressingRef.current) return;
+            setFocused(false);
+            setListOpen(false);
+          }}
+          placeholder={placeholder}
+          placeholderTextColor={colors.textMuted}
+          // Native uses onKeyPress. Web uses a document-level keydown listener
+          // (see useEffect above), so this is a no-op on web.
+          onKeyPress={handleKeyPress}
+          style={[
+            styles.field,
+            { flex: 1 },
+            compact && styles.fieldCompact,
+            error ? styles.fieldError : null,
+            focused && !showList && styles.fieldFocused,
+            showList && (openUp ? styles.fieldOpenUp : styles.fieldOpen),
+            Platform.OS === 'web' && ({ outlineStyle: 'none', scrollMarginBlock: '120px' } as any),
+            inputStyle,
+          ]}
+          testID={testID}
+        />
+        {onCreatePressed && value.trim() !== '' && !options.some(o => o.toLowerCase() === value.trim().toLowerCase()) && (
+          <Pressable
+            onPress={() => onCreatePressed(value.trim())}
+            style={({ pressed }: any) => [
+              {
+                width: compact ? 38 : 34,
+                height: compact ? 38 : 34,
+                borderRadius: radius.md,
+                borderWidth: 1,
+                borderColor: colors.primary,
+                alignItems: 'center',
+                justifyContent: 'center',
+                backgroundColor: pressed ? '#EEF2F7' : '#FFFFFF',
+              }
+            ]}
+          >
+            <Text style={{ color: colors.primary, fontSize: 18, fontWeight: '700' }}>+</Text>
+          </Pressable>
+        )}
+      </View>
       {error ? <Text style={styles.errText}>{error}</Text> : null}
 
       {/* Web body-portal dropdown — escapes ancestor overflow clipping (e.g. a
@@ -332,7 +359,26 @@ export const AutocompleteField = forwardRef<AutocompleteHandle, Props>(function 
                 overflowY: 'auto', boxSizing: 'border-box',
               }}
             >
-              {filtered.length === 0 ? (
+              {showCreateOption && (
+                <div
+                  onMouseDown={(e: any) => {
+                    e.preventDefault();
+                    pressingRef.current = true;
+                    setListOpen(false);
+                    onCreatePressed!(valTrim);
+                  }}
+                  style={{
+                    height: ITEM_HEIGHT, display: 'flex', alignItems: 'center',
+                    paddingLeft: 12, paddingRight: 12, cursor: 'pointer', userSelect: 'none',
+                    background: '#F0FDF4', color: colors.primary,
+                    fontSize: 14, lineHeight: '20px', fontFamily: 'inherit', fontWeight: 700,
+                    borderBottom: filtered.length > 0 ? '1px solid #DCFCE7' : 'none',
+                  }}
+                >
+                  + Create "{valTrim}"
+                </div>
+              )}
+              {filtered.length === 0 && !showCreateOption ? (
                 <div style={{ height: ITEM_HEIGHT, display: 'flex', alignItems: 'center', paddingLeft: 16, paddingRight: 16, fontSize: 13, fontStyle: 'italic', color: '#64748B', fontFamily: 'inherit' }}>
                   No {cleanLabel} found
                 </div>
@@ -374,11 +420,29 @@ export const AutocompleteField = forwardRef<AutocompleteHandle, Props>(function 
             ? ({ onMouseDown: (e: any) => e.preventDefault() } as any)
             : {})}
         >
-          {filtered.length === 0 ? (
+          {showCreateOption && (
+            <Pressable
+              onPressIn={() => {
+                pressingRef.current = true;
+                setListOpen(false);
+                onCreatePressed!(valTrim);
+              }}
+              style={({ pressed }: any) => [
+                styles.item,
+                { height: ITEM_HEIGHT, backgroundColor: pressed ? '#DCFCE7' : '#F0FDF4', borderBottomWidth: 1, borderBottomColor: '#DCFCE7' },
+              ]}
+              accessibilityRole="menuitem"
+            >
+              <Text style={[styles.itemText, { color: colors.primary, fontFamily: typography.uiBold }]}>
+                + Create "{valTrim}"
+              </Text>
+            </Pressable>
+          )}
+          {filtered.length === 0 && !showCreateOption ? (
             <View style={[styles.item, { height: ITEM_HEIGHT }]}>
               <Text style={styles.noResultText}>No {cleanLabel} found</Text>
             </View>
-          ) : (
+          ) : filtered.length > 0 ? (
           <ScrollView
             nestedScrollEnabled
             keyboardShouldPersistTaps="handled"
@@ -414,7 +478,7 @@ export const AutocompleteField = forwardRef<AutocompleteHandle, Props>(function 
               </Pressable>
             ))}
           </ScrollView>
-          )}
+          ) : null}
         </View>
       ) : null}
     </View>

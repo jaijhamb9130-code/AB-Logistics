@@ -47,10 +47,16 @@ exports.create = async (req, res, next) => {
     const err = validateBody(body);
     if (err) return res.status(400).json({ error: err });
 
+    const existing = await itemMasterModel.findByName(String(body.name).trim());
+    if (existing) return res.status(409).json({ error: 'name_taken', message: 'An item with that name already exists.' });
+
     const userId = req.user ? req.user.id : null;
     const { id } = await itemMasterModel.create({ ...body, userId });
     return res.status(201).json({ id });
-  } catch (err) { return next(err); }
+  } catch (err) {
+    if (err && err.code === 'ER_DUP_ENTRY') return res.status(409).json({ error: 'name_taken', message: 'An item with that name already exists.' });
+    return next(err);
+  }
 };
 
 exports.update = async (req, res, next) => {

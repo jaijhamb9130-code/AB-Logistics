@@ -19,6 +19,10 @@ const COLUMNS = [
   // Permanent (Tally-standard) ledger groups are non-editable parents.
   { table: 'ledger_group', column: 'is_system', ddl: '`is_system` TINYINT(1) NOT NULL DEFAULT 0' },
   // Agent fields folded into ledger_master (agent_master table dropped).
+  { table: 'item_master', column: 'unit', ddl: '`unit` VARCHAR(32) NULL DEFAULT NULL AFTER `gst_rate`' },
+  // Bilty line-item from/to stored as FK to destination_master (replaces old text columns).
+  { table: 'batch', column: 'from_id', ddl: '`from_id` INT UNSIGNED NULL DEFAULT NULL' },
+  { table: 'batch', column: 'to_id',   ddl: '`to_id`   INT UNSIGNED NULL DEFAULT NULL' },
   { table: 'ledger_master', column: 'mobile', ddl: '`mobile` VARCHAR(15) NULL DEFAULT NULL' },
   { table: 'ledger_master', column: 'commission_pct', ddl: '`commission_pct` DECIMAL(5,2) NULL DEFAULT NULL' },
   // Bilty owner is now a TEXT SNAPSHOT captured from the vehicle's current owner
@@ -26,16 +30,35 @@ const COLUMNS = [
   { table: 'vch_details', column: 'owner_name', ddl: '`owner_name` VARCHAR(255) NULL DEFAULT NULL' },
 ];
 
-// The 28 standard (Tally) ledger groups. Seeded as permanent, non-editable,
-// top-level parents. User-created groups are always non-system children.
+// The 15 Tally primary groups — always top-level (parent_id = NULL).
+const PRIMARY_GROUPS = [
+  'Branch / Divisions', 'Capital Account', 'Current Assets', 'Current Liabilities',
+  'Direct Expenses', 'Direct Incomes', 'Fixed Assets', 'Indirect Expenses',
+  'Indirect Incomes', 'Investments', 'Loans (Liability)', 'Misc. Expenses (ASSET)',
+  'Purchase Accounts', 'Sales Accounts', 'Suspense A/c',
+];
+
+// The 13 Tally sub-groups with their correct primary parent (Tally ERP standard).
+const SUB_GROUPS = [
+  { name: 'Reserves & Surplus',       parent: 'Capital Account' },
+  { name: 'Bank Accounts',            parent: 'Current Assets' },
+  { name: 'Cash-in-Hand',             parent: 'Current Assets' },
+  { name: 'Deposits (Asset)',         parent: 'Current Assets' },
+  { name: 'Loans & Advances (Asset)', parent: 'Current Assets' },
+  { name: 'Stock-in-Hand',            parent: 'Current Assets' },
+  { name: 'Sundry Debtors',           parent: 'Current Assets' },
+  { name: 'Duties & Taxes',           parent: 'Current Liabilities' },
+  { name: 'Provisions',               parent: 'Current Liabilities' },
+  { name: 'Sundry Creditors',         parent: 'Current Liabilities' },
+  { name: 'Bank OD A/c',              parent: 'Loans (Liability)' },
+  { name: 'Secured Loans',            parent: 'Loans (Liability)' },
+  { name: 'Unsecured Loans',          parent: 'Loans (Liability)' },
+];
+
+// Combined list (primaries first so sub-group parent lookups always resolve).
 const PERMANENT_GROUPS = [
-  'Branch / Divisions', 'Capital Account', 'Reserves & Surplus', 'Current Assets',
-  'Bank Accounts', 'Cash-in-Hand', 'Deposits (Asset)', 'Loans & Advances (Asset)',
-  'Stock-in-Hand', 'Sundry Debtors', 'Current Liabilities', 'Duties & Taxes',
-  'Provisions', 'Sundry Creditors', 'Direct Expenses', 'Direct Incomes',
-  'Fixed Assets', 'Indirect Expenses', 'Indirect Incomes', 'Investments',
-  'Loans (Liability)', 'Bank OD A/c', 'Secured Loans', 'Unsecured Loans',
-  'Misc. Expenses (ASSET)', 'Purchase Accounts', 'Sales Accounts', 'Suspense A/c',
+  ...PRIMARY_GROUPS,
+  ...SUB_GROUPS.map((g) => g.name),
 ];
 
 async function columnExists(table, column) {
@@ -56,10 +79,10 @@ async function tableExists(table) {
   return Number(rows[0].n) > 0;
 }
 
-// Seed the 28 permanent ledger groups and keep them flagged as system parents.
-// Idempotent: only inserts missing names, only (re)asserts is_system on the 28.
-// Deliberately does NOT touch user/child groups (e.g. owner/agent/Vehicles), so
-// the user's later edits to those are preserved across restarts.
+// Seed the 28 permanent ledger groups and keep them flagged as system groups.
+// Idempotent: only inserts missing names, then enforces is_system and the
+// correct Tally parent-child relationships on every boot.
+// Deliberately does NOT touch user-created groups (Owner/Agent/Vehicles etc.).
 async function ensurePermanentGroups() {
   if (!(await tableExists('ledger_group'))) return;
   if (!(await columnExists('ledger_group', 'is_system'))) return;
@@ -75,17 +98,42 @@ async function ensurePermanentGroups() {
     existing = new Set(rows.map((r) => String(r.group_name).toLowerCase()));
   } catch { /* fall through — treat as none known */ }
 
+  // Pass 1 — ensure all 28 exist, primaries inserted with parent_id = NULL.
   for (const name of PERMANENT_GROUPS) {
     try {
-      if (existing.has(name.toLowerCase())) {
-        await pool.query('UPDATE ledger_group SET is_system = 1, parent_id = NULL WHERE group_name = ?', [name]);
-      } else {
+      if (!existing.has(name.toLowerCase())) {
         await pool.query('INSERT INTO ledger_group (group_name, parent_id, is_system) VALUES (?, NULL, 1)', [name]);
         existing.add(name.toLowerCase());
       }
     } catch (err) {
       // eslint-disable-next-line no-console
-      console.error(`[schema] could not ensure permanent group ${name}:`, err && err.message ? err.message : err);
+      console.error(`[schema] could not insert permanent group ${name}:`, err && err.message ? err.message : err);
+    }
+  }
+
+  // Pass 2 — enforce is_system = 1 on all 28 and set correct parent_id.
+  // Primary groups: parent_id = NULL.
+  for (const name of PRIMARY_GROUPS) {
+    try {
+      await pool.query('UPDATE ledger_group SET is_system = 1, parent_id = NULL WHERE group_name = ?', [name]);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(`[schema] could not update primary group ${name}:`, err && err.message ? err.message : err);
+    }
+  }
+
+  // Sub-groups: parent_id = id of named parent (resolved via self-join alias).
+  for (const { name, parent } of SUB_GROUPS) {
+    try {
+      await pool.query(
+        `UPDATE ledger_group SET is_system = 1,
+           parent_id = (SELECT id FROM (SELECT id FROM ledger_group WHERE group_name = ?) AS _p)
+         WHERE group_name = ?`,
+        [parent, name]
+      );
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(`[schema] could not set parent for sub-group ${name}:`, err && err.message ? err.message : err);
     }
   }
 
@@ -219,6 +267,52 @@ async function ensureVehicleMaster() {
   }
 }
 
+// Ensure system vchtypes and ledgers for auto-posted bilty companion vouchers:
+//   Freight Journal  (Dr Vehicle / Cr Freight Expense)  — expense, l_rate × qty
+async function ensureFreightJournalSeeds() {
+  if (!(await tableExists('vchtype'))) return;
+  try {
+    const [existing] = await pool.query("SELECT id FROM vchtype WHERE name = 'Freight Journal' LIMIT 1");
+    if (!existing.length) {
+      // Insert as child of "Journal" vchtype if it exists, else top-level.
+      const [journalRows] = await pool.query("SELECT id FROM vchtype WHERE name = 'Journal' LIMIT 1");
+      const journalParentId = journalRows.length ? journalRows[0].id : null;
+      await pool.query('INSERT INTO vchtype (name, parent_id, is_system) VALUES (?, ?, 1)', ['Freight Journal', journalParentId]);
+    } else {
+      // If already exists but parent_id is wrong, fix it.
+      const [journalRows] = await pool.query("SELECT id FROM vchtype WHERE name = 'Journal' LIMIT 1");
+      if (journalRows.length) {
+        await pool.query(
+          "UPDATE vchtype SET parent_id = ? WHERE name = 'Freight Journal' AND (parent_id IS NULL OR parent_id != ?)",
+          [journalRows[0].id, journalRows[0].id]
+        );
+      }
+    }
+  } catch (err) {
+    console.error('[schema] could not seed Freight Journal vchtype:', err && err.message ? err.message : err);
+  }
+
+  if (!(await tableExists('ledger_master')) || !(await tableExists('ledger_group'))) return;
+  try {
+    const [expenseRows] = await pool.query('SELECT id FROM ledger_master WHERE name = ? LIMIT 1', ['Freight Expense']);
+    if (!expenseRows.length) {
+      const [legacyRows] = await pool.query('SELECT id FROM ledger_master WHERE name = ? LIMIT 1', ['Freight Charges']);
+      if (legacyRows.length) {
+        await pool.query('UPDATE ledger_master SET name = ? WHERE id = ?', ['Freight Expense', legacyRows[0].id]);
+      } else {
+        await pool.query(
+          `INSERT INTO ledger_master (ledger_group_id, name, billbybill)
+             SELECT id, ?, 'No' FROM ledger_group WHERE group_name = 'Direct Incomes' LIMIT 1`,
+          ['Freight Expense']
+        );
+      }
+    }
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[schema] could not seed Freight Expense ledger:', err && err.message ? err.message : err);
+  }
+}
+
 async function ensureSchema() {
   for (const { table, column, ddl } of COLUMNS) {
     try {
@@ -235,6 +329,7 @@ async function ensureSchema() {
   }
   await ensurePermanentGroups();
   await ensureVehicleMaster();
+  await ensureFreightJournalSeeds();
   await ensureUniqueGuards();
 }
 

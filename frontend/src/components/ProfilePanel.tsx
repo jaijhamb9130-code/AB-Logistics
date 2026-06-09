@@ -146,10 +146,9 @@ export function ProfilePanel({ visible, onClose, user, logout, onNavigate }: Pro
               ? { role: user.role as Role, permissions: user.permissions }
               : null;
             const canBilty = canAccessTab('Bilty', guardUser);
-            const canFreight = canAccessTab('Freight', guardUser);
             const canLedgerGroups = canAccessTab('LedgerGroups', guardUser);
             const canUsers = canAccessTab('Users', guardUser);
-            const anyVisible = canBilty || canFreight || canLedgerGroups || canUsers;
+            const anyVisible = canBilty || canLedgerGroups || canUsers;
             if (!anyVisible) return null;
             return (
               <>
@@ -162,15 +161,6 @@ export function ProfilePanel({ visible, onClose, user, logout, onNavigate }: Pro
                       loading={loadingStats}
                       accent="#FFCC3D"
                       onPress={onNavigate ? () => onNavigate('Bilty') : undefined}
-                    />
-                  ) : null}
-                  {canFreight ? (
-                    <StatCard
-                      label="Freight Memos"
-                      value={summary?.freight_memos ?? null}
-                      loading={loadingStats}
-                      accent="#F7483D"
-                      onPress={onNavigate ? () => onNavigate('Freight') : undefined}
                     />
                   ) : null}
                   {canLedgerGroups ? (

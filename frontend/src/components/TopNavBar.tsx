@@ -20,7 +20,8 @@ export const TOP_NAV_HEIGHT_MOBILE = 56;
 
 const LABELS: Record<string, string> = {
   Dashboard: 'Dashboard',
-  Bilty: 'Reports',
+  Bilty: 'Bilty',
+  Reports: 'Reports',
   Freight: 'Freight',
   Billing: 'Vouchers',
   LedgerMaster: 'Ledger Master',
@@ -41,7 +42,7 @@ const LABELS: Record<string, string> = {
 // Explicit left-to-right display order of nav items.
 // Users is hidden from nav and accessed via the profile panel.
 // LedgerGroups is hidden from nav and lives at the bottom of the Ledger dropdown.
-const NAV_ORDER = ['Dashboard', 'Ledger', 'Freight', 'Billing', 'Bilty'];
+const NAV_ORDER = ['Dashboard', 'Ledger', 'Billing', 'Bilty', 'Reports'];
 
 // Routes grouped under the "Ledger" dropdown — hidden as top-level nav items.
 // Order here = order shown inside the dropdown (matches the user's requested sequence).
@@ -73,7 +74,7 @@ export function TopNavBar({ state, navigation }: BottomTabBarProps) {
   const { user, logout } = useAuth();
   const [profileOpen, setProfileOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [openDropdown, setOpenDropdown] = useState<null | 'ledger' | 'billing'>(null);
+  const [openDropdown, setOpenDropdown] = useState<null | 'ledger' | 'billing' | 'reports'>(null);
   const { isMobile } = useResponsive();
 
   const initials = (user?.username ?? 'AD').slice(0, 2).toUpperCase();
@@ -126,6 +127,12 @@ export function TopNavBar({ state, navigation }: BottomTabBarProps) {
   const billingActiveScreen: string =
     billingNestedState?.routes?.[billingNestedState.index]?.name ?? 'VouchersList';
 
+  const reportsRoute = state.routes.find((r) => r.name === 'Reports');
+  const reportsNestedState: any = (reportsRoute as any)?.state;
+  const reportsActiveScreen: string =
+    reportsNestedState?.routes?.[reportsNestedState.index]?.name ?? 'ReportsHub';
+  const reportsActive = activeRouteName === 'Reports';
+
   const navigateTo = (routeName: string, params?: object) => {
     const target = state.routes.find((r) => r.name === routeName);
     if (!target) return;
@@ -156,6 +163,9 @@ export function TopNavBar({ state, navigation }: BottomTabBarProps) {
         // Bilty drawer entry uses the strict bilty.view check — voucher-only
         // users mount the tab but don't see it as a nav target.
         canViewBilty: canDoAction(user, 'bilty', 'view'),
+        hasReports: state.routes.some((r) => r.name === 'Reports'),
+        reportsActive,
+        reportsActiveScreen,
         navigateTo: (n, p) => {
           navigateTo(n, p);
           setDrawerOpen(false);
@@ -347,6 +357,28 @@ export function TopNavBar({ state, navigation }: BottomTabBarProps) {
                   onToggle={() => setOpenDropdown((v) => (v === 'billing' ? null : 'billing'))}
                   onClose={() => setOpenDropdown(null)}
                   items={billingItems}
+                />
+              );
+            }
+
+            if (name === 'Reports') {
+              if (!reportsRoute) return null;
+              const reportItems: DropdownItem[] = [
+                { key: 'BiltyRegister', label: 'Bilty Register', onPress: () => navigateTo('Reports', { screen: 'BiltyRegister' }) },
+                { key: 'VoucherRegister', label: 'Voucher Register', onPress: () => navigateTo('Reports', { screen: 'VoucherRegister' }) },
+                { key: 'LedgerStatement', label: 'Ledger Statement', onPress: () => navigateTo('Reports', { screen: 'LedgerStatement' }) },
+                { key: 'GroupSummary', label: 'Group Summary', onPress: () => navigateTo('Reports', { screen: 'GroupSummary' }) },
+              ];
+              return (
+                <DropdownNavItem
+                  key="reports"
+                  label="Reports"
+                  active={reportsActive}
+                  activeKey={reportsActive ? reportsActiveScreen : ''}
+                  isOpen={openDropdown === 'reports'}
+                  onToggle={() => setOpenDropdown((v) => (v === 'reports' ? null : 'reports'))}
+                  onClose={() => setOpenDropdown(null)}
+                  items={reportItems}
                 />
               );
             }
@@ -679,6 +711,9 @@ function buildDrawerItems(args: {
   canViewDaybook: boolean;
   // Bilty drawer row only shows when the user actually owns the Bilty page.
   canViewBilty: boolean;
+  hasReports: boolean;
+  reportsActive: boolean;
+  reportsActiveScreen: string;
   navigateTo: (routeName: string, params?: object) => void;
 }): DrawerNavItem[] {
   const out: DrawerNavItem[] = [];
@@ -807,16 +842,25 @@ function buildDrawerItems(args: {
     }
   }
 
-  // Reports (Bilty route) sits LAST — mirrors the desktop nav order
-  // (Dashboard · Masters · Freight · Vouchers · Reports). Users is intentionally
-  // NOT listed here: like the desktop nav, it's reached via the profile panel.
+  // Bilty sits before Reports — mirrors the desktop nav order.
+  // Users is intentionally NOT listed here: reached via the profile panel.
   if (args.canViewBilty) {
     out.push({
       key: 'Bilty',
-      label: LABELS.Bilty ?? 'Reports',
+      label: LABELS.Bilty ?? 'Bilty',
       active: args.activeRouteName === 'Bilty',
       onPress: () => args.navigateTo('Bilty'),
     });
+  }
+
+  if (args.hasReports) {
+    const reportChildren: DrawerNavItem[] = [
+      { key: 'BiltyRegister', label: 'Bilty Register', active: args.reportsActiveScreen === 'BiltyRegister', onPress: () => args.navigateTo('Reports', { screen: 'BiltyRegister' }) },
+      { key: 'VoucherRegister', label: 'Voucher Register', active: args.reportsActiveScreen === 'VoucherRegister', onPress: () => args.navigateTo('Reports', { screen: 'VoucherRegister' }) },
+      { key: 'LedgerStatement', label: 'Ledger Statement', active: args.reportsActiveScreen === 'LedgerStatement', onPress: () => args.navigateTo('Reports', { screen: 'LedgerStatement' }) },
+      { key: 'GroupSummary', label: 'Group Summary', active: args.reportsActiveScreen === 'GroupSummary', onPress: () => args.navigateTo('Reports', { screen: 'GroupSummary' }) },
+    ];
+    out.push({ key: 'Reports', label: 'Reports', active: args.reportsActive, children: reportChildren });
   }
 
   return out;
@@ -866,9 +910,9 @@ const styles = StyleSheet.create({
   },
   logoWordmark: {
     color: '#0F172A',
-    fontFamily: typography.uiBold,
-    fontSize: 15,
-    letterSpacing: 3,
+    fontFamily: typography.uiHeavy,
+    fontSize: 14,
+    letterSpacing: 2.5,
   },
 
   // Nav items
@@ -905,14 +949,15 @@ const styles = StyleSheet.create({
     boxShadow: '0 0 12px rgba(247,72,61,0.12)',
   } as any : {},
   navLabel: {
-    color: 'rgba(15,23,42,0.45)',
-    fontFamily: typography.uiBold,
-    fontSize: 14,
-    letterSpacing: 0.3,
+    color: 'rgba(15,23,42,0.5)',
+    fontFamily: typography.uiMedium,
+    fontSize: 13,
+    letterSpacing: 0,
     ...(Platform.OS === 'web' ? { transition: 'color 0.2s ease' } as any : {}),
   },
   navLabelActive: {
-    color: '#0F172A',
+    color: '#111827',
+    fontFamily: typography.uiBold,
   },
   activeBar: {
     position: 'absolute',

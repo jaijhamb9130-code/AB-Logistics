@@ -19,19 +19,10 @@ jest.mock('../src/models/userModel', () => ({
 }));
 
 jest.mock('../src/models/biltyModel', () => ({
+  getBiltyTypeId: jest.fn(),
   createWithChildren: jest.fn(),
   findAll: jest.fn(),
   findById: jest.fn(),
-}));
-
-jest.mock('../src/models/orderModel', () => ({
-  create: jest.fn(),
-  findAll: jest.fn(),
-  findById: jest.fn(),
-  updateStatus: jest.fn(),
-  assignVehicle: jest.fn(),
-  isValidTransition: jest.requireActual('../src/models/orderModel').isValidTransition,
-  VALID_STATUSES: jest.requireActual('../src/models/orderModel').VALID_STATUSES,
 }));
 
 jest.mock('../src/db/pool', () => ({
@@ -43,26 +34,27 @@ jest.mock('../src/db/pool', () => ({
 const request = require('supertest');
 const userModel = require('../src/models/userModel');
 const biltyModel = require('../src/models/biltyModel');
-const orderModel = require('../src/models/orderModel');
 const pool = require('../src/db/pool');
 const { signAccessToken } = require('../src/utils/jwt');
 
 let app;
-beforeAll(() => { app = require('../src/app'); });
+beforeAll(() => {
+  app = require('../src/app');
+});
+
 beforeEach(() => {
   Object.values(userModel).forEach((fn) => fn.mockReset && fn.mockReset());
-  ['createWithChildren', 'findAll', 'findById'].forEach((k) => {
-    biltyModel[k].mockReset && biltyModel[k].mockReset();
-  });
-  ['create', 'findAll', 'findById', 'updateStatus', 'assignVehicle'].forEach((k) => {
-    orderModel[k].mockReset && orderModel[k].mockReset();
-  });
+  Object.values(biltyModel).forEach((fn) => fn.mockReset && fn.mockReset());
   pool.execute.mockReset && pool.execute.mockReset();
 });
 
 function userRow({ id = 1, role = 'admin', permissions = ['*'], is_active = 1 } = {}) {
   return {
-    id, username: 'u', role, permissions, is_active,
+    id,
+    username: 'u',
+    role,
+    permissions,
+    is_active,
     created_at: '2026-04-18T00:00:00.000Z',
     updated_at: '2026-04-18T00:00:00.000Z',
   };
@@ -80,13 +72,6 @@ function staffAuth(permissions = []) {
   return signAccessToken({ id: row.id, role: row.role });
 }
 
-// Helper: queue up pool.execute responses for COUNT(*) queries in order.
-function queueCounts(...counts) {
-  for (const c of counts) {
-    pool.execute.mockResolvedValueOnce([[{ c }]]);
-  }
-}
-
 // ---------- GET /api/reports/summary ---------------------------------------
 
 describe('reports — GET /api/reports/summary', () => {
@@ -97,138 +82,226 @@ describe('reports — GET /api/reports/summary', () => {
 
   test('200 admin sees all totals', async () => {
     const token = adminAuth();
-    // admin hits: bilty, freight_memo, orders, vehicles, active_users
-    queueCounts(12, 7, 9, 4, 3);
+    biltyModel.getBiltyTypeId.mockResolvedValueOnce(1);
+    
+    // admin hits: 
+    // 1. countBilties: SELECT COUNT(*) AS c FROM vch_details WHERE vch_type_id = ?
+    // 2. countTable('ledger_group'): SELECT COUNT(*) AS c FROM ledger_group
+    // 3. countActiveUsers: SELECT COUNT(*) AS c FROM users WHERE is_active = 1
+    pool.execute
+      .mockResolvedValueOnce([[{ c: 12 }]]) // countBilties
+      .mockResolvedValueOnce([[{ c: 7 }]])  // countTable
+      .mockResolvedValueOnce([[{ c: 3 }]]); // countActiveUsers
 
     const res = await request(app)
       .get('/api/reports/summary')
       .set('Authorization', `Bearer ${token}`);
 
     expect(res.status).toBe(200);
-    expect(res.body).toEqual(expect.objectContaining({
+    expect(res.body).toEqual({
       bilties: 12,
-      freight_memos: 7,
-      orders: 9,
-      vehicles: 4,
+      ledger_groups: 7,
       active_users: 3,
-    }));
-    expect(res.body.permissions).toEqual({
-      bilty: true, freight: true, order: true, vehicle: true, report: true,
+      permissions: {
+        bilty: true,
+        daybook: true,
+        ledgergroup: true,
+        user: true,
+      },
     });
+    expect(biltyModel.getBiltyTypeId).toHaveBeenCalled();
   });
 
-  test('200 staff with only bilty.read sees bilties + freight, zero elsewhere', async () => {
-    const token = staffAuth(['bilty.read']);
-    // staff hits only 2 count queries (bilty + freight since freight tracks bilty)
-    queueCounts(5, 2);
+  test('200 staff with only bilty.view sees bilties, zero elsewhere', async () => {
+    const token = staffAuth(['bilty.view']);
+    biltyModel.getBiltyTypeId.mockResolvedValueOnce(1);
+    pool.execute.mockResolvedValueOnce([[{ c: 5 }]]); // countBilties
 
     const res = await request(app)
       .get('/api/reports/summary')
       .set('Authorization', `Bearer ${token}`);
 
     expect(res.status).toBe(200);
-    expect(res.body.bilties).toBe(5);
-    expect(res.body.freight_memos).toBe(2);
-    expect(res.body.orders).toBe(0);
-    expect(res.body.vehicles).toBe(0);
-    expect(res.body.active_users).toBe(0);
-    expect(res.body.permissions).toEqual({
-      bilty: true, freight: true, order: false, vehicle: false, report: false,
+    expect(res.body).toEqual({
+      bilties: 5,
+      ledger_groups: 0,
+      active_users: 0,
+      permissions: {
+        bilty: true,
+        daybook: false,
+        ledgergroup: false,
+        user: false,
+      },
     });
-    // Confirm we did NOT execute the gated counts
-    expect(pool.execute).toHaveBeenCalledTimes(2);
+    expect(pool.execute).toHaveBeenCalledTimes(1);
   });
 
-  test('200 staff with vehicle.read sees only vehicles', async () => {
-    const token = staffAuth(['vehicle.read']);
-    queueCounts(6); // only vehicles
+  test('200 staff with only ledgergroup.view sees ledger groups, zero elsewhere', async () => {
+    const token = staffAuth(['ledgergroup.view']);
+    pool.execute.mockResolvedValueOnce([[{ c: 4 }]]); // countTable
 
     const res = await request(app)
       .get('/api/reports/summary')
       .set('Authorization', `Bearer ${token}`);
 
     expect(res.status).toBe(200);
-    expect(res.body.vehicles).toBe(6);
-    expect(res.body.bilties).toBe(0);
-    expect(res.body.orders).toBe(0);
+    expect(res.body).toEqual({
+      bilties: 0,
+      ledger_groups: 4,
+      active_users: 0,
+      permissions: {
+        bilty: false,
+        daybook: false,
+        ledgergroup: true,
+        user: false,
+      },
+    });
     expect(pool.execute).toHaveBeenCalledTimes(1);
   });
 });
 
-// ---------- GET /api/reports/history ---------------------------------------
+// ---------- GET /api/reports/bilty-register --------------------------------
 
-describe('reports — GET /api/reports/history', () => {
-  test('401 without JWT', async () => {
-    const res = await request(app).get('/api/reports/history');
-    expect(res.status).toBe(401);
+describe('reports — GET /api/reports/bilty-register', () => {
+  test('403 staff without bilty.view', async () => {
+    const token = staffAuth([]);
+    const res = await request(app)
+      .get('/api/reports/bilty-register')
+      .set('Authorization', `Bearer ${token}`);
+    expect(res.status).toBe(403);
   });
 
-  test('200 admin gets both arrays', async () => {
+  test('200 with bilty.view', async () => {
+    const token = staffAuth(['bilty.view']);
+    biltyModel.getBiltyTypeId.mockResolvedValueOnce(1);
+    const mockRow = { id: 1, bilty_no: 'B1', bilty_date: '2026-06-09' };
+    pool.execute.mockResolvedValueOnce([[mockRow]]);
+
+    const res = await request(app)
+      .get('/api/reports/bilty-register')
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ success: true, data: [mockRow] });
+  });
+});
+
+// ---------- GET /api/reports/voucher-register ------------------------------
+
+describe('reports — GET /api/reports/voucher-register', () => {
+  test('403 staff without voucher.view', async () => {
+    const token = staffAuth([]);
+    const res = await request(app)
+      .get('/api/reports/voucher-register')
+      .set('Authorization', `Bearer ${token}`);
+    expect(res.status).toBe(403);
+  });
+
+  test('200 with voucher.view', async () => {
+    const token = staffAuth(['voucher.view']);
+    const mockRow = { id: 1, vch_no: 'V1', vch_date: '2026-06-09' };
+    pool.execute.mockResolvedValueOnce([[mockRow]]);
+
+    const res = await request(app)
+      .get('/api/reports/voucher-register')
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ success: true, data: [mockRow] });
+  });
+});
+
+// ---------- GET /api/reports/ledger-statement ------------------------------
+
+describe('reports — GET /api/reports/ledger-statement', () => {
+  test('400 when ledger_id is missing', async () => {
     const token = adminAuth();
-    const biltyRow = {
-      id: 1, bilty_no: 'BL-2026-000001', bilty_date: '2026-04-18',
-      consignor: 'Acme', truck_no: 'DL-01', item_count: 2,
-      created_at: '2026-04-18T00:00:00.000Z',
-    };
-    const orderRow = {
-      id: 1, order_no: 'OR-2026-000001', order_date: '2026-04-18',
-      customer_name: 'Acme', from_loc: 'Delhi', to_loc: 'Mumbai',
-      status: 'pending', vehicle_id: null, vehicle_no: null,
-      created_by: 1, created_at: '2026-04-18T00:00:00.000Z',
-      updated_at: '2026-04-18T00:00:00.000Z',
-    };
-    biltyModel.findAll.mockResolvedValueOnce([biltyRow]);
-    orderModel.findAll.mockResolvedValueOnce([orderRow]);
-
     const res = await request(app)
-      .get('/api/reports/history')
+      .get('/api/reports/ledger-statement')
       .set('Authorization', `Bearer ${token}`);
-
-    expect(res.status).toBe(200);
-    expect(res.body.bilties).toHaveLength(1);
-    expect(res.body.orders).toHaveLength(1);
-    expect(res.body.bilties[0].bilty_no).toBe('BL-2026-000001');
-    expect(res.body.orders[0].order_no).toBe('OR-2026-000001');
-    expect(res.body.permissions).toEqual({ bilty: true, order: true });
+    expect(res.status).toBe(400);
+    expect(res.body.success).toBe(false);
   });
 
-  test('200 staff with only order.read gets orders but empty bilties', async () => {
-    const token = staffAuth(['order.read']);
-    const orderRow = {
-      id: 9, order_no: 'OR-2026-000009', order_date: '2026-04-18',
-      customer_name: 'Z', from_loc: null, to_loc: null,
-      status: 'pending', vehicle_id: null, vehicle_no: null,
-      created_by: 2, created_at: '2026-04-18T00:00:00.000Z',
-      updated_at: '2026-04-18T00:00:00.000Z',
-    };
-    orderModel.findAll.mockResolvedValueOnce([orderRow]);
-
-    const res = await request(app)
-      .get('/api/reports/history')
-      .set('Authorization', `Bearer ${token}`);
-
-    expect(res.status).toBe(200);
-    expect(res.body.bilties).toEqual([]);
-    expect(res.body.orders).toHaveLength(1);
-    expect(res.body.permissions).toEqual({ bilty: false, order: true });
-    expect(biltyModel.findAll).not.toHaveBeenCalled();
-  });
-
-  test('200 caps arrays at 20', async () => {
+  test('200 with ledger_id', async () => {
     const token = adminAuth();
-    const bilties = Array.from({ length: 25 }, (_, i) => ({
-      id: i + 1, bilty_no: `BL-2026-${String(i + 1).padStart(6, '0')}`,
-      bilty_date: '2026-04-18', consignor: 'X', truck_no: 'DL-01',
-      item_count: 1, created_at: '2026-04-18T00:00:00.000Z',
-    }));
-    biltyModel.findAll.mockResolvedValueOnce(bilties);
-    orderModel.findAll.mockResolvedValueOnce([]);
+    pool.execute
+      .mockResolvedValueOnce([[{ opening: 100 }]]) // opening balance
+      .mockResolvedValueOnce([[{ vch_id: 1, vch_no: 'V1', vch_date: '2026-06-09', amount: 50, particulars: 'XYZ' }]]) // entries
+      .mockResolvedValueOnce([[{ name: 'Cash' }]]); // ledger name
 
     const res = await request(app)
-      .get('/api/reports/history')
+      .get('/api/reports/ledger-statement?ledger_id=123')
       .set('Authorization', `Bearer ${token}`);
 
     expect(res.status).toBe(200);
-    expect(res.body.bilties).toHaveLength(20);
+    expect(res.body.success).toBe(true);
+    expect(res.body.data).toEqual({
+      ledger_name: 'Cash',
+      opening: 100,
+      entries: [
+        { vch_id: 1, vch_no: 'V1', vch_date: '2026-06-09', amount: 50, particulars: 'XYZ', running_balance: 150 }
+      ],
+      debit_total: 50,
+      credit_total: 0,
+      closing: 150,
+    });
+  });
+});
+
+// ---------- GET /api/reports/group-summary ---------------------------------
+
+describe('reports — GET /api/reports/group-summary', () => {
+  test('403 staff without voucher.view', async () => {
+    const token = staffAuth([]);
+    const res = await request(app)
+      .get('/api/reports/group-summary')
+      .set('Authorization', `Bearer ${token}`);
+    expect(res.status).toBe(403);
+  });
+
+  test('200 with voucher.view', async () => {
+    const token = staffAuth(['voucher.view']);
+    const mockRow = { group_id: 1, group_name: 'Assets', ledger_count: 2 };
+    pool.execute.mockResolvedValueOnce([[mockRow]]);
+
+    const res = await request(app)
+      .get('/api/reports/group-summary')
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ success: true, data: [mockRow] });
+  });
+});
+
+// ---------- GET /api/reports/group-ledgers ---------------------------------
+
+describe('reports — GET /api/reports/group-ledgers', () => {
+  test('400 when group_id is missing', async () => {
+    const token = adminAuth();
+    const res = await request(app)
+      .get('/api/reports/group-ledgers')
+      .set('Authorization', `Bearer ${token}`);
+    expect(res.status).toBe(400);
+    expect(res.body.success).toBe(false);
+  });
+
+  test('200 with group_id', async () => {
+    const token = adminAuth();
+    const mockRow = { ledger_id: 1, ledger_name: 'Cash', opening: 10, debit_total: 5, credit_total: 2, closing: 13 };
+    pool.execute
+      .mockResolvedValueOnce([[mockRow]]) // ledgers in group
+      .mockResolvedValueOnce([[{ group_name: 'Assets' }]]); // group name
+
+    const res = await request(app)
+      .get('/api/reports/group-ledgers?group_id=123')
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      success: true,
+      data: [mockRow],
+      group_name: 'Assets'
+    });
   });
 });

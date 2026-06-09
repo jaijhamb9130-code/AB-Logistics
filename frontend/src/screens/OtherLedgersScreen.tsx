@@ -204,12 +204,13 @@ export function OtherLedgersScreen() {
     }
   }, [load]);
 
-  // Resolve "Sundry Debtors" to its current numeric id so we can block
-  // creation here and steer the user to the Customers page (which has the
-  // full GST / PAN / address form). Done at runtime so the page survives any
-  // DB renumbering of ledger_group rows.
-  const sundryDebtorsId = useMemo(() => {
-    return groups.find((g) => g.group_name.toLowerCase() === 'sundry debtors')?.id ?? null;
+  // Resolve the dedicated customer child groups so we can block creation
+  // here and steer the user to their full pages. Done at runtime so the page
+  // survives any DB renumbering of ledger_group rows.
+  const dedicatedCustomerGroupIds = useMemo(() => {
+    return groups
+      .filter((g) => ['consignor', 'consignee'].includes(g.group_name.toLowerCase()))
+      .map((g) => g.id);
   }, [groups]);
 
   // ── Create (simplified) ───────────────────────────────────────────────────
@@ -239,8 +240,8 @@ export function OtherLedgersScreen() {
     if (Object.keys(errs).length > 0) return;
     // Block customers from being created from this page — they must be made
     // on the Customers tab where the full GST / PAN / address form lives.
-    if (sundryDebtorsId !== null && createForm.ledger_group_id === sundryDebtorsId) {
-      setCreateError('Sundry Debtors must be created from the Customers page.');
+    if (dedicatedCustomerGroupIds.includes(createForm.ledger_group_id)) {
+      setCreateError('Consignor and Consignee customers must be created from their dedicated pages.');
       return;
     }
     setCreateSaving(true);
@@ -275,7 +276,7 @@ export function OtherLedgersScreen() {
     } finally {
       setCreateSaving(false);
     }
-  }, [createForm, sundryDebtorsId, load, closeCreate]);
+  }, [createForm, dedicatedCustomerGroupIds, load, closeCreate]);
 
   // ── Table ─────────────────────────────────────────────────────────────────
   // DataTable auto-prepends an S.No column, so we don't add one here.

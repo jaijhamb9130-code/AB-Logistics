@@ -18,7 +18,7 @@ const REFRESH_COOKIE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 7d, matches JWT TT
 function refreshCookieOptions() {
   return {
     httpOnly: true,
-    sameSite: 'lax',
+    sameSite: 'strict',
     secure: env.COOKIE_SECURE === true,
     path: '/api/auth',
     maxAge: REFRESH_COOKIE_MAX_AGE_MS,

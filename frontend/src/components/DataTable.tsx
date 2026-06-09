@@ -49,14 +49,24 @@ interface Props<T> {
   testID?: string;
   /** Show an auto-incrementing S.No. column as the first column. Default: true */
   showSerialNo?: boolean;
+  /** Currently sorted column key */
+  sortBy?: string;
+  /** Sort direction */
+  sortDir?: 'asc' | 'desc';
+  /** Called when a column header is pressed — parent should update sortBy/sortDir */
+  onSort?: (key: string) => void;
+  /** Desktop rows per page (0 = no pagination). Default: 25 */
+  desktopPageSize?: number;
+  /** Serial number offset for paginated views (default 0). E.g. page 2 with pageSize 25 → offset 25 */
+  serialOffset?: number;
 }
 
-const SERIAL_COL_WIDTH = 80;
+const SERIAL_COL_WIDTH = 44;
 const MOBILE_BREAKPOINT = 768;
-// Mobile card view paginates after this many rows.
 const MOBILE_PAGE_SIZE = 20;
-// Default minimum width for flex columns on mobile so they don't squish.
 const MOBILE_FLEX_MIN_WIDTH = 160;
+
+const DESKTOP_PAGE_SIZE_DEFAULT = 25;
 
 export function DataTable<T>({
   columns,
@@ -67,6 +77,11 @@ export function DataTable<T>({
   emptyLabel = 'No records',
   testID,
   showSerialNo = true,
+  sortBy,
+  sortDir,
+  onSort,
+  desktopPageSize = DESKTOP_PAGE_SIZE_DEFAULT,
+  serialOffset = 0,
 }: Props<T>) {
   const { width: viewportWidth } = useWindowDimensions();
   const isMobile = viewportWidth < MOBILE_BREAKPOINT;
@@ -74,10 +89,18 @@ export function DataTable<T>({
   // Mobile card pagination. Clamp the page when the row count shrinks (search /
   // delete) so we never land on an empty page past the end.
   const [page, setPage] = useState(0);
+  const [desktopPage, setDesktopPage] = useState(0);
   useEffect(() => {
     const maxPage = Math.max(0, Math.ceil(rows.length / MOBILE_PAGE_SIZE) - 1);
     setPage((p) => Math.min(p, maxPage));
   }, [rows.length]);
+  // Reset desktop page when rows change (filter applied)
+  useEffect(() => {
+    const maxPage = desktopPageSize > 0
+      ? Math.max(0, Math.ceil(rows.length / desktopPageSize) - 1)
+      : 0;
+    setDesktopPage((p) => Math.min(p, maxPage));
+  }, [rows.length, desktopPageSize]);
 
   // Build the effective columns list — prepend S.No. when enabled.
   // The S.No. render receives the row but ignores it; the index is injected at
@@ -87,10 +110,9 @@ export function DataTable<T>({
 
     const serialCol: Column<T> = {
       key: '__sno__',
-      label: 'S. No.',
-      width: isMobile ? 60 : SERIAL_COL_WIDTH,
+      label: '#',
+      width: isMobile ? 44 : SERIAL_COL_WIDTH,
       align: 'center',
-      // Placeholder — actual serial number is injected in renderRow.
       render: () => '',
     };
     return [serialCol, ...columns];
@@ -121,28 +143,56 @@ export function DataTable<T>({
     : undefined;
   const header = (
     <View style={[styles.row, styles.headerRow, rowSizingStyle]}>
-      {effectiveColumns.map((col, i) => (
-        <View
-          key={col.key}
-          style={[
-            styles.cell,
-            cellWidthStyle(col),
-            alignStyle(col.align),
-            i < lastIndex && styles.cellDivider,
-          ]}
-        >
-          <Text
+      {effectiveColumns.map((col, i) => {
+        const isSorted = sortBy === col.key;
+        const sortable = !!onSort && col.key !== '__sno__';
+        const cellContent = (
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
+            <Text
+              style={[
+                styles.headerText,
+                col.align === 'right' && styles.textRight,
+                col.align === 'center' && styles.textCenter,
+                isSorted && styles.headerSorted,
+              ]}
+              numberOfLines={1}
+            >
+              {col.label}
+            </Text>
+            {sortable && (
+              <Text style={[styles.sortArrow, isSorted && styles.sortArrowActive]}>
+                {isSorted ? (sortDir === 'asc' ? '↑' : '↓') : '↕'}
+              </Text>
+            )}
+          </View>
+        );
+        return (
+          <View
+            key={col.key}
             style={[
-              styles.headerText,
-              col.align === 'right' && styles.textRight,
-              col.align === 'center' && styles.textCenter,
+              styles.cell,
+              cellWidthStyle(col),
+              alignStyle(col.align),
+              i < lastIndex && styles.cellDivider,
+              sortable && styles.sortableHeader,
             ]}
-            numberOfLines={1}
           >
-            {col.label}
-          </Text>
-        </View>
-      ))}
+            {sortable ? (
+              Platform.OS === 'web' ? (
+                <View
+                  // @ts-ignore web onClick
+                  onClick={() => onSort!(col.key)}
+                  style={({ cursor: 'pointer' } as any)}
+                >
+                  {cellContent}
+                </View>
+              ) : (
+                <Pressable onPress={() => onSort!(col.key)}>{cellContent}</Pressable>
+              )
+            ) : cellContent}
+          </View>
+        );
+      })}
     </View>
   );
 
@@ -152,9 +202,9 @@ export function DataTable<T>({
     const content = (
       <View style={[styles.row, alt && styles.altRow, rowSizingStyle]}>
         {effectiveColumns.map((col, i) => {
-          // For the S.No. column, render the 1-based index directly.
+          // For the S.No. column, render the 1-based index + offset.
           const isSerial = col.key === '__sno__';
-          const rendered = isSerial ? String(index + 1) : col.render(item);
+          const rendered = isSerial ? String(serialOffset + index + 1) : col.render(item);
           return (
             <View
               key={col.key}
@@ -327,6 +377,14 @@ export function DataTable<T>({
 
   // ------- Web: CSS sticky via ScrollView. Native: separate header + FlatList. -------
   if (Platform.OS === 'web' && stickyHeader) {
+    // Desktop pagination — slice rows if desktopPageSize > 0
+    const totalDesktopPages = desktopPageSize > 0 ? Math.max(1, Math.ceil(rows.length / desktopPageSize)) : 1;
+    const currentDesktopPage = Math.min(desktopPage, totalDesktopPages - 1);
+    const desktopRows = desktopPageSize > 0
+      ? rows.slice(currentDesktopPage * desktopPageSize, (currentDesktopPage + 1) * desktopPageSize)
+      : rows;
+    const desktopOffset = serialOffset + currentDesktopPage * desktopPageSize;
+
     const verticalScroll = (
       <ScrollView
         style={styles.scroll}
@@ -339,9 +397,9 @@ export function DataTable<T>({
             <Text style={styles.emptyText}>{emptyLabel}</Text>
           </View>
         ) : (
-          rows.map((row, i) => (
+          desktopRows.map((row, i) => (
             <View key={keyExtractor(row)}>
-              {renderRow({ item: row, index: i })}
+              {renderRow({ item: row, index: desktopOffset - serialOffset + i })}
             </View>
           ))
         )}
@@ -349,7 +407,7 @@ export function DataTable<T>({
     );
 
     return (
-      <View style={styles.wrap} testID={testID}>
+      <View style={[styles.wrap, { overflow: 'visible' as any }]} testID={testID}>
         {isMobile ? (
           <ScrollView horizontal showsHorizontalScrollIndicator bounces={false}>
             <View style={{ minWidth: totalMinWidth, flex: 1 }}>
@@ -357,7 +415,35 @@ export function DataTable<T>({
             </View>
           </ScrollView>
         ) : (
-          verticalScroll
+          <View style={{ flex: 1 }}>
+            {verticalScroll}
+            {(totalDesktopPages > 1 || rows.length > 0) && (
+              <View style={styles.pagination}>
+                <Text style={styles.pageInfo}>
+                  {rows.length === 0 ? '0 records' : `${currentDesktopPage * desktopPageSize + 1}–${Math.min((currentDesktopPage + 1) * desktopPageSize, rows.length)} of ${rows.length}`}
+                </Text>
+                {totalDesktopPages > 1 && (
+                  <View style={styles.pageNav}>
+                    <Pressable disabled={currentDesktopPage === 0} onPress={() => setDesktopPage(0)} style={[styles.pageBtn, currentDesktopPage === 0 && styles.pageBtnDisabled]}>
+                      <Text style={styles.pageBtnText}>«</Text>
+                    </Pressable>
+                    <Pressable disabled={currentDesktopPage === 0} onPress={() => setDesktopPage(currentDesktopPage - 1)} style={[styles.pageBtn, currentDesktopPage === 0 && styles.pageBtnDisabled]}>
+                      <Text style={styles.pageBtnText}>‹</Text>
+                    </Pressable>
+                    <View style={styles.pageLabel}>
+                      <Text style={styles.pageLabelText}>Page {currentDesktopPage + 1} / {totalDesktopPages}</Text>
+                    </View>
+                    <Pressable disabled={currentDesktopPage === totalDesktopPages - 1} onPress={() => setDesktopPage(currentDesktopPage + 1)} style={[styles.pageBtn, currentDesktopPage === totalDesktopPages - 1 && styles.pageBtnDisabled]}>
+                      <Text style={styles.pageBtnText}>›</Text>
+                    </Pressable>
+                    <Pressable disabled={currentDesktopPage === totalDesktopPages - 1} onPress={() => setDesktopPage(totalDesktopPages - 1)} style={[styles.pageBtn, currentDesktopPage === totalDesktopPages - 1 && styles.pageBtnDisabled]}>
+                      <Text style={styles.pageBtnText}>»</Text>
+                    </Pressable>
+                  </View>
+                )}
+              </View>
+            )}
+          </View>
         )}
       </View>
     );
@@ -404,90 +490,84 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.card,
     borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.lg,
+    borderColor: '#E5E7EB',
+    borderRadius: 8,
     overflow: 'hidden',
-    shadowColor: '#0F172A',
-    shadowOpacity: 0.04,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
+    ...(Platform.OS === 'web' ? ({ boxShadow: '0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04)' } as any) : { elevation: 1 }),
   },
-  scroll: {
-    flex: 1,
-  },
+  scroll: { flex: 1 },
+
+  // ── Table rows ──
   row: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: spacing.lg,
+    paddingHorizontal: 0,
     borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-    backgroundColor: colors.card,
-    minHeight: 38,
+    borderBottomColor: '#F3F4F6',
+    backgroundColor: '#FFFFFF',
+    minHeight: 36,
+    ...(Platform.OS === 'web' ? ({ transition: 'background-color 0.1s ease' } as any) : {}),
   },
   headerRow: {
-    backgroundColor: '#F8FAFC',
-    borderBottomWidth: 2,
-    borderBottomColor: colors.border,
-    minHeight: 34,
+    backgroundColor: '#F9FAFB',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
+    minHeight: 32,
   },
-  altRow: {
-    backgroundColor: '#FAFBFC',
-  },
+  altRow: { backgroundColor: '#FAFAFA' },
+
+  // ── Cells ──
   cell: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs,
+    paddingHorizontal: 12,
+    paddingVertical: 0,
     justifyContent: 'center',
     alignSelf: 'stretch',
   },
-  cellDivider: {
-    borderRightWidth: 1,
-    borderRightColor: colors.border,
-  },
+  cellDivider: {},
+
+  // ── Header text ──
   headerText: {
-    ...text.label,
-    fontSize: 14,
-    color: colors.textLabel,
+    fontFamily: typography.uiBold,
+    fontSize: 11,
+    color: '#6B7280',
     textTransform: 'uppercase',
-    letterSpacing: 0.8,
-    fontWeight: '700',
+    letterSpacing: 0.4,
   },
+  headerSorted: { color: '#111827' },
+  sortableHeader: {
+    ...(Platform.OS === 'web' ? ({ cursor: 'pointer', userSelect: 'none' } as any) : {}),
+  },
+  sortArrow: {
+    fontSize: 10,
+    color: '#D1D5DB',
+    fontFamily: typography.uiBold,
+  },
+  sortArrowActive: { color: '#374151' },
+
+  // ── Cell text ──
   cellText: {
-    ...text.value,
-    fontSize: 14,
-    lineHeight: 20,
+    fontFamily: typography.uiMedium,
+    fontSize: 13,
+    color: '#374151',
+    lineHeight: 18,
   },
   serialText: {
-    fontFamily: typography.mono,
-    color: colors.textMuted,
-    fontWeight: '600',
+    fontFamily: typography.uiMedium,
+    fontSize: 12,
+    color: '#9CA3AF',
   },
-  mono: {
-    fontFamily: typography.mono,
-  },
-  textRight: {
-    textAlign: 'right',
-  },
-  textCenter: {
-    textAlign: 'center',
-  },
-  emptyWrap: {
-    padding: spacing.xl,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  mono: { fontFamily: typography.mono },
+  textRight: { textAlign: 'right' },
+  textCenter: { textAlign: 'center' },
+  emptyWrap: { padding: spacing.xl, alignItems: 'center', justifyContent: 'center' },
 
-  // ── Mobile card layout — full-bleed, dense rows, divider between cards ──
+  // ── Mobile cards ──
   cardWrap: {
     flex: 1,
     backgroundColor: colors.card,
-    // Screens wrap the table in a `padding: spacing.lg` container; cancel that
-    // horizontally so the card list runs edge-to-edge (the header/search above
-    // keep their padding).
     marginHorizontal: -spacing.lg,
   },
   cardListContent: {
-    // No side gutters — cards span edge to edge for maximum width / density.
     paddingHorizontal: 0,
     paddingTop: 0,
     paddingBottom: spacing.sm,
@@ -495,12 +575,11 @@ const styles = StyleSheet.create({
   card: {
     backgroundColor: colors.card,
     borderBottomWidth: 1,
-    borderBottomColor: colors.border,
+    borderBottomColor: '#F3F4F6',
     paddingHorizontal: spacing.md,
-    paddingTop: 5,
+    paddingTop: 6,
     paddingBottom: 6,
   },
-  // Top row of each card: #N on the left, Edit/Delete actions on the right.
   cardHead: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -508,18 +587,14 @@ const styles = StyleSheet.create({
     marginBottom: 2,
   },
   cardSerial: {
-    fontFamily: typography.mono,
-    fontSize: 12,
-    color: colors.textMuted,
-    fontWeight: '700',
+    fontFamily: typography.uiMedium,
+    fontSize: 11,
+    color: '#9CA3AF',
   },
   cardHeadActions: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.xs,
-    // The Edit/Delete buttons are styled per-screen (theme `text.action`), so
-    // shrink the whole cluster here to keep them compact in the card header
-    // without touching every screen. Anchored to the right edge on web.
     transform: [{ scale: 0.78 }],
     ...(Platform.OS === 'web' ? ({ transformOrigin: 'right center' } as any) : {}),
   },
@@ -531,80 +606,97 @@ const styles = StyleSheet.create({
     gap: spacing.md,
   },
   cardLabel: {
-    ...text.label,
-    fontSize: 11,
-    color: colors.textLabel,
+    fontFamily: typography.uiBold,
+    fontSize: 10,
+    color: '#9CA3AF',
     textTransform: 'uppercase',
     letterSpacing: 0.3,
     flexShrink: 0,
   },
-  cardValueWrap: {
-    flex: 1,
-    alignItems: 'flex-end',
-  },
+  cardValueWrap: { flex: 1, alignItems: 'flex-end' },
   cardValueText: {
-    ...text.value,
+    fontFamily: typography.uiMedium,
     fontSize: 13,
+    color: '#374151',
     lineHeight: 18,
     textAlign: 'right',
   },
 
-  // ── Pagination bar ──
+  // ── Pagination bar — abscloud style ──
   pagination: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.sm,
+    justifyContent: 'space-between',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
     borderTopWidth: 1,
-    borderTopColor: colors.border,
-    backgroundColor: colors.card,
-    gap: spacing.xs,
+    borderTopColor: '#F3F4F6',
+    backgroundColor: '#FFFFFF',
+    minHeight: 40,
   },
-  pageNumbers: {
+  pageInfo: {
+    fontFamily: typography.uiBold,
+    fontSize: 11,
+    color: '#6B7280',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  pageNav: {
+    flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.xs,
-    paddingHorizontal: spacing.xs,
+    gap: 2,
   },
-  pageNum: {
-    minWidth: 30,
-    height: 30,
-    borderRadius: radius.sm,
+  pageBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: spacing.sm,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#FFFFFF',
+    ...(Platform.OS === 'web' ? ({ cursor: 'pointer' } as any) : {}),
   },
-  pageNumActive: {
-    backgroundColor: colors.brandRed,
+  pageBtnDisabled: {
+    opacity: 0.35,
+    ...(Platform.OS === 'web' ? ({ cursor: 'not-allowed' } as any) : {}),
   },
-  pageNumText: {
+  pageBtnText: {
     fontFamily: typography.uiBold,
     fontSize: 13,
-    color: colors.textStrong,
+    color: '#374151',
+    lineHeight: 16,
   },
-  pageNumTextActive: {
-    color: '#FFFFFF',
-  },
-  pageArrow: {
-    width: 30,
-    height: 30,
-    borderRadius: radius.sm,
+  pageLabel: {
+    paddingHorizontal: 10,
+    height: 28,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#FFFFFF',
+    marginHorizontal: 2,
   },
-  pageArrowText: {
+  pageLabelText: {
     fontFamily: typography.uiBold,
-    fontSize: 18,
-    lineHeight: 20,
-    color: colors.textStrong,
+    fontSize: 11,
+    color: '#374151',
   },
-  pageDisabled: {
-    opacity: 0.4,
-  },
+
+  // Mobile pagination (existing style kept for mobile card view)
+  pageNumbers: { alignItems: 'center', gap: spacing.xs, paddingHorizontal: spacing.xs },
+  pageNum: { minWidth: 28, height: 28, borderRadius: 6, alignItems: 'center', justifyContent: 'center', paddingHorizontal: spacing.sm, borderWidth: 1, borderColor: '#E5E7EB', backgroundColor: '#FFFFFF' },
+  pageNumActive: { backgroundColor: colors.brandRed, borderColor: colors.brandRed },
+  pageNumText: { fontFamily: typography.uiBold, fontSize: 12, color: '#374151' },
+  pageNumTextActive: { color: '#FFFFFF' },
+  pageArrow: { width: 28, height: 28, borderRadius: 6, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#E5E7EB', backgroundColor: '#FFFFFF' },
+  pageArrowText: { fontFamily: typography.uiBold, fontSize: 16, lineHeight: 18, color: '#374151' },
+  pageDisabled: { opacity: 0.35 },
+
   emptyText: {
-    ...text.meta,
+    fontFamily: typography.uiMedium,
     fontSize: 13,
+    color: '#9CA3AF',
   },
 });

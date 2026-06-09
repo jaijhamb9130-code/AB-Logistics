@@ -373,6 +373,9 @@ export function VoucherFormScreen() {
     }
   };
 
+  // For Freight Journal edits — shows "Against Bilty: <bilty_no>" in the header.
+  const [parentBiltyNo, setParentBiltyNo] = useState<string | null>(null);
+
   // ── State flags
   const [loading, setLoading] = useState(isEdit);
   const [submitting, setSubmitting] = useState(false);
@@ -390,7 +393,12 @@ export function VoucherFormScreen() {
   // highlight (the active family's primary stays lit even when a child is set).
   const familyRootId = currentVchType ? (currentVchType.parent_id ?? currentVchType.id) : null;
   // The voucher Type dropdown shows the active primary + its children.
-  const familyTypes = vchTypes.filter((t) => t.parent_id === familyRootId);
+  // When editing a Freight Journal: show only that one type (no switching).
+  // Otherwise: hide Freight Journal from the Journal-family dropdown.
+  const isFreightJournalEdit = currentVchType?.name === 'Freight Journal';
+  const familyTypes = isFreightJournalEdit
+    ? [currentVchType!]
+    : vchTypes.filter((t) => t.parent_id === familyRootId && t.name !== 'Freight Journal');
   // Root primary of the COMMITTED type — drives the rail's RED mark. Arrow-
   // previewing changes vchTypeId (grey) but not the commit, so red stays put.
   const committedType = vchTypes.find((t) => t.id === committedVchTypeId) || null;
@@ -425,7 +433,8 @@ export function VoucherFormScreen() {
   // Contra / Payment / Receipt (and every other type) are left as plain
   // double-entry / inventory vouchers with no bilty mechanism.
   const currentPrimaryName = (vchTypes.find((t) => t.id === familyRootId)?.name ?? '').toLowerCase();
-  const biltyEligible = isJournalType && currentPrimaryName === 'journal';
+  // Mode (Normal/Advance/Fuel) only for plain Journal — not for Freight Journal or any other type.
+  const biltyEligible = isJournalType && currentPrimaryName === 'journal' && currentVchType?.name !== 'Freight Journal';
 
   // Switch advance/fuel mode. Clears any in-progress bilty selection and
   // unlocks row 1 so the form returns to a clean state for the new mode.
@@ -459,9 +468,9 @@ export function VoucherFormScreen() {
   }, [biltyEligible, biltyMode, biltyList.length]);
 
   // React to the picked Bilty No.
-  //  • Advance (mode 1): fetch the bilty's truck ledger and lock it into row 1.
-  //  • Fuel (mode 2): just record the bilty id — row 1 becomes a dropdown
-  //    restricted to the "Fuel" ledger group, row 2 stays the full ledger list.
+  //  • Advance/Fuel: fetch the bilty's truck ledger and lock it into row 1.
+  //    Fuel leaves row 2 as a normal ledger picker so the expense ledger can
+  //    be selected without depending on a specific group label.
   // Clearing / changing to a non-match resets row 1 to an empty, editable row.
   useEffect(() => {
     if (!biltyEligible || biltyMode === 0) return;
@@ -488,16 +497,7 @@ export function VoucherFormScreen() {
     }
     setSelectedBiltyId(match.id);
 
-    if (biltyMode === 2) {
-      // Fuel: no auto-fill/lock — clear row 1 so the user picks from the Fuel
-      // group dropdown (the row's groupFilter does the restricting).
-      setError(null);
-      if (biltyLockedRef.current) { setBiltyLocked(false); biltyLockedRef.current = false; }
-      setJournalRows((prev) => { const n = [...prev]; n[0] = emptyJournalRow(); return n; });
-      return;
-    }
-
-    // Advance: lock the truck (vehicle ledger) into row 1.
+    // Advance/Fuel: lock the truck (vehicle ledger) into row 1.
     let cancelled = false;
     voucherService.biltyVehicleLedger(match.id)
       .then((res) => {
@@ -509,7 +509,7 @@ export function VoucherFormScreen() {
             const base = n[0] ?? emptyJournalRow();
             n[0] = {
               ...base,
-              drOrCr: 'Dr',
+              drOrCr: 'Cr',
               ledger_id: res.ledger_id!,
               ledger_name: res.ledger_name ?? '',
               search: res.ledger_name ?? '',
@@ -582,10 +582,12 @@ export function VoucherFormScreen() {
   useEffect(() => {
     Promise.allSettled([
       vchTypeService.list().then((all) => {
-        // "Freight Journal" is an internal companion type posted automatically
-        // by bilties — it must never be user-selectable, so keep it out of the
-        // type rail / dropdown regardless of its parent_id in the DB.
-        const vts = all.filter((t) => t.name !== 'Freight Journal');
+        // "Freight Journal" is internal and must not be user-selectable when creating
+        // a new voucher. In edit mode we keep it in the list so currentVchType resolves
+        // correctly (isJournalType, rail highlight, type label all depend on it).
+        const vts = isEdit
+          ? all.filter((t) => t.name !== 'Freight Invoice')
+          : all.filter((t) => t.name !== 'Freight Journal' && t.name !== 'Freight Invoice');
         setVchTypes(vts);
         if (!isEdit && biltyEditId === null && vchTypeId === null) {
           // Default landing voucher type = Sales — matches the previous behaviour
@@ -619,6 +621,7 @@ export function VoucherFormScreen() {
       if (cancelled) return;
       setVchTypeId(v.vch_type_id);
       setVchNo(v.vch_no || '');
+      setParentBiltyNo(v.parent_bilty_no || null);
       const iso = (v.vch_date || '').slice(0, 10);
       setVchDate(iso);
       setVchDateText(fmtDateDDMMYYYY(iso));
@@ -640,16 +643,20 @@ export function VoucherFormScreen() {
       const inventoryEntry = v.ledgerEntries.find((le) => (le.inventoryEntries || []).length > 0);
 
       if (isJournal && !inventoryEntry) {
-        setJournalRows(
-          v.ledgerEntries.map((le) => ({
-            id: uid(),
-            drOrCr: Number(le.amount) >= 0 ? 'Dr' : 'Cr',
-            ledger_id: le.ledger_id,
-            ledger_name: le.ledger_name || '',
-            amount: Math.abs(Number(le.amount)),
-            search: le.ledger_name || '',
-          }))
-        );
+        const hydratedRows: JournalRow[] = v.ledgerEntries.map((le) => ({
+          id: uid(),
+          drOrCr: Number(le.amount) >= 0 ? 'Dr' : 'Cr',
+          ledger_id: le.ledger_id,
+          ledger_name: le.ledger_name || '',
+          amount: Math.abs(Number(le.amount)),
+          search: le.ledger_name || '',
+        }));
+        if (mode !== 0 && v.bilty_id && hydratedRows.length > 0) {
+          hydratedRows[0] = { ...hydratedRows[0], drOrCr: 'Cr' };
+          setBiltyLocked(true);
+          biltyLockedRef.current = true;
+        }
+        setJournalRows(hydratedRows);
       } else if (inventoryEntry) {
         const igstFlag = false; // recomputed via isIgst flag effect once party state loads
         setLines(
@@ -1484,6 +1491,15 @@ export function VoucherFormScreen() {
           </View>
         </View>
 
+        {/* AGAINST BILTY — shown when editing a Freight Journal (parent_bilty_no is set) */}
+        {parentBiltyNo ? (
+          <View style={styles.againstBiltyRow}>
+            <Text style={styles.againstBiltyLabel}>AGAINST BILTY</Text>
+            <Text style={styles.againstBiltyValue}>{parentBiltyNo}</Text>
+            <Text style={styles.againstBiltyNote}>(read-only — edit the bilty to change freight amount)</Text>
+          </View>
+        ) : null}
+
         {/* PARTY — inventory mode only */}
         {!isJournalType ? (
           <View style={[styles.field, partyDropOpen && styles.fieldOpen]}>
@@ -1564,7 +1580,7 @@ export function VoucherFormScreen() {
                 onRemove={() => setJournalRows((p) => p.length > 2 ? p.filter((r) => r.id !== row.id) : p)}
                 editable={canSave}
                 locked={biltyLocked && idx === 0}
-                groupFilter={biltyEligible && biltyMode === 2 && selectedBiltyId !== null && idx === 0 ? 'Fuel' : undefined}
+                groupFilter={biltyEligible && biltyMode === 2 && selectedBiltyId !== null && idx === 1 ? 'Pump' : undefined}
               />
             ))}
             {canSave && (
@@ -2301,7 +2317,7 @@ function JournalRowEditor({ row, idx, onChange, onRemove, editable, isMobile, lo
     <View style={isMobile ? styles.journalTypeColMobile : { width: 70 }}>
       {isMobile ? <Text style={styles.fieldLabelSmallMobile}>Dr / Cr</Text> : null}
       <Pressable
-        onPress={() => editable && setTypeOpen((v) => !v)}
+        onPress={() => editable && !locked && setTypeOpen((v) => !v)}
         style={[styles.selectField, !editable && styles.inputDisabled]}
         accessibilityRole="button"
         accessibilityLabel="Dr or Cr"
@@ -2811,6 +2827,17 @@ const styles = StyleSheet.create({
   },
   headerCol: { minWidth: 180, flexBasis: 200, flexGrow: 0 },
   headerSpacer: { flex: 1 },
+
+  againstBiltyRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    paddingVertical: 6, paddingHorizontal: 12,
+    backgroundColor: '#EFF6FF', borderRadius: 6,
+    borderWidth: 1, borderColor: '#BFDBFE',
+    marginBottom: 8,
+  },
+  againstBiltyLabel: { fontSize: 11, fontFamily: typography.uiBold, color: '#1D4ED8', textTransform: 'uppercase', letterSpacing: 0.3 },
+  againstBiltyValue: { fontSize: 14, fontFamily: typography.uiBold, color: '#1E40AF' },
+  againstBiltyNote: { fontSize: 12, fontFamily: typography.ui, color: '#60A5FA' },
 
   // ── Mobile layout overrides (all gated by isMobile in the JSX) ──────────────
   headerRowMobile: {

@@ -19,7 +19,6 @@ import {
 } from 'react-native';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { ButtonPrimary } from '../components/ButtonPrimary';
 import { DataTable, type Column } from '../components/DataTable';
 import { Loader } from '../components/Loader';
 import { colors, radius, spacing, text, typography } from '../constants/theme';
@@ -39,24 +38,29 @@ export function BiltyScreen() {
   const { isMobile } = useResponsive();
   
   const canView = canDoAction(user, 'bilty', 'view');
-  const canCreate = canDoAction(user, 'bilty', 'create');
-  // Edit / Delete are gated and exposed inside BiltyDetailScreen — the list
-  // page only offers an "Open" button per row.
+
   const [rows, setRows] = useState<BiltyListItem[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [query, setQuery] = useState('');
-  // Default: today — so users see today's bilties first. They can change the
-  // date manually or clear it (×) to see all dates.
   const [dateFilter, setDateFilter] = useState<string>(() => getTodayISO());
+  const [sortKey, setSortKey] = useState<string>('bilty_date');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
-  // Card search — matches any of the visible card fields (case-insensitive).
-  // Date picker filters by `bilty_date` (exact ISO match) when set.
+  const handleSort = (key: string) => {
+    if (key === sortKey) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortKey(key);
+      setSortDir('asc');
+    }
+  };
+
   const filteredRows = useMemo(() => {
     if (!rows) return rows;
     const q = query.trim().toLowerCase();
-    return rows.filter((r) => {
+    let filtered = rows.filter((r) => {
       if (dateFilter) {
-        const rowDate = formatDate(r.bilty_date); // YYYY-MM-DD
+        const rowDate = formatDate(r.bilty_date);
         if (rowDate !== dateFilter) return false;
       }
       if (!q) return true;
@@ -67,15 +71,23 @@ export function BiltyScreen() {
         r.bilty_date ?? '',
         r.created_by_username ?? '',
         formatDate(r.bilty_date),
-        formatTimeOnly(r.created_at),
-        formatDateTime(r.created_at),
         String(r.item_count ?? ''),
-      ]
-        .join(' ')
-        .toLowerCase();
+      ].join(' ').toLowerCase();
       return haystack.includes(q);
     });
-  }, [rows, query, dateFilter]);
+
+    // Sort
+    filtered = [...filtered].sort((a, b) => {
+      let av: any = (a as any)[sortKey] ?? '';
+      let bv: any = (b as any)[sortKey] ?? '';
+      if (sortKey === 'item_count') { av = Number(av); bv = Number(bv); }
+      if (av < bv) return sortDir === 'asc' ? -1 : 1;
+      if (av > bv) return sortDir === 'asc' ? 1 : -1;
+      return 0;
+    });
+
+    return filtered;
+  }, [rows, query, dateFilter, sortKey, sortDir]);
 
   const load = useCallback(async () => {
     setErr(null);
@@ -128,7 +140,7 @@ export function BiltyScreen() {
         <Pressable
           onPress={(e: any) => {
             e?.stopPropagation?.();
-            navigation.navigate('BiltyDetail', { id: r.id });
+            (navigation as any).navigate('Billing', { screen: 'VoucherForm', params: { biltyEditId: r.id } });
           }}
           accessibilityRole="button"
           accessibilityLabel={`Open ${r.bilty_no}`}
@@ -147,7 +159,7 @@ export function BiltyScreen() {
   return (
     <View style={styles.wrap}>
       <View style={styles.header}>
-        <Text style={styles.title}>Reports</Text>
+        <Text style={styles.title}>Bilty</Text>
       </View>
 
       {err ? (
@@ -156,42 +168,49 @@ export function BiltyScreen() {
         </View>
       ) : null}
 
-      {/* Search bar — matches any card field. Date picker on the right
-          filters cards to a specific bilty_date. (mobile only) */}
-      {isMobile ? (
+      {/* Filter bar — shown on both desktop and mobile */}
+      <View style={styles.filterBar}>
         <View style={styles.searchWrap}>
           <Text style={styles.searchIcon}>⌕</Text>
           <TextInput
             value={query}
             onChangeText={setQuery}
-            placeholder="Search bilty no, consignor, truck, user..."
+            placeholder="Search bilty no, consignor, truck..."
             placeholderTextColor={colors.textMuted}
             style={[styles.searchInput, Platform.OS === 'web' && ({ outlineStyle: 'none' } as any)]}
-            accessibilityLabel="Search bilty cards"
+            accessibilityLabel="Search bilty"
           />
           {query ? (
             <Pressable onPress={() => setQuery('')} hitSlop={8} accessibilityLabel="Clear search">
               <Text style={styles.searchClear}>×</Text>
             </Pressable>
           ) : null}
-
-          {/* Date filter — calendar input pinned to the right corner */}
-          <View style={styles.searchDivider} />
-          <View style={styles.searchDateWrap}>
-            {Platform.OS === 'web' ? (
-              React.createElement('input', {
-                type: 'date',
-                value: dateFilter,
-                onChange: (e: any) => setDateFilter(e?.target?.value || ''),
-                'aria-label': 'Filter by date',
-                style: searchDateInputStyle,
-              })
-            ) : (
-              <Text style={styles.searchDateLabel}>{dateFilter || 'Date'}</Text>
-            )}
-          </View>
         </View>
-      ) : null}
+
+        <View style={styles.dateWrap}>
+          <Text style={styles.dateLabel}>Date</Text>
+          {Platform.OS === 'web' ? (
+            React.createElement('input', {
+              type: 'date',
+              value: dateFilter,
+              onChange: (e: any) => setDateFilter(e?.target?.value || ''),
+              'aria-label': 'Filter by date',
+              style: searchDateInputStyle,
+            })
+          ) : (
+            <Text style={styles.searchDateLabel}>{dateFilter || 'All'}</Text>
+          )}
+          {dateFilter ? (
+            <Pressable onPress={() => setDateFilter('')} hitSlop={8} accessibilityLabel="Clear date">
+              <Text style={styles.searchClear}>×</Text>
+            </Pressable>
+          ) : null}
+        </View>
+
+        {rows !== null && (
+          <Text style={styles.countLabel}>{(filteredRows ?? []).length} record{(filteredRows ?? []).length !== 1 ? 's' : ''}</Text>
+        )}
+      </View>
 
       {rows === null ? (
         <Loader />
@@ -210,7 +229,7 @@ export function BiltyScreen() {
               <BiltyCard
                 key={r.id}
                 row={r}
-                onPress={() => navigation.navigate('BiltyDetail', { id: r.id })}
+                onPress={() => (navigation as any).navigate('Billing', { screen: 'VoucherForm', params: { biltyEditId: r.id } })}
               />
             ))
           )}
@@ -219,11 +238,15 @@ export function BiltyScreen() {
         <View style={styles.tableWrap}>
           <DataTable<BiltyListItem>
             columns={columns}
-            rows={rows}
+            rows={filteredRows ?? []}
             keyExtractor={(r) => r.id}
-            onRowPress={(r) => navigation.navigate('BiltyDetail', { id: r.id })}
-            emptyLabel="No bilties yet. Create one from Vouchers → Bilty."
+            onRowPress={(r) => (navigation as any).navigate('Billing', { screen: 'VoucherForm', params: { biltyEditId: r.id } })}
+            emptyLabel="No bilties match your filters."
             testID="bilty-table"
+            sortBy={sortKey}
+            sortDir={sortDir}
+            onSort={handleSort}
+            desktopPageSize={25}
           />
         </View>
       )}
@@ -304,27 +327,59 @@ const searchDateInputStyle = {
   border: 'none',
   outline: 'none',
   background: 'transparent',
-  fontSize: 12,
+  fontSize: 13,
   fontFamily: 'inherit',
-  fontWeight: 600,
   color: '#0F172A',
   height: 22,
   padding: 0,
   cursor: 'pointer',
-  width: 124,
+  width: 130,
 };
 
 const styles = StyleSheet.create({
-  wrap: { flex: 1, backgroundColor: colors.background, padding: spacing.lg },
+  wrap: { flex: 1, backgroundColor: colors.background, paddingHorizontal: spacing.lg, paddingTop: spacing.md, paddingBottom: 0 },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: spacing.lg,
+    marginBottom: spacing.sm,
   },
-  title: { ...text.heading, fontSize: 24, lineHeight: 32 },
-  headerBtn: { minWidth: 140 },
+  title: { fontFamily: typography.uiHeavy, fontSize: 20, color: colors.text, letterSpacing: -0.3 },
+  headerBtn: { minWidth: 120 },
   tableWrap: { flex: 1, minHeight: 200 },
+
+  // ── Filter bar ──
+  filterBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: spacing.sm,
+    flexWrap: 'wrap',
+  },
+  dateWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    paddingHorizontal: 10,
+    paddingVertical: 0,
+    gap: 6,
+    height: 34,
+  },
+  dateLabel: {
+    fontSize: 10,
+    fontFamily: typography.uiBold,
+    color: colors.textMuted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  countLabel: {
+    fontSize: 12,
+    fontFamily: typography.uiMedium,
+    color: colors.textMuted,
+  },
   errorBanner: {
     backgroundColor: colors.card,
     borderWidth: 1,
@@ -354,30 +409,32 @@ const styles = StyleSheet.create({
     fontFamily: typography.uiBold,
   },
 
-  // ── Mobile search bar
+  // ── Search input
   searchWrap: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: colors.card,
     borderWidth: 1,
-    borderColor: '#CBD5E1',
+    borderColor: colors.border,
     borderRadius: radius.md,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    marginBottom: 10,
-    gap: 8,
+    paddingHorizontal: 10,
+    gap: 6,
+    flex: 1,
+    minWidth: 200,
+    maxWidth: 380,
+    height: 34,
   },
   searchIcon: {
-    fontSize: 16,
-    color: colors.textMuted,
+    fontSize: 14,
+    color: '#9CA3AF',
     fontFamily: typography.uiBold,
   },
   searchInput: {
     flex: 1,
     fontSize: 13,
-    color: colors.textStrong,
+    color: colors.text,
     fontFamily: typography.uiMedium,
-    height: 22,
+    height: 20,
     padding: 0,
   },
   searchClear: {
@@ -385,17 +442,6 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     fontFamily: typography.uiBold,
     paddingHorizontal: 4,
-  },
-  searchDivider: {
-    width: 1,
-    height: 22,
-    backgroundColor: '#E2E8F0',
-    marginHorizontal: 4,
-  },
-  searchDateWrap: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
   },
   searchDateLabel: {
     fontSize: 12,

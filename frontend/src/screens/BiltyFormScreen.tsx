@@ -37,6 +37,7 @@ import { itemMasterService } from '../services/itemMasterService';
 import { vehicleMasterService } from '../services/vehicleMasterService';
 import { destinationService } from '../services/destinationService';
 import { branchService } from '../services/branchService';
+import { agentService } from '../services/agentService';
 import { colors, radius, spacing, typography } from '../constants/theme';
 import { useBiltyCreate, useBiltyUpdate } from '../hooks/useBiltyUpdate';
 import { biltyService } from '../services/biltyService';
@@ -49,6 +50,13 @@ import { useResponsive } from '../hooks/useResponsive';
 import { MobileBiltyFormScreen } from './MobileBiltyFormScreen';
 import { useAuth } from '../context/AuthContext';
 import { canDoAction } from '../navigation/guards';
+import {
+  LedgerQuickCreateModal,
+  DestinationQuickCreateModal,
+  BranchQuickCreateModal,
+  VehicleQuickCreateModal,
+  ItemQuickCreateModal,
+} from '../components/QuickCreateMasterModals';
 
 type Nav = NativeStackNavigationProp<BiltyStackParamList, 'BiltyForm'>;
 type BiltyFormRoute = RouteProp<BiltyStackParamList, 'BiltyForm'>;
@@ -210,7 +218,8 @@ function DesktopBiltyForm({ canSave, editingId, embedded = false, prefixOverride
   // NOTE: Owner Name is intentionally NOT linked to Owner Master here — the
   // field is a free-text input on the bilty form. Reconnect later if needed.
   const [partyOptions, setPartyOptions] = useState<string[]>([]);
-  const [debtorOptions, setDebtorOptions] = useState<string[]>([]);
+  const [consignorOptions, setConsignorOptions] = useState<string[]>([]);
+  const [consigneeOptions, setConsigneeOptions] = useState<string[]>([]);
   // Map consignor name → GST so the form can auto-fill GST No when a known
   // consignor is selected.
   const [partyGstMap, setPartyGstMap] = useState<Record<string, string>>({});
@@ -231,82 +240,119 @@ function DesktopBiltyForm({ canSave, editingId, embedded = false, prefixOverride
   // Owner Name is read-only while it's driven by the picked truck's owner. When
   // the truck has no owner on file, it unlocks so the user can type one.
   const [ownerLocked, setOwnerLocked] = useState(false);
+  const [agentOptions, setAgentOptions] = useState<string[]>([]);
   const [branchOptions, setBranchOptions] = useState<string[]>([]);
   const [destinationOptions, setDestinationOptions] = useState<string[]>([]);
+
+  // State to manage quick create modals
+  const [modalType, setModalType] = useState<'consignor' | 'consignee' | 'agent' | 'bill_to' | 'from' | 'to' | 'truck' | 'goods_type' | 'branch' | null>(null);
+  const [modalInitialName, setModalInitialName] = useState('');
+  const [currentEditingItemIdx, setCurrentEditingItemIdx] = useState<number | null>(null);
+  const [currentEditingItemCol, setCurrentEditingItemCol] = useState<'from_loc' | 'to_loc' | 'consignee' | null>(null);
+
+  const refreshAllOptions = useCallback(() => {
+    return Promise.allSettled([
+      // Customer-side ledgers (Consignor / Bill-To / Consignee) — pulled
+      // from ledger_master, filtered to the dedicated child groups when
+      // present. Build a name→GST map for GST No auto-fill on consignor.
+      Promise.all([
+        ledgerGroupService.list(),
+        ledgerMasterService.list(null),
+      ]).then(([groups, ledgers]) => {
+        const consignorGroupId =
+          groups.find((g) => g.group_name.toLowerCase() === 'consignor')?.id ?? null;
+        const consigneeGroupId =
+          groups.find((g) => g.group_name.toLowerCase() === 'consignee')?.id ?? null;
+        const consignors = consignorGroupId != null
+          ? ledgers.filter((r) => r.ledger_group_id === consignorGroupId)
+          : ledgers;
+        const consignees = consigneeGroupId != null
+          ? ledgers.filter((r) => r.ledger_group_id === consigneeGroupId)
+          : ledgers;
+        setPartyOptions([...new Set([...consignors, ...consignees].map((r) => r.name))].sort());
+        const gstMap: Record<string, string> = {};
+        ledgers.forEach((r) => {
+          if (r.name && (r as any).gst_no) gstMap[r.name] = String((r as any).gst_no);
+        });
+        setPartyGstMap(gstMap);
+        setConsignorOptions(consignors.map((r) => r.name).sort());
+        setConsigneeOptions(consignees.map((r) => r.name).sort());
+      }),
+      // Owner / Agent now live in their own master tables.
+      itemMasterService.list().then((rs) => {
+        setItemOptions(rs.map((r) => r.name).sort());
+        const map: Record<string, boolean> = {};
+        const rateMap: Record<string, number> = {};
+        const unitMap: Record<string, string> = {};
+        rs.forEach((r) => {
+          map[r.name] = (r as any).batch === 'Yes';
+          const rate = Number((r as any).gst_rate ?? 0);
+          if (Number.isFinite(rate)) rateMap[r.name] = rate;
+          const u = (r as any).unit;
+          if (u) unitMap[r.name] = String(u);
+        });
+        setItemBatchMap(map);
+        setItemGstRateMap(rateMap);
+        setItemUnitMap(unitMap);
+      }),
+
+      vehicleMasterService.list().then((rs) => {
+        setVehicleNoOptions(rs.map((r) => r.name).sort());
+        // Build truck → owner map (only trucks that actually have an owner).
+        const om: Record<string, string> = {};
+        rs.forEach((r) => {
+          const owner = (r as any).owner_name;
+          if (r.name && owner && String(owner).trim() !== '') om[r.name] = String(owner).trim();
+        });
+        setTruckOwnerMap(om);
+      }),
+      agentService.list().then((rs) => setAgentOptions(rs.map((r: any) => r.name).sort())),
+      // Branch is now a real master (branch_master). Stored as branch_id FK.
+      branchService.list().then((rs) => setBranchOptions(rs.map((r) => r.name).sort())),
+      destinationService.list().then((rs) =>
+        setDestinationOptions(
+          [...new Set(rs.map((r) => r.name).filter((v): v is string => Boolean(v)))].sort()
+        )
+      ),
+    ]);
+  }, []);
 
   // Re-fetch master-data dropdowns every time the screen comes into focus,
   // so newly-created ledgers / items / vehicles / destinations show up
   // without a full app reload.
   useFocusEffect(
     useCallback(() => {
-      Promise.allSettled([
-        // Customer-side ledgers (Consignor / Bill-To / Consignee) — pulled
-        // from ledger_master, filtered to the Sundry Debtors group when
-        // present. Build a name→GST map for GST No auto-fill on consignor.
-        Promise.all([
-          ledgerGroupService.list(),
-          ledgerMasterService.list(null),
-        ]).then(([groups, ledgers]) => {
-          setPartyOptions(ledgers.map((r) => r.name).sort());
-          const gstMap: Record<string, string> = {};
-          ledgers.forEach((r) => {
-            if (r.name && (r as any).gst_no) gstMap[r.name] = String((r as any).gst_no);
-          });
-          setPartyGstMap(gstMap);
-
-          const debtorGroupId =
-            groups.find((g) => g.group_name.toLowerCase() === 'sundry debtors')?.id ?? null;
-          const debtors = debtorGroupId != null
-            ? ledgers.filter((r) => r.ledger_group_id === debtorGroupId)
-            : ledgers;
-          setDebtorOptions(debtors.map((r) => r.name).sort());
-        }),
-        // Owner / Agent now live in their own master tables.
-        itemMasterService.list().then((rs) => {
-          // Bilty Goods Type is restricted to items with batch = Yes — line
-          // items inside a bilty always need per-batch tracking, so non-batch
-          // items aren't a valid pick here.
-          const batched = rs.filter((r) => (r as any).batch === 'Yes');
-          setItemOptions(batched.map((r) => r.name).sort());
-          const map: Record<string, boolean> = {};
-          const rateMap: Record<string, number> = {};
-          const unitMap: Record<string, string> = {};
-          batched.forEach((r) => {
-            map[r.name] = true;
-            const rate = Number((r as any).gst_rate ?? 0);
-            if (Number.isFinite(rate)) rateMap[r.name] = rate;
-            const u = (r as any).unit;
-            if (u) unitMap[r.name] = String(u);
-          });
-          setItemBatchMap(map);
-          setItemGstRateMap(rateMap);
-          setItemUnitMap(unitMap);
-        }),
-
-        vehicleMasterService.list().then((rs) => {
-          setVehicleNoOptions(rs.map((r) => r.name).sort());
-          // Build truck → owner map (only trucks that actually have an owner).
-          const om: Record<string, string> = {};
-          rs.forEach((r) => {
-            const owner = (r as any).owner_name;
-            if (r.name && owner && String(owner).trim() !== '') om[r.name] = String(owner).trim();
-          });
-          setTruckOwnerMap(om);
-        }),
-        // Branch is now a real master (branch_master). Stored as branch_id FK.
-        branchService.list().then((rs) => setBranchOptions(rs.map((r) => r.name).sort())),
-        destinationService.list().then((rs) =>
-          setDestinationOptions(
-            [...new Set(rs.map((r) => r.name).filter((v): v is string => Boolean(v)))].sort()
-          )
-        ),
-      ]);
-    }, [])
+      refreshAllOptions();
+    }, [refreshAllOptions])
   );
 
-  // Customer-side fields use the debtor list. Falls back to partyOptions if
-  // Sundry Debtors group isn't seeded yet.
-  const consignorOptions = debtorOptions.length > 0 ? debtorOptions : partyOptions;
+  const handleCreateSuccess = async (createdName: string) => {
+    await refreshAllOptions();
+    
+    if (modalType === 'consignor') {
+      setValue('header.consignor', createdName, { shouldDirty: true });
+    } else if (modalType === 'bill_to') {
+      setValue('header.bill_to', createdName, { shouldDirty: true });
+    } else if (modalType === 'agent') {
+      setValue('header.agent_name', createdName, { shouldDirty: true });
+    } else if (modalType === 'truck') {
+      setValue('header.truck_no', createdName, { shouldDirty: true });
+    } else if (modalType === 'goods_type') {
+      setValue('header.goods_type', createdName, { shouldDirty: true });
+    } else if (modalType === 'branch') {
+      setValue('header.branch', createdName, { shouldDirty: true });
+    } else if (currentEditingItemIdx !== null && currentEditingItemCol !== null) {
+      setValue(`items.${currentEditingItemIdx}.${currentEditingItemCol}` as any, createdName, { shouldDirty: true });
+    }
+
+    setModalType(null);
+    setModalInitialName('');
+    setCurrentEditingItemIdx(null);
+    setCurrentEditingItemCol(null);
+  };
+
+  const billToOptions = partyOptions.length > 0 ? partyOptions : consignorOptions;
+  const itemConsigneeOptions = consigneeOptions.length > 0 ? consigneeOptions : consignorOptions;
 
   const {
     control,
@@ -544,8 +590,8 @@ function DesktopBiltyForm({ canSave, editingId, embedded = false, prefixOverride
   // From/To/Consignee a listed pick) then moves to the next cell / row / Save.
   // It's shared: the table keydown handler drives the text/numeric cells, while
   // From/To/Consignee (RowDatalist) call it via onSubmitNext after a valid pick.
-  const itemOptsRef = useRef({ dest: destinationOptions, cons: consignorOptions });
-  itemOptsRef.current = { dest: destinationOptions, cons: consignorOptions };
+  const itemOptsRef = useRef({ dest: destinationOptions, cons: itemConsigneeOptions });
+  itemOptsRef.current = { dest: destinationOptions, cons: itemConsigneeOptions };
   const advanceItemCellRef = useRef<(i: number, col: string) => void>(() => {});
   advanceItemCellRef.current = (i, col) => {
     const v = getValues(`items.${i}.${col}` as any);
@@ -688,7 +734,8 @@ function DesktopBiltyForm({ canSave, editingId, embedded = false, prefixOverride
   }
 
   return (
-    <ScrollView
+    <>
+      <ScrollView
       style={styles.wrap}
       contentContainerStyle={[styles.content, embedded && { paddingTop: 0 }]}
       keyboardShouldPersistTaps="handled"
@@ -748,6 +795,10 @@ function DesktopBiltyForm({ canSave, editingId, embedded = false, prefixOverride
                   onChangeText={onChange}
                   placeholder=""
                   onSubmitNext={() => focusNext('branch')}
+                  onCreatePressed={(typedVal) => {
+                    setModalType('branch');
+                    setModalInitialName(typedVal);
+                  }}
                 />
               )
             )}
@@ -832,12 +883,16 @@ function DesktopBiltyForm({ canSave, editingId, embedded = false, prefixOverride
                 ref={setGuidedRef('consignor')}
                 label="Consignor *"
                 value={value}
-                options={consignorOptions}
+                options={billToOptions}
                 onChangeText={onChange}
                 placeholder=""
                 error={errors.header?.consignor?.message ?? null}
                 testID="consignor-input"
                 onSubmitNext={() => focusNext('consignor')}
+                onCreatePressed={(typedVal) => {
+                  setModalType('consignor');
+                  setModalInitialName(typedVal);
+                }}
               />
             )}
           />
@@ -856,6 +911,10 @@ function DesktopBiltyForm({ canSave, editingId, embedded = false, prefixOverride
                 placeholder=""
                 testID="goods-type-input"
                 onSubmitNext={() => focusNext('goods_type')}
+                onCreatePressed={(typedVal) => {
+                  setModalType('goods_type');
+                  setModalInitialName(typedVal);
+                }}
               />
             )}
           />
@@ -865,15 +924,20 @@ function DesktopBiltyForm({ canSave, editingId, embedded = false, prefixOverride
             control={control}
             name="header.agent_name"
             render={({ field: { value, onChange } }) => (
-              // Free text, skippable — no master dropdown. Saved as typed.
-              <InputField
+              <AutocompleteField
                 ref={setGuidedRef('agent_name')}
                 label="Agent Name"
                 value={value ?? ''}
+                options={agentOptions}
                 onChangeText={onChange}
                 placeholder=""
-                onSubmitEditing={() => focusNext('agent_name')}
-                blurOnSubmit={false}
+                submitFreeText
+                onSubmitNext={() => focusNext('agent_name')}
+                usePortal
+                onCreatePressed={(typedVal) => {
+                  setModalType('agent');
+                  setModalInitialName(typedVal);
+                }}
               />
             )}
           />
@@ -891,6 +955,10 @@ function DesktopBiltyForm({ canSave, editingId, embedded = false, prefixOverride
                 onChangeText={onChange}
                 placeholder=""
                 onSubmitNext={() => focusNext('bill_to')}
+                onCreatePressed={(typedVal) => {
+                  setModalType('bill_to');
+                  setModalInitialName(typedVal);
+                }}
               />
             )}
           />
@@ -914,6 +982,10 @@ function DesktopBiltyForm({ canSave, editingId, embedded = false, prefixOverride
                 placeholder=""
                 testID="truck-no-input"
                 onSubmitNext={() => focusNext('truck_no')}
+                onCreatePressed={(typedVal) => {
+                  setModalType('truck');
+                  setModalInitialName(typedVal);
+                }}
               />
             )}
           />
@@ -966,6 +1038,7 @@ function DesktopBiltyForm({ canSave, editingId, embedded = false, prefixOverride
           <HeaderCell w={70} align="right">Inc</HeaderCell>
           <HeaderCell w={75} align="right">L-Rate</HeaderCell>
           <HeaderCell w={75} align="right">E-Rate</HeaderCell>
+          <HeaderCell w={90} align="right">Total</HeaderCell>
           <HeaderCell w={36}> </HeaderCell>
         </View>
         {itemFields.map((field, i) => (
@@ -973,9 +1046,9 @@ function DesktopBiltyForm({ canSave, editingId, embedded = false, prefixOverride
             <Cell w={95}><Controller control={control} name={`items.${i}.challan_no`} render={({ field: f }) => <RowInput value={String(f.value ?? '')} onChangeText={f.onChange} filterFn={filterAlphanumeric} dataSet={{ cell: `${i}.challan_no` }} />} /></Cell>
             <Cell w={95}><Controller control={control} name={`items.${i}.lr_no`} render={({ field: f }) => <RowInput value={String(f.value ?? '')} onChangeText={f.onChange} filterFn={filterAlphanumeric} dataSet={{ cell: `${i}.lr_no` }} />} /></Cell>
             <Cell w={130}><Controller control={control} name={`items.${i}.shipment_no`} render={({ field: f }) => <RowInput value={String(f.value ?? '')} onChangeText={f.onChange} filterFn={filterAlphanumeric} dataSet={{ cell: `${i}.shipment_no` }} />} /></Cell>
-            <Cell w={115}><Controller control={control} name={`items.${i}.from_loc`} render={({ field: f }) => <RowDatalist value={String(f.value ?? '')} onChangeText={f.onChange} options={destinationOptions} filterFn={filterLetters} dataSet={{ cell: `${i}.from_loc` }} label="From" onSubmitNext={() => advanceItemCellRef.current(i, 'from_loc')} />} /></Cell>
-            <Cell w={115}><Controller control={control} name={`items.${i}.to_loc`} render={({ field: f }) => <RowDatalist value={String(f.value ?? '')} onChangeText={f.onChange} options={destinationOptions} filterFn={filterLetters} dataSet={{ cell: `${i}.to_loc` }} label="To" onSubmitNext={() => advanceItemCellRef.current(i, 'to_loc')} />} /></Cell>
-            <Cell><Controller control={control} name={`items.${i}.consignee`} render={({ field: f }) => <RowDatalist value={String(f.value ?? '')} onChangeText={f.onChange} options={consignorOptions} filterFn={filterLetters} dataSet={{ cell: `${i}.consignee` }} label="Consignee" onSubmitNext={() => advanceItemCellRef.current(i, 'consignee')} />} /></Cell>
+            <Cell w={115}><Controller control={control} name={`items.${i}.from_loc`} render={({ field: f }) => <RowDatalist value={String(f.value ?? '')} onChangeText={f.onChange} options={destinationOptions} filterFn={filterLetters} dataSet={{ cell: `${i}.from_loc` }} label="From" onSubmitNext={() => advanceItemCellRef.current(i, 'from_loc')} onCreatePressed={(typedVal) => { setModalType('from'); setModalInitialName(typedVal); setCurrentEditingItemIdx(i); setCurrentEditingItemCol('from_loc'); }} />} /></Cell>
+            <Cell w={115}><Controller control={control} name={`items.${i}.to_loc`} render={({ field: f }) => <RowDatalist value={String(f.value ?? '')} onChangeText={f.onChange} options={destinationOptions} filterFn={filterLetters} dataSet={{ cell: `${i}.to_loc` }} label="To" onSubmitNext={() => advanceItemCellRef.current(i, 'to_loc')} onCreatePressed={(typedVal) => { setModalType('to'); setModalInitialName(typedVal); setCurrentEditingItemIdx(i); setCurrentEditingItemCol('to_loc'); }} />} /></Cell>
+            <Cell><Controller control={control} name={`items.${i}.consignee`} render={({ field: f }) => <RowDatalist value={String(f.value ?? '')} onChangeText={f.onChange} options={itemConsigneeOptions} filterFn={filterLetters} dataSet={{ cell: `${i}.consignee` }} label="Consignee" onSubmitNext={() => advanceItemCellRef.current(i, 'consignee')} onCreatePressed={(typedVal) => { setModalType('consignee'); setModalInitialName(typedVal); setCurrentEditingItemIdx(i); setCurrentEditingItemCol('consignee'); }} />} /></Cell>
             <Cell w={75} align="right">
               <Controller control={control} name={`items.${i}.qty`} render={({ field: f }) => (
                 <RowInput numeric value={f.value ? String(f.value) : ''} onChangeText={(v) => f.onChange(v)} testID={`item-qty-${i}`} error={errors.items?.[i]?.qty?.message} dataSet={{ cell: `${i}.qty` }} />
@@ -989,6 +1062,11 @@ function DesktopBiltyForm({ canSave, editingId, embedded = false, prefixOverride
             <Cell w={70} align="right"><Controller control={control} name={`items.${i}.inc_rate`} render={({ field: f }) => <RowInput numeric value={f.value ? String(f.value) : ''} onChangeText={(v) => f.onChange(v)} dataSet={{ cell: `${i}.inc_rate` }} />} /></Cell>
             <Cell w={75} align="right"><Controller control={control} name={`items.${i}.l_rate`} render={({ field: f }) => <RowInput numeric value={f.value ? String(f.value) : ''} onChangeText={(v) => f.onChange(v)} dataSet={{ cell: `${i}.l_rate` }} />} /></Cell>
             <Cell w={75} align="right"><Controller control={control} name={`items.${i}.e_rate`} render={({ field: f }) => <RowInput numeric value={f.value ? String(f.value) : ''} onChangeText={(v) => f.onChange(v)} dataSet={{ cell: `${i}.e_rate` }} />} /></Cell>
+            <Cell w={90} align="right">
+              <Text style={styles.amountCell}>
+                {(() => { const q = toNum(watchedItems?.[i]?.qty); const r = toNum(watchedItems?.[i]?.rate); return q > 0 && r > 0 ? fmt(q * r) : '—'; })()}
+              </Text>
+            </Cell>
             <Cell w={36} align="center">
               <RemoveBtn
                 onPress={() => removeItem(i)}
@@ -1001,12 +1079,21 @@ function DesktopBiltyForm({ canSave, editingId, embedded = false, prefixOverride
 
       {/* ---- Totals preview ---- */}
       {(() => {
-        // Freight Expense = Σ(qty × l_rate) — the value saved on the bilty.
-        const expense = transportTotal(watchedItems as any);
+        const items = watchedItems as any[] ?? [];
+        // Total = Σ(qty × rate)
+        const total = items.reduce((s: number, it: any) => s + toNum(it?.qty) * toNum(it?.rate), 0);
+        // Freight = Σ(qty × l_rate) — amount saved as the Freight Journal voucher
+        const freight = transportTotal(items);
         return (
-          <View style={styles.totalsRow}>
-            <Text style={styles.totalsLabel}>Freight Expense</Text>
-            <Text style={styles.totalsValue}>{fmt(expense)}</Text>
+          <View style={styles.totalsBlock}>
+            <View style={styles.totalsRow}>
+              <Text style={styles.totalsLabel}>Total  (Rate × Qty)</Text>
+              <Text style={styles.totalsValue}>{fmt(total)}</Text>
+            </View>
+            <View style={styles.totalsRow}>
+              <Text style={styles.totalsLabel}>Freight Journal  (L-Rate × Qty)</Text>
+              <Text style={[styles.totalsValue, { color: '#2563EB' }]}>{fmt(freight)}</Text>
+            </View>
           </View>
         );
       })()}
@@ -1035,7 +1122,48 @@ function DesktopBiltyForm({ canSave, editingId, embedded = false, prefixOverride
           )}
         </View>
       </View>
-    </ScrollView>
+      </ScrollView>
+
+      <LedgerQuickCreateModal
+        visible={modalType === 'consignor' || modalType === 'consignee' || modalType === 'agent' || modalType === 'bill_to'}
+        defaultGroupName={
+          modalType === 'consignor' ? 'Consignor' :
+          modalType === 'consignee' ? 'Consignee' :
+          modalType === 'agent' ? 'Agent' : 'Consignor'
+        }
+        initialName={modalInitialName}
+        onClose={() => setModalType(null)}
+        onSuccess={handleCreateSuccess}
+      />
+
+      <DestinationQuickCreateModal
+        visible={modalType === 'from' || modalType === 'to'}
+        initialName={modalInitialName}
+        onClose={() => setModalType(null)}
+        onSuccess={handleCreateSuccess}
+      />
+
+      <BranchQuickCreateModal
+        visible={modalType === 'branch'}
+        initialName={modalInitialName}
+        onClose={() => setModalType(null)}
+        onSuccess={handleCreateSuccess}
+      />
+
+      <VehicleQuickCreateModal
+        visible={modalType === 'truck'}
+        initialName={modalInitialName}
+        onClose={() => setModalType(null)}
+        onSuccess={handleCreateSuccess}
+      />
+
+      <ItemQuickCreateModal
+        visible={modalType === 'goods_type'}
+        initialName={modalInitialName}
+        onClose={() => setModalType(null)}
+        onSuccess={handleCreateSuccess}
+      />
+    </>
   );
 }
 
@@ -1156,6 +1284,7 @@ function RowDatalist({
   dataSet,
   onSubmitNext,
   label,
+  onCreatePressed,
 }: {
   value: string;
   onChangeText: (v: string) => void;
@@ -1168,6 +1297,7 @@ function RowDatalist({
   onSubmitNext?: () => void;
   /** Field name for the "No <label> found" empty-state hint. */
   label?: string;
+  onCreatePressed?: (v: string) => void;
 }) {
   const [focused, setFocused] = useState(false);
   const [listOpen, setListOpen] = useState(false);
@@ -1193,9 +1323,11 @@ function RowDatalist({
     ? options.filter((o) => o.toLowerCase().includes(valLower))
     : [];
   const cleanLabel = (label ?? 'option').replace(/\s*\*\s*$/, '').trim();
+  const hasExactMatch = options.some((o) => o.toLowerCase() === valLower);
+  const showCreateOption = !!(onCreatePressed && valTrim.length > 0 && !hasExactMatch);
   // Show a "No <label> found" row once enough is typed with zero matches.
   const showNoResults = focused && listOpen && filtered.length === 0 && valTrim.length >= 3;
-  const showList = (focused && listOpen && filtered.length > 0) || showNoResults;
+  const showList = (focused && listOpen && (filtered.length > 0 || showCreateOption)) || showNoResults;
 
   const handleChange = (raw: string) => {
     const next = filterFn ? filterFn(raw) : raw;
@@ -1342,7 +1474,36 @@ function RowDatalist({
                 boxSizing: 'border-box',
               }}
             >
-              {filtered.length === 0 ? (
+              {showCreateOption && (
+                <div
+                  onMouseEnter={() => setHighlight(-1)}
+                  onMouseDown={(e: any) => {
+                    e.preventDefault();
+                    pressingRef.current = true;
+                    setListOpen(false);
+                    onCreatePressed!(valTrim);
+                  }}
+                  style={{
+                    height: ROW_DROPDOWN_ITEM_HEIGHT,
+                    display: 'flex',
+                    alignItems: 'center',
+                    paddingLeft: 12,
+                    paddingRight: 12,
+                    cursor: 'pointer',
+                    userSelect: 'none',
+                    background: '#F0FDF4',
+                    color: colors.primary,
+                    fontSize: 14,
+                    lineHeight: '20px',
+                    fontFamily: 'inherit',
+                    fontWeight: 700,
+                    borderBottom: '1px solid #DCFCE7',
+                  }}
+                >
+                  + Create "{valTrim}"
+                </div>
+              )}
+              {filtered.length === 0 && !showCreateOption ? (
                 <div
                   style={{
                     height: ROW_DROPDOWN_ITEM_HEIGHT,
@@ -1407,6 +1568,28 @@ function RowDatalist({
             style={{ maxHeight: ROW_DROPDOWN_ITEM_HEIGHT * ROW_DROPDOWN_VISIBLE }}
             showsVerticalScrollIndicator={filtered.length > ROW_DROPDOWN_VISIBLE}
           >
+            {showCreateOption && (
+              <Pressable
+                onPressIn={() => {
+                  pressingRef.current = true;
+                  setListOpen(false);
+                  onCreatePressed!(valTrim);
+                }}
+                style={({ pressed }) => [
+                  styles.rowDropdownItem,
+                  { backgroundColor: pressed ? '#DCFCE7' : '#F0FDF4', borderBottomWidth: 1, borderBottomColor: '#DCFCE7' }
+                ]}
+              >
+                <Text style={[styles.rowDropdownText, { color: colors.primary, fontWeight: '700' }]}>
+                  + Create "{valTrim}"
+                </Text>
+              </Pressable>
+            )}
+            {filtered.length === 0 && !showCreateOption ? (
+              <View style={[styles.rowDropdownItem, { height: ROW_DROPDOWN_ITEM_HEIGHT }]}>
+                <Text style={styles.emptyText}>No {cleanLabel} found</Text>
+              </View>
+            ) : null}
             {filtered.map((opt, i) => (
               <Pressable
                 key={opt}
@@ -1550,7 +1733,9 @@ const styles = StyleSheet.create({
   removeDisabled: { color: colors.textMuted, opacity: 0.4 },
   emptyRow: { padding: spacing.md, justifyContent: 'center' },
   emptyText: { color: colors.textMuted, fontSize: 13, lineHeight: 18, fontFamily: typography.ui },
-  totalsRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4, borderTopWidth: 1, borderTopColor: colors.border, marginTop: 4 },
+  amountCell: { fontSize: 13, fontFamily: typography.uiBold, color: '#2563EB', textAlign: 'right', paddingRight: 4 },
+  totalsBlock: { borderTopWidth: 1, borderTopColor: colors.border, marginTop: 4 },
+  totalsRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4 },
   totalsLabel: { color: colors.textMuted, fontSize: 13, lineHeight: 18, fontFamily: typography.ui },
   totalsValue: { color: colors.text, fontSize: 14, lineHeight: 19, fontFamily: typography.mono },
   formError: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.danger, borderRadius: radius.md, padding: spacing.sm, marginBottom: spacing.xs },

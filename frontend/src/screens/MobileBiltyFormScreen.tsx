@@ -32,6 +32,7 @@ import { AutocompleteField } from '../components/AutocompleteField';
 import { Modal } from '../components/Modal';
 import { ledgerMasterService } from '../services/ledgerMasterService';
 import { ledgerGroupService } from '../services/ledgerGroupService';
+import { agentService } from '../services/agentService';
 import { itemMasterService } from '../services/itemMasterService';
 import { vehicleMasterService } from '../services/vehicleMasterService';
 import { destinationService } from '../services/destinationService';
@@ -43,6 +44,13 @@ import { CreateBiltySchema } from '../../../shared/schemas/bilty.schema';
 import type { CreateBiltyInput } from '../../../shared/schemas/bilty.schema';
 import { toNum, transportTotal } from '../utils/biltyValidation';
 import { getTodayISO } from '../utils/dateUtils';
+import {
+  LedgerQuickCreateModal,
+  DestinationQuickCreateModal,
+  BranchQuickCreateModal,
+  VehicleQuickCreateModal,
+  ItemQuickCreateModal,
+} from '../components/QuickCreateMasterModals';
 
 interface Props {
   editingId: number | null;
@@ -160,6 +168,8 @@ export function MobileBiltyFormScreen({ editingId, onClose, onSaved, canSave, pr
 
   // Master data
   const [partyOptions, setPartyOptions] = useState<string[]>([]);
+  const [consignorOptions, setConsignorOptions] = useState<string[]>([]);
+  const [consigneeOptions, setConsigneeOptions] = useState<string[]>([]);
   const [agentOptions, setAgentOptions] = useState<string[]>([]);
   const [itemOptions, setItemOptions] = useState<string[]>([]);
   const [vehicleNoOptions, setVehicleNoOptions] = useState<string[]>([]);
@@ -170,22 +180,30 @@ export function MobileBiltyFormScreen({ editingId, onClose, onSaved, canSave, pr
   // truck's current owner (truckOwnerMap). Empty options ⇒ no dropdown.
   const ownerOptions: string[] = [];
 
-  useEffect(() => {
-    Promise.allSettled([
-      // Pull all ledgers for the consignor / bill-to picker; resolve the
-      // "Agent" group by name to derive agent options. Avoids hardcoded ids.
-      Promise.all([
-        ledgerGroupService.list(),
-        ledgerMasterService.list(null),
-      ]).then(([groups, ledgers]) => {
-        setPartyOptions(ledgers.map((r) => r.name).sort());
-        const agentGroupId =
-          groups.find((g) => g.group_name.toLowerCase() === 'agent')?.id ?? null;
-        const agents = agentGroupId != null
-          ? ledgers.filter((r) => r.ledger_group_id === agentGroupId)
-          : [];
-        setAgentOptions(agents.map((r) => r.name).sort());
+  // State to manage quick create modals
+  const [modalType, setModalType] = useState<'consignor' | 'consignee' | 'agent' | 'bill_to' | 'from' | 'to' | 'truck' | 'goods_type' | 'branch' | null>(null);
+  const [modalInitialName, setModalInitialName] = useState('');
+  const [currentEditingItemIdx, setCurrentEditingItemIdx] = useState<number | null>(null);
+  const [currentEditingItemCol, setCurrentEditingItemCol] = useState<'from_loc' | 'to_loc' | 'consignee' | null>(null);
+
+  const refreshAllOptions = React.useCallback(() => {
+    return Promise.allSettled([
+      Promise.all([ledgerGroupService.list(), ledgerMasterService.list(null)]).then(([groups, ledgers]) => {
+        const consignorGroupId =
+          groups.find((g: any) => g.group_name.toLowerCase() === 'consignor')?.id ?? null;
+        const consigneeGroupId =
+          groups.find((g: any) => g.group_name.toLowerCase() === 'consignee')?.id ?? null;
+        const consignors = consignorGroupId != null
+          ? ledgers.filter((r: any) => r.ledger_group_id === consignorGroupId)
+          : ledgers;
+        const consignees = consigneeGroupId != null
+          ? ledgers.filter((r: any) => r.ledger_group_id === consigneeGroupId)
+          : ledgers;
+        setPartyOptions([...new Set([...consignors, ...consignees].map((r: any) => r.name))].sort());
+        setConsignorOptions(consignors.map((r: any) => r.name).sort());
+        setConsigneeOptions(consignees.map((r: any) => r.name).sort());
       }),
+      agentService.list().then((rs) => setAgentOptions(rs.map((r: any) => r.name).sort())),
       itemMasterService.list().then((rs) => setItemOptions(rs.map((r) => r.name).sort())),
       vehicleMasterService.list().then((rs) => {
         setVehicleNoOptions(rs.map((r) => r.name).sort());
@@ -204,6 +222,35 @@ export function MobileBiltyFormScreen({ editingId, onClose, onSaved, canSave, pr
       ),
     ]);
   }, []);
+
+  useEffect(() => {
+    refreshAllOptions();
+  }, [refreshAllOptions]);
+
+  const handleCreateSuccess = async (createdName: string) => {
+    await refreshAllOptions();
+    
+    if (modalType === 'consignor') {
+      setValue('header.consignor', createdName, { shouldDirty: true });
+    } else if (modalType === 'bill_to') {
+      setValue('header.bill_to', createdName, { shouldDirty: true });
+    } else if (modalType === 'agent') {
+      setValue('header.agent_name', createdName, { shouldDirty: true });
+    } else if (modalType === 'truck') {
+      setValue('header.truck_no', createdName, { shouldDirty: true });
+    } else if (modalType === 'goods_type') {
+      setValue('header.goods_type', createdName, { shouldDirty: true });
+    } else if (modalType === 'branch') {
+      setValue('header.branch', createdName, { shouldDirty: true });
+    } else if (currentEditingItemIdx !== null && currentEditingItemCol !== null) {
+      setValue(`items.${currentEditingItemIdx}.${currentEditingItemCol}` as any, createdName, { shouldDirty: true });
+    }
+
+    setModalType(null);
+    setModalInitialName('');
+    setCurrentEditingItemIdx(null);
+    setCurrentEditingItemCol(null);
+  };
 
   const {
     control,
@@ -385,7 +432,8 @@ export function MobileBiltyFormScreen({ editingId, onClose, onSaved, canSave, pr
   };
 
   return (
-    <View style={styles.shell}>
+    <>
+      <View style={styles.shell}>
       {/* Top bar */}
       <View style={styles.topBar}>
         <Pressable onPress={onClose} hitSlop={8} style={styles.closeBtn} accessibilityLabel="Close">
@@ -432,7 +480,7 @@ export function MobileBiltyFormScreen({ editingId, onClose, onSaved, canSave, pr
           <Step1Details
             control={control}
             errors={errors}
-            consignorOptions={partyOptions}
+            consignorOptions={consignorOptions.length > 0 ? consignorOptions : partyOptions}
             agentOptions={agentOptions}
             itemOptions={itemOptions}
             vehicleNoOptions={vehicleNoOptions}
@@ -443,6 +491,8 @@ export function MobileBiltyFormScreen({ editingId, onClose, onSaved, canSave, pr
             getValues={getValues}
             onLastField={() => goNext()}
             ownerOptions={ownerOptions}
+            setModalType={setModalType}
+            setModalInitialName={setModalInitialName}
           />
         ) : null}
 
@@ -453,8 +503,13 @@ export function MobileBiltyFormScreen({ editingId, onClose, onSaved, canSave, pr
             itemArr={itemArr}
             getValues={getValues}
             setValue={setValue}
-            consignorOptions={partyOptions}
+            consignorOptions={consignorOptions.length > 0 ? consignorOptions : partyOptions}
+            consigneeOptions={consigneeOptions.length > 0 ? consigneeOptions : partyOptions}
             destinationOptions={destinationOptions}
+            setModalType={setModalType}
+            setModalInitialName={setModalInitialName}
+            setCurrentEditingItemIdx={setCurrentEditingItemIdx}
+            setCurrentEditingItemCol={setCurrentEditingItemCol}
           />
         ) : null}
 
@@ -514,6 +569,47 @@ export function MobileBiltyFormScreen({ editingId, onClose, onSaved, canSave, pr
         ) : null}
       </View>
     </View>
+
+    <LedgerQuickCreateModal
+      visible={modalType === 'consignor' || modalType === 'consignee' || modalType === 'agent' || modalType === 'bill_to'}
+      defaultGroupName={
+        modalType === 'consignor' ? 'Consignor' :
+        modalType === 'consignee' ? 'Consignee' :
+        modalType === 'agent' ? 'Agent' : 'Consignor'
+      }
+      initialName={modalInitialName}
+      onClose={() => setModalType(null)}
+      onSuccess={handleCreateSuccess}
+    />
+
+    <DestinationQuickCreateModal
+      visible={modalType === 'from' || modalType === 'to'}
+      initialName={modalInitialName}
+      onClose={() => setModalType(null)}
+      onSuccess={handleCreateSuccess}
+    />
+
+    <BranchQuickCreateModal
+      visible={modalType === 'branch'}
+      initialName={modalInitialName}
+      onClose={() => setModalType(null)}
+      onSuccess={handleCreateSuccess}
+    />
+
+    <VehicleQuickCreateModal
+      visible={modalType === 'truck'}
+      initialName={modalInitialName}
+      onClose={() => setModalType(null)}
+      onSuccess={handleCreateSuccess}
+    />
+
+    <ItemQuickCreateModal
+      visible={modalType === 'goods_type'}
+      initialName={modalInitialName}
+      onClose={() => setModalType(null)}
+      onSuccess={handleCreateSuccess}
+    />
+  </>
   );
 }
 
@@ -532,6 +628,8 @@ function Step1Details({
   getValues,
   onLastField,
   ownerOptions,
+  setModalType,
+  setModalInitialName,
 }: {
   control: any;
   errors: any;
@@ -546,6 +644,8 @@ function Step1Details({
   getValues: any;
   onLastField?: () => void;
   ownerOptions: string[];
+  setModalType: (type: any) => void;
+  setModalInitialName: (name: string) => void;
 }) {
   // Guided entry (mobile-web): Enter/Tab walks field-by-field, each gated.
   // Dropdowns force a listed pick; free-text (Bilty No / Zone / GST / Owner)
@@ -623,7 +723,7 @@ function Step1Details({
               control={control}
               name="header.branch"
               render={({ field: { value, onChange } }) => (
-                <AutocompleteField ref={setMobRef('branch')} compact label="Branch" value={value ?? ''} options={branchOptions} onChangeText={onChange} placeholder="" onSubmitNext={() => focusMobNext('branch')} />
+                <AutocompleteField ref={setMobRef('branch')} compact label="Branch" value={value ?? ''} options={branchOptions} onChangeText={onChange} placeholder="" onSubmitNext={() => focusMobNext('branch')} onCreatePressed={(typedVal) => { setModalType('branch'); setModalInitialName(typedVal); }} />
               )}
             />
           </View>
@@ -646,6 +746,7 @@ function Step1Details({
                   placeholder=""
                   error={errors.header?.consignor?.message ?? null}
                   onSubmitNext={() => focusMobNext('consignor')}
+                  onCreatePressed={(typedVal) => { setModalType('consignor'); setModalInitialName(typedVal); }}
                 />
               )}
             />
@@ -668,6 +769,7 @@ function Step1Details({
                   onChangeText={onChange}
                   placeholder=""
                   onSubmitNext={() => focusMobNext('bill_to')}
+                  onCreatePressed={(typedVal) => { setModalType('bill_to'); setModalInitialName(typedVal); }}
                 />
               )}
             />
@@ -691,6 +793,7 @@ function Step1Details({
                   error={errors.header?.truck_no?.message ?? null}
                   placeholder=""
                   onSubmitNext={() => focusMobNext('truck_no')}
+                  onCreatePressed={(typedVal) => { setModalType('truck'); setModalInitialName(typedVal); }}
                 />
               )}
             />
@@ -710,6 +813,7 @@ function Step1Details({
                   placeholder=""
                   error={errors.header?.goods_type?.message ?? null}
                   onSubmitNext={() => focusMobNext('goods_type')}
+                  onCreatePressed={(typedVal) => { setModalType('goods_type'); setModalInitialName(typedVal); }}
                 />
               )}
             />
@@ -755,7 +859,7 @@ function Step1Details({
               control={control}
               name="header.agent_name"
               render={({ field: { value, onChange } }) => (
-                <AutocompleteField ref={setMobRef('agent_name')} compact label="Agent Name" value={value ?? ''} options={agentOptions} onChangeText={onChange} placeholder="" onSubmitNext={() => focusMobNext('agent_name')} />
+                <AutocompleteField ref={setMobRef('agent_name')} compact label="Agent Name" value={value ?? ''} options={agentOptions} onChangeText={onChange} placeholder="" onSubmitNext={() => focusMobNext('agent_name')} onCreatePressed={(typedVal) => { setModalType('agent'); setModalInitialName(typedVal); }} />
               )}
             />
           </View>
@@ -778,7 +882,12 @@ export function Step2Items({
   getValues,
   setValue,
   consignorOptions = [],
+  consigneeOptions = [],
   destinationOptions = [],
+  setModalType,
+  setModalInitialName,
+  setCurrentEditingItemIdx,
+  setCurrentEditingItemCol,
 }: {
   control: any;
   errors: any;
@@ -786,7 +895,12 @@ export function Step2Items({
   getValues: any;
   setValue: any;
   consignorOptions?: string[];
+  consigneeOptions?: string[];
   destinationOptions?: string[];
+  setModalType: (type: any) => void;
+  setModalInitialName: (name: string) => void;
+  setCurrentEditingItemIdx: (idx: number | null) => void;
+  setCurrentEditingItemCol: (col: any) => void;
 }) {
   const { fields, append, remove } = itemArr;
   const [modalIndex, setModalIndex] = useState<number | null>(null);
@@ -919,8 +1033,13 @@ export function Step2Items({
               onSave={handleSave}
               onCancel={handleCancel}
               consignorOptions={consignorOptions}
+              consigneeOptions={consigneeOptions}
               destinationOptions={destinationOptions}
               getValues={getValues}
+              setModalType={setModalType}
+              setModalInitialName={setModalInitialName}
+              setCurrentEditingItemIdx={setCurrentEditingItemIdx}
+              setCurrentEditingItemCol={setCurrentEditingItemCol}
             />
           )
         ) : null}
@@ -1076,8 +1195,13 @@ function ItemFormFields({
   onSave,
   onCancel,
   consignorOptions = [],
+  consigneeOptions = [],
   destinationOptions = [],
   getValues,
+  setModalType,
+  setModalInitialName,
+  setCurrentEditingItemIdx,
+  setCurrentEditingItemCol,
 }: {
   control: any;
   errors: any;
@@ -1085,8 +1209,13 @@ function ItemFormFields({
   onSave: () => void;
   onCancel: () => void;
   consignorOptions?: string[];
+  consigneeOptions?: string[];
   destinationOptions?: string[];
   getValues: any;
+  setModalType: (type: any) => void;
+  setModalInitialName: (name: string) => void;
+  setCurrentEditingItemIdx: (idx: number | null) => void;
+  setCurrentEditingItemCol: (col: any) => void;
 }) {
   // Guided entry inside the item modal. Every field is gated: Challan → … →
   // Shipment → Save. Dropdowns (From/To/Consignee) force a listed pick; numeric
@@ -1100,7 +1229,7 @@ function ItemFormFields({
     const v = getValues(`items.${i}.${col}`);
     if (MODAL_NUM.has(col)) return Number(v) > 0;
     if (MODAL_DL.has(col)) {
-      const opts = col === 'consignee' ? consignorOptions : destinationOptions;
+      const opts = col === 'consignee' ? consigneeOptions : destinationOptions;
       return !!v && opts.some((o) => o.toLowerCase() === String(v).trim().toLowerCase());
     }
     return String(v ?? '').trim() !== '';
@@ -1164,6 +1293,12 @@ function ItemFormFields({
               onChangeText={f.onChange}
               placeholder=""
               onSubmitNext={() => advanceModal('from_loc')}
+              onCreatePressed={(typedVal) => {
+                setModalType('from');
+                setModalInitialName(typedVal);
+                setCurrentEditingItemIdx(i);
+                setCurrentEditingItemCol('from_loc');
+              }}
             />
           )} />
         </View>
@@ -1178,6 +1313,12 @@ function ItemFormFields({
               onChangeText={f.onChange}
               placeholder=""
               onSubmitNext={() => advanceModal('to_loc')}
+              onCreatePressed={(typedVal) => {
+                setModalType('to');
+                setModalInitialName(typedVal);
+                setCurrentEditingItemIdx(i);
+                setCurrentEditingItemCol('to_loc');
+              }}
             />
           )} />
         </View>
@@ -1192,10 +1333,16 @@ function ItemFormFields({
               compact
               label="CONSIGNEE"
               value={String(f.value ?? '')}
-              options={consignorOptions}
+              options={consigneeOptions.length > 0 ? consigneeOptions : consignorOptions}
               onChangeText={f.onChange}
               placeholder=""
               onSubmitNext={() => advanceModal('consignee')}
+              onCreatePressed={(typedVal) => {
+                setModalType('consignee');
+                setModalInitialName(typedVal);
+                setCurrentEditingItemIdx(i);
+                setCurrentEditingItemCol('consignee');
+              }}
             />
           )} />
         </View>
@@ -1455,7 +1602,7 @@ function PreviewView({
 
         <View style={styles.totalsBox}>
           <View style={styles.gridRow}>
-            <Cell label="Freight Expense" value={fmt(expense)} num bold />
+            <Cell label="Freight Journal" value={fmt(expense)} num bold />
           </View>
         </View>
       </View>

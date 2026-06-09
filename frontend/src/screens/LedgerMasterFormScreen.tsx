@@ -82,11 +82,16 @@ interface Props {
    * aren't relevant. Defaults to true.
    */
   showAccountingFields?: boolean;
+  /**
+   * Optional whitelist of ledger group names to show on this page.
+   * When set, rows and the create dropdown are limited to those groups.
+   */
+  allowedGroupNames?: string[];
 }
 
 export function LedgerMasterFormScreen({
   groupName, title, entityName, lockGroup = false, permissionPage = 'ledgermaster',
-  showAccountingFields = true,
+  showAccountingFields = true, allowedGroupNames,
 }: Props) {
   const { user } = useAuth();
   const [rows, setRows] = useState<LedgerMasterItem[] | null>(null);
@@ -116,6 +121,15 @@ export function LedgerMasterFormScreen({
     const target = groupName.toLowerCase();
     return groups.find((g) => g.group_name.toLowerCase() === target)?.id ?? null;
   }, [groupName, groups]);
+
+  const allowedGroupIds = useMemo<number[] | null>(() => {
+    if (!allowedGroupNames || allowedGroupNames.length === 0) return null;
+    if (groups.length === 0) return [];
+    const wanted = new Set(allowedGroupNames.map((name) => name.toLowerCase()));
+    return groups
+      .filter((g) => wanted.has(g.group_name.toLowerCase()))
+      .map((g) => g.id);
+  }, [allowedGroupNames, groups]);
 
   // For the all-groups view: dynamically resolve every dedicated page name
   // to its current numeric id so those rows are excluded from the list.
@@ -147,12 +161,16 @@ export function LedgerMasterFormScreen({
         resolvedType != null
           ? await ledgerMasterService.list(resolvedType)
           : await ledgerMasterService.list(null, { excludeTypes: excludeIds });
-      setRows(list);
+      setRows(
+        allowedGroupIds != null
+          ? list.filter((row) => allowedGroupIds.includes(row.ledger_group_id ?? -1))
+          : list
+      );
     } catch {
       setListError(`Could not load ${title.toLowerCase()}.`);
       setRows([]);
     }
-  }, [groups.length, groupName, resolvedType, excludeIds, title]);
+  }, [groups.length, groupName, resolvedType, excludeIds, title, allowedGroupIds]);
 
   useAutoRefresh(load);
 
@@ -161,6 +179,7 @@ export function LedgerMasterFormScreen({
     // resolved group id. For the unified Ledger Master view (groupName=null)
     // we default to Sundry Debtors — the user can switch group via the dropdown.
     const defaultGroupId =
+      (allowedGroupIds != null && allowedGroupIds.length > 0 ? allowedGroupIds[0] : null) ||
       (resolvedType ?? null) ||
       groups.find((g) => g.group_name.toLowerCase() === 'sundry debtors')?.id ||
       0;
@@ -169,7 +188,7 @@ export function LedgerMasterFormScreen({
     setErrs({});
     setFormError(null);
     setModalOpen(true);
-  }, [resolvedType, groups]);
+  }, [resolvedType, groups, allowedGroupIds]);
 
   const openEdit = useCallback((row: LedgerMasterItem) => {
     setEditTarget(row);
@@ -388,7 +407,11 @@ export function LedgerMasterFormScreen({
                 <SelectDropdown
                   label="Ledger Group *"
                   value={groups.find((g) => g.id === form.ledger_group_id)?.group_name ?? ''}
-                  options={groups.map((g) => g.group_name)}
+                  options={(
+                    allowedGroupIds != null
+                      ? groups.filter((g) => allowedGroupIds.includes(g.id))
+                      : groups
+                  ).map((g) => g.group_name)}
                   onSelect={(name) => {
                     const picked = groups.find((g) => g.group_name === name);
                     if (picked) setForm((f) => ({ ...f, ledger_group_id: picked.id }));

@@ -190,13 +190,13 @@ describe('users — POST /api/users (create)', () => {
     userModel.findByUsername.mockResolvedValueOnce(null); // username free
     userModel.create.mockResolvedValueOnce(42);
     userModel.findById.mockResolvedValueOnce(
-      sanitizedRow({ id: 42, username: 'newbie', role: 'staff', permissions: ['bilty.read'] })
+      sanitizedRow({ id: 42, username: 'newbie', role: 'staff', permissions: ['bilty.view'] })
     );
 
     const res = await request(app)
       .post('/api/users')
       .set('Authorization', `Bearer ${token}`)
-      .send({ username: 'newbie', password: 'supersecret', role: 'staff', permissions: ['bilty.read'] });
+      .send({ username: 'newbie', password: 'supersecret', role: 'staff', permissions: ['bilty.view'] });
 
     expect(res.status).toBe(201);
     expect(res.body).toEqual(expect.objectContaining({ id: 42, username: 'newbie', role: 'staff' }));
@@ -255,7 +255,7 @@ describe('users — POST /api/users (create)', () => {
     const res = await request(app)
       .post('/api/users')
       .set('Authorization', `Bearer ${token}`)
-      .send({ username: 'newbie', password: 'supersecret', role: 'staff', permissions: ['bilty.read', 'totally.fake'] });
+      .send({ username: 'newbie', password: 'supersecret', role: 'staff', permissions: ['bilty.view', 'totally.fake'] });
     expect(res.status).toBe(400);
     expect(res.body).toEqual({ error: 'invalid_permissions' });
   });
@@ -343,7 +343,7 @@ describe('users — PATCH /api/users/:id (update)', () => {
     const res = await request(app)
       .patch('/api/users/5')
       .set('Authorization', `Bearer ${token}`)
-      .send({ permissions: ['bilty.read', 'rogue.perm'] });
+      .send({ permissions: ['bilty.view', 'rogue.perm'] });
 
     expect(res.status).toBe(400);
     expect(res.body).toEqual({ error: 'invalid_permissions' });
@@ -375,9 +375,9 @@ describe('users — POST /api/users/:id/deactivate', () => {
   test('200 flips is_active to 0 and returns sanitized row', async () => {
     const { token } = adminAuth();
     userModel.setActive.mockResolvedValueOnce(true);
-    userModel.findById.mockResolvedValueOnce(
-      sanitizedRow({ id: 5, username: 'target', role: 'staff', is_active: 0 })
-    );
+    userModel.findById
+      .mockResolvedValueOnce(sanitizedRow({ id: 5, username: 'target', role: 'staff', is_active: 1 }))
+      .mockResolvedValueOnce(sanitizedRow({ id: 5, username: 'target', role: 'staff', is_active: 0 }));
 
     const res = await request(app)
       .post('/api/users/5/deactivate')
@@ -411,7 +411,7 @@ describe('users — POST /api/users/:id/activate', () => {
         id: 5,
         username: 'target',
         role: 'staff',
-        permissions: ['bilty.read', 'freight.read'],
+        permissions: ['bilty.view', 'freight.view'],
         is_active: 1,
       })
     );
@@ -423,7 +423,7 @@ describe('users — POST /api/users/:id/activate', () => {
     expect(res.status).toBe(200);
     expect(res.body.is_active).toBe(true);
     // Permissions preserved through deactivate → activate round trip.
-    expect(res.body.permissions).toEqual(['bilty.read', 'freight.read']);
+    expect(res.body.permissions).toEqual(['bilty.view', 'freight.view']);
     assertNoPasswordHash(res.body);
     expect(userModel.setActive).toHaveBeenCalledWith(5, true);
   });
@@ -433,7 +433,7 @@ describe('users — POST /api/users/:id/activate', () => {
     // setActive still returns affectedRows > 0 since UPDATE runs unconditionally.
     userModel.setActive.mockResolvedValueOnce(true);
     userModel.findById.mockResolvedValueOnce(
-      sanitizedRow({ id: 5, username: 'target', role: 'staff', permissions: ['bilty.read'], is_active: 1 })
+      sanitizedRow({ id: 5, username: 'target', role: 'staff', permissions: ['bilty.view'], is_active: 1 })
     );
 
     const res = await request(app)

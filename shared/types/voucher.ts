@@ -158,6 +158,10 @@ export interface VoucherDetail extends VoucherListItem {
   bilty_mode?: number | null;
   /** Bilty selected in Advance/Fuel mode (restores the Bilty No on edit). */
   bilty_id?: number | null;
+  /** For child vouchers (e.g. Freight Journal) → the source bilty's vch id. */
+  parent_vch_id?: number | null;
+  /** The parent bilty's vch_no — populated when parent_vch_id is set. */
+  parent_bilty_no?: string | null;
   ledgerEntries: VoucherLedgerEntry[];
   billAllocations: VoucherBillAllocation[];
 }

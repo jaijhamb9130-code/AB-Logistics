@@ -41,7 +41,9 @@ export const typography = {
 } as const;
 
 const isWeb = Platform.OS === 'web';
-const bump = (mobile: number, webBump = 3) => (isWeb ? mobile + webBump : mobile);
+// Minimal web bump — Inter at native sizes already reads well on screen.
+// Keep bump small so web doesn't feel disproportionately larger than mobile.
+const bump = (mobile: number, webBump = 1) => (isWeb ? mobile + webBump : mobile);
 
 /**
  * Typography presets — use these via `...text.heading` / `...text.label`
@@ -52,64 +54,64 @@ const bump = (mobile: number, webBump = 3) => (isWeb ? mobile + webBump : mobile
 export const text = {
   heading: {
     fontFamily: typography.uiHeavy,
-    fontSize: bump(20),
+    fontSize: bump(18),
     fontWeight: '700',
-    letterSpacing: 0.3,
+    letterSpacing: -0.3,
     color: colors.text,
-    lineHeight: bump(20) * 1.3,
+    lineHeight: bump(18) * 1.3,
   },
   subheading: {
     fontFamily: typography.uiBold,
-    fontSize: bump(16),
+    fontSize: bump(14),
     fontWeight: '600',
-    letterSpacing: 0.2,
+    letterSpacing: -0.1,
     color: colors.text,
-    lineHeight: bump(16) * 1.4,
+    lineHeight: bump(14) * 1.4,
   },
   label: {
     fontFamily: typography.uiBold,
-    fontSize: bump(13),
+    fontSize: bump(12),
     fontWeight: '600',
     color: colors.textLabel,
-    lineHeight: bump(13) * 1.4,
+    lineHeight: bump(12) * 1.4,
   },
   value: {
     fontFamily: typography.uiMedium,
-    fontSize: bump(15),
+    fontSize: bump(13),
     fontWeight: '500',
     color: colors.textStrong,
-    lineHeight: bump(15) * 1.45,
+    lineHeight: bump(13) * 1.5,
   },
   valueStrong: {
     fontFamily: typography.uiBold,
-    fontSize: bump(16),
+    fontSize: bump(14),
     fontWeight: '600',
     color: colors.textStrong,
-    lineHeight: bump(16) * 1.4,
+    lineHeight: bump(14) * 1.4,
   },
   meta: {
     fontFamily: typography.uiMedium,
-    fontSize: bump(13, 2),
+    fontSize: bump(12),
     fontWeight: '500',
     color: colors.textMuted,
-    lineHeight: bump(13, 2) * 1.4,
+    lineHeight: bump(12) * 1.4,
   },
   pill: {
     fontFamily: typography.uiBold,
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '600',
-    letterSpacing: 0.2,
-    lineHeight: 18,
+    letterSpacing: 0.1,
+    lineHeight: 16,
   },
   action: {
     fontFamily: typography.uiBold,
-    fontSize: bump(14, 2),
+    fontSize: bump(13),
     fontWeight: '600',
-    letterSpacing: 0.2,
+    letterSpacing: 0,
   },
   numeric: {
     fontFamily: typography.mono,
-    fontSize: bump(15),
+    fontSize: bump(13),
     fontWeight: '500',
     color: colors.textStrong,
   },

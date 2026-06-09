@@ -161,6 +161,9 @@ export function VehicleMasterScreen() {
     } catch (err: any) {
       const code = err?.response?.data?.error;
       if (code === 'name_taken') setFormError('A vehicle with that number already exists.');
+      else if (code === 'invalid_pan') setFormError('Invalid PAN number (format: AAAAA0000A).');
+      else if (code === 'invalid_mobile') setFormError('Invalid mobile number (must be 10 digits).');
+      else if (code === 'invalid_gst') setFormError('Invalid GST number (format: 22AAAAA0000A1Z5).');
       else setFormError('Could not save vehicle. Try again.');
     } finally {
       setSaving(false);

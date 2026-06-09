@@ -25,9 +25,17 @@ jest.mock('../src/models/biltyModel', () => ({
   findById: jest.fn(),
 }));
 
+const mockConn = {
+  execute: jest.fn(),
+  beginTransaction: jest.fn(async () => {}),
+  commit: jest.fn(async () => {}),
+  rollback: jest.fn(async () => {}),
+  release: jest.fn(() => {}),
+};
+
 jest.mock('../src/db/pool', () => ({
   execute: jest.fn(),
-  getConnection: jest.fn(),
+  getConnection: jest.fn(async () => mockConn),
   end: jest.fn(),
 }));
 
@@ -74,12 +82,12 @@ function adminAuth() {
   return signAccessToken({ id: row.id, role: row.role });
 }
 
-function staffWithBiltyReadAuth() {
+function staffWithBiltyViewAuth() {
   const row = userRow({
     id: 2,
     username: 'joe',
     role: 'staff',
-    permissions: ['bilty.read'],
+    permissions: ['bilty.view'],
   });
   userModel.findById.mockResolvedValueOnce(row);
   return signAccessToken({ id: row.id, role: row.role });
@@ -93,6 +101,7 @@ function staffNoBiltyAuth() {
 
 const VALID_BODY = {
   header: {
+    bilty_no: 'BL-000001',
     bilty_date: '2026-04-18',
     consignor: 'Acme Corp',
     owner_name: 'John',
@@ -117,8 +126,8 @@ describe('bilty — auth + permission gates', () => {
     expect(res.status).toBe(401);
   });
 
-  test('POST /api/bilty without bilty.edit → 403 forbidden', async () => {
-    const token = staffWithBiltyReadAuth(); // has read, not edit
+  test('POST /api/bilty without bilty.create → 403 forbidden', async () => {
+    const token = staffWithBiltyViewAuth(); // has view, not create
     const res = await request(app)
       .post('/api/bilty')
       .set('Authorization', `Bearer ${token}`)
@@ -128,7 +137,7 @@ describe('bilty — auth + permission gates', () => {
     expect(biltyModel.createWithChildren).not.toHaveBeenCalled();
   });
 
-  test('GET /api/bilty without bilty.read → 403 forbidden', async () => {
+  test('GET /api/bilty without bilty.view → 403 forbidden', async () => {
     const token = staffNoBiltyAuth();
     const res = await request(app)
       .get('/api/bilty')
@@ -167,7 +176,7 @@ describe('bilty — POST /api/bilty (create)', () => {
       .set('Authorization', `Bearer ${token}`)
       .send({ ...VALID_BODY, header: { ...VALID_BODY.header, consignor: '' } });
     expect(res.status).toBe(400);
-    expect(res.body).toEqual({ error: 'invalid_consignor' });
+    expect(res.body.error.fields['header.consignor']).toBeDefined();
     expect(biltyModel.createWithChildren).not.toHaveBeenCalled();
   });
 
@@ -178,7 +187,7 @@ describe('bilty — POST /api/bilty (create)', () => {
       .set('Authorization', `Bearer ${token}`)
       .send({ ...VALID_BODY, header: { ...VALID_BODY.header, truck_no: '' } });
     expect(res.status).toBe(400);
-    expect(res.body).toEqual({ error: 'invalid_truck_no' });
+    expect(res.body.error.fields['header.truck_no']).toBeDefined();
   });
 
   test('400 no_items when items array empty', async () => {
@@ -188,20 +197,20 @@ describe('bilty — POST /api/bilty (create)', () => {
       .set('Authorization', `Bearer ${token}`)
       .send({ ...VALID_BODY, items: [] });
     expect(res.status).toBe(400);
-    expect(res.body).toEqual({ error: 'no_items' });
+    expect(res.body.error.fields.items).toBeDefined();
   });
 
-  test('400 invalid_item_qty when an item has qty=0', async () => {
+  test('400 invalid_item_qty when an item has negative qty', async () => {
     const token = adminAuth();
     const res = await request(app)
       .post('/api/bilty')
       .set('Authorization', `Bearer ${token}`)
       .send({
         ...VALID_BODY,
-        items: [{ qty: 0, rate: 100 }],
+        items: [{ ...VALID_BODY.items[0], qty: -1 }],
       });
     expect(res.status).toBe(400);
-    expect(res.body).toEqual({ error: 'invalid_item_qty' });
+    expect(res.body.error.fields['items.0.qty']).toBe('qty cannot be negative');
   });
 });
 
@@ -250,7 +259,7 @@ describe('bilty — GET /api/bilty/:id', () => {
       .get('/api/bilty/999')
       .set('Authorization', `Bearer ${token}`);
     expect(res.status).toBe(404);
-    expect(res.body).toEqual({ error: 'bilty_not_found' });
+    expect(res.body.error.message).toBe('Bilty not found');
   });
 
   test('400 invalid_id on non-numeric :id', async () => {
@@ -259,6 +268,6 @@ describe('bilty — GET /api/bilty/:id', () => {
       .get('/api/bilty/abc')
       .set('Authorization', `Bearer ${token}`);
     expect(res.status).toBe(400);
-    expect(res.body).toEqual({ error: 'invalid_id' });
+    expect(res.body.error.message).toBe('Invalid id');
   });
 });

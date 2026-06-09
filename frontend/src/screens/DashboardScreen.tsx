@@ -199,14 +199,6 @@ export function DashboardScreen() {
             testID="stat-bilties"
           />
           <StatCard
-            label="Freight Memos"
-            value={summary?.freight_memos ?? 0}
-            visible={perms.freight}
-            accent={colors.brandRed}
-            onPress={() => navigation.navigate('Freight')}
-            testID="stat-freight"
-          />
-          <StatCard
             label="Daybook"
             value={summary?.bilties ?? 0}
             visible={perms.daybook}

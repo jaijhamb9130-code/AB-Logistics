@@ -17,23 +17,42 @@ import { useFocusEffect } from '@react-navigation/native';
  * @param intervalMs  poll interval in milliseconds; default 15s
  */
 export function useAutoRefresh(load: () => void | Promise<void>, intervalMs = 15000) {
-  // 1) Mount-time fetch.
-  useEffect(() => {
+  const run = useCallback(() => {
     load();
   }, [load]);
+
+  // 1) Mount-time fetch.
+  useEffect(() => {
+    run();
+  }, [run]);
 
   // 2) Re-fetch on screen focus (covers tab switches inside the app).
   useFocusEffect(
     useCallback(() => {
-      load();
-    }, [load])
+      run();
+    }, [run])
   );
+
+  // 2b) Web: refetch when the browser tab/window becomes active again.
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const onFocus = () => run();
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') run();
+    };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [run]);
 
   // 3) Periodic background poll.
   useEffect(() => {
     const id = setInterval(() => {
-      load();
+      run();
     }, intervalMs);
     return () => clearInterval(id);
-  }, [load, intervalMs]);
+  }, [run, intervalMs]);
 }

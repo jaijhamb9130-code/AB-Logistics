@@ -10,8 +10,8 @@ describe('canAccessTab', () => {
     expect(canAccessTab('Dashboard', { role: 'admin' })).toBe(true);
   });
 
-  test('staff can access Dashboard', () => {
-    expect(canAccessTab('Dashboard', { role: 'staff' })).toBe(true);
+  test('staff CANNOT access Dashboard', () => {
+    expect(canAccessTab('Dashboard', { role: 'staff' })).toBe(false);
   });
 
   test('admin can access Users', () => {

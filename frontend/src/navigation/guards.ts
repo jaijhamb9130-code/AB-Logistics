@@ -50,9 +50,9 @@ const ADMIN_ONLY_TABS: TabName[] = ['Dashboard'];
  */
 const TAB_TO_PAGE: Partial<Record<TabName, PermissionPage>> = {
   Bilty: 'bilty',
-  Freight: 'freight',
   // Billing tab handled specially below — visible if user has any voucher.*
   // perm OR daybook.view (so daybook-only users can still reach the daybook).
+  Reports: 'voucher',
   LedgerMaster: 'ledgermaster',
   Customers: 'customermaster',
   OtherLedgers: 'ledgermaster', // Other ledgers sharing the general ledger master perm
@@ -155,8 +155,7 @@ export function pickInitialTab(
   // there at startup).
   if (hasPerm(user, 'bilty.view')) return 'Bilty';
 
-  // 3. Freight, then Billing (Daybook for voucher-only users).
-  if (canAccessTab('Freight', user)) return 'Freight';
+  // 3. Billing (Daybook for voucher-only users).
   if (canAccessTab('Billing', user)) return 'Billing';
 
   return undefined;

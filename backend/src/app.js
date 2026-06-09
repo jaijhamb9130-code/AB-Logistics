@@ -10,7 +10,6 @@ const env = require('./config/env');
 const authRouter = require('./routes/auth');
 const usersRouter = require('./routes/users');
 const biltyRouter = require('./routes/bilty');
-const freightRouter = require('./routes/freight');
 const reportsRouter = require('./routes/reports');
 const ledgerMasterRouter = require('./routes/ledgerMaster');
 const itemMasterRouter = require('./routes/itemMaster');
@@ -66,7 +65,6 @@ const v1 = express.Router();
 v1.use('/auth', authRouter);
 v1.use('/users', usersRouter);
 v1.use('/bilty', biltyRouter);
-v1.use('/freight', freightRouter);
 v1.use('/reports', reportsRouter);
 v1.use('/ledger-master', ledgerMasterRouter);
 v1.use('/item-master', itemMasterRouter);
@@ -118,9 +116,6 @@ app.use((err, req, res, _next) => {
   if (err && err.code === 'bilty_not_found') {
     return res.status(404).json({ success: false, error: { type: 'NOT_FOUND', message: 'Bilty not found' } });
   }
-  if (err && err.code === 'memo_not_found') {
-    return res.status(404).json({ success: false, error: { type: 'NOT_FOUND', message: 'Freight memo not found' } });
-  }
   if (err && err.name === 'ZodError') {
     return res.status(400).json({ success: false, error: { type: 'VALIDATION_ERROR', message: 'Validation failed', fields: err.flatten().fieldErrors } });
   }
@@ -138,6 +133,9 @@ app.use((err, req, res, _next) => {
       truck_not_found: ['header.truck_no', 'Truck No is not a known vehicle.'],
       goods_type_required: ['header.goods_type', 'Goods Type is required when the bilty has items.'],
       goods_type_not_found: ['header.goods_type', 'Goods Type is not a known item.'],
+      items_required: [null, 'At least one item is required.'],
+      item_qty_required: [null, `Item ${(err.itemIndex ?? 0) + 1}: QTY must be greater than 0.`],
+      item_lrate_required: [null, `Item ${(err.itemIndex ?? 0) + 1}: L-Rate must be greater than 0 (required for Freight Journal).`],
     };
     const [field, message] = FIELD_MAP[err.code] || [
       null,
@@ -156,7 +154,7 @@ app.use((err, req, res, _next) => {
   // Missing system-config rows (e.g. the "Freight Expense"/"Sales" ledgers or
   // the "Bilty"/"Freight Journal" voucher types). Still a 500, but name the
   // missing piece so it's diagnosable instead of "unexpected".
-  if (err && typeof err.code === 'string' && /^(system_ledger_missing_|.*_vchtype_missing$)/.test(err.code)) {
+  if (err && typeof err.code === 'string' && /^(system_ledger_missing_|.*_vchtype_missing$|.*_ledger_missing$)/.test(err.code)) {
     return res.status(500).json({
       success: false,
       error: {

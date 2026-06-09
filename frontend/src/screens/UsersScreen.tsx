@@ -17,7 +17,7 @@
  * All styling via theme tokens — zero hardcoded hex.
  */
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   Alert,
   Pressable,
@@ -36,6 +36,7 @@ import { PasswordField } from '../components/PasswordField';
 import { PermissionPicker } from '../components/PermissionPicker';
 import { useAuth } from '../context/AuthContext';
 import { canAccessTab, canDoAction } from '../navigation/guards';
+import { useAutoRefresh } from '../hooks/useAutoRefresh';
 import {
   PAGE_LABELS,
   PERMISSION_PAGES,
@@ -153,10 +154,9 @@ export function UsersScreen() {
     }
   }, []);
 
-  useEffect(() => {
-    if (!canAccess) return;
-    load();
-  }, [load, canAccess]);
+  useAutoRefresh(() => {
+    if (canAccess) load();
+  });
 
   // ---- Modal open/close ----
   const openModal = useCallback(() => {

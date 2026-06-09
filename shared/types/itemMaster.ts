@@ -16,6 +16,12 @@ export interface ItemMasterItem {
   tally_master_id: string | null;
   created_at: string;
   updated_at: string;
+  unit: string | null;
+  batch: 'Yes' | 'No';
+  opening_qty: number;
+  opening_rate: number;
+  opening_value: number;
+  batches?: any[];
 }
 
 export interface ItemMasterSearchResult {
@@ -31,6 +37,13 @@ export interface CreateItemMasterRequest {
   gst_rate?: number | null;
   item_group_id?: number | null;
   item_category_id?: number | null;
+  unit?: string | null;
+  batch?: 'Yes' | 'No' | null;
+  opening_qty?: number | null;
+  opening_rate?: number | null;
+  opening_value?: number | null;
+  batches?: any[];
 }
 
 export type UpdateItemMasterRequest = CreateItemMasterRequest;
+

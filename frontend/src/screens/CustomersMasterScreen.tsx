@@ -1,8 +1,7 @@
 /**
  * CustomersMasterScreen — Customers tab under Ledger > Ledger Master.
- * Scoped to the "Sundry Debtors" ledger group: lists only customers and lets
- * users create new customers. The Ledger Group dropdown is locked so a
- * customer can never be reclassified into another group from this page.
+ * Scoped to the customer child groups: lists both consignor and consignee
+ * customers and lets users create either type from one page.
  *
  * Reuses the shared LedgerMasterFormScreen — see that file for field rules
  * and validation. The group name is resolved to its current numeric id at
@@ -14,11 +13,11 @@ import { LedgerMasterFormScreen } from './LedgerMasterFormScreen';
 export function CustomersMasterScreen() {
   return (
     <LedgerMasterFormScreen
-      groupName="Sundry Debtors"
+      groupName={null}
       title="Customers"
       entityName="Customer"
-      lockGroup
       permissionPage="customermaster"
+      allowedGroupNames={['Consignor', 'Consignee']}
     />
   );
 }

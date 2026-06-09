@@ -5,6 +5,7 @@ const {
   isNonEmptyString,
   validatePAN,
   validateMobile,
+  validateGST,
   parseId,
 } = require('../utils/validators');
 
@@ -19,6 +20,7 @@ function validateBody(body) {
   const checks = [
     body.mobile ? validateMobile(body.mobile) : null,
     body.pan_no ? validatePAN(body.pan_no) : null,
+    body.gst_no ? validateGST(body.gst_no) : null,
   ];
   return checks.find(Boolean) || null;
 }

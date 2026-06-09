@@ -1,12 +1,11 @@
 /**
  * BiltyStack — nested native stack inside the "Bilty" tab (Phase 3).
- * Routes: BiltyList → BiltyForm / BiltyDetail.
+ * Routes: BiltyList → BiltyForm.
  */
 
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { BiltyScreen } from '../screens/BiltyScreen';
 import { BiltyFormScreen } from '../screens/BiltyFormScreen';
-import { BiltyDetailScreen } from '../screens/BiltyDetailScreen';
 import { colors } from '../constants/theme';
 import type { BiltyStackParamList } from './types';
 
@@ -31,11 +30,6 @@ export function BiltyStack() {
         options={({ route }) => ({
           title: route.params?.id ? 'Edit Bilty' : 'New Bilty',
         })}
-      />
-      <Stack.Screen
-        name="BiltyDetail"
-        component={BiltyDetailScreen}
-        options={{ title: 'Bilty Detail' }}
       />
     </Stack.Navigator>
   );

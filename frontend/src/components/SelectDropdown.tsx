@@ -46,6 +46,8 @@ interface Props {
   compact?: boolean;
   /** When true, the field is non-interactive and visually muted. */
   disabled?: boolean;
+  /** Callback to render a '+' button next to the input */
+  onCreatePressed?: () => void;
 }
 
 interface AnchorRect {
@@ -66,6 +68,7 @@ export function SelectDropdown({
   searchable = false,
   compact = false,
   disabled = false,
+  onCreatePressed,
 }: Props) {
   // Click-to-open mode owns this flag; searchable mode derives it from text.
   const [openClick, setOpenClick] = useState(false);
@@ -355,37 +358,60 @@ export function SelectDropdown({
     <View ref={wrapRef} style={[styles.wrap, compact && { marginBottom: 0 }]}>
       <Text style={styles.label}>{label}</Text>
 
-      {searchable ? (
-        // ── Type-to-search variant — the field is a TextInput; list opens
-        // only when the user starts typing.
-        <View style={fieldStyle}>
-          <TextInput
-            value={displayValue}
-            onChangeText={onChangeSearchText}
-            onFocus={onFieldFocus}
-            onBlur={onFieldBlur}
-            placeholder={effectivePlaceholder}
-            placeholderTextColor={colors.textMuted}
-            editable={!disabled}
-            style={[styles.fieldInput, Platform.OS === 'web' && ({ outlineStyle: 'none' } as any)]}
-            testID={testID}
-          />
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, width: '100%' }}>
+        <View style={{ flex: 1 }}>
+          {searchable ? (
+            // ── Type-to-search variant — the field is a TextInput; list opens
+            // only when the user starts typing.
+            <View style={fieldStyle}>
+              <TextInput
+                value={displayValue}
+                onChangeText={onChangeSearchText}
+                onFocus={onFieldFocus}
+                onBlur={onFieldBlur}
+                placeholder={effectivePlaceholder}
+                placeholderTextColor={colors.textMuted}
+                editable={!disabled}
+                style={[styles.fieldInput, Platform.OS === 'web' && ({ outlineStyle: 'none', scrollMarginInline: 0 } as any)]}
+                testID={testID}
+              />
+            </View>
+          ) : (
+            // ── Click-to-open variant — original behaviour. Used by Batch,
+            // All Groups filter, and similar short fixed lists.
+            <Pressable
+              onPress={onClickFieldToggle}
+              style={fieldStyle}
+              accessibilityRole="button"
+              testID={testID}
+            >
+              <Text style={[styles.fieldText, !value && styles.placeholder]} numberOfLines={1}>
+                {value || effectivePlaceholder}
+              </Text>
+              <Text style={[styles.caret, open && styles.caretOpen]}>⌄</Text>
+            </Pressable>
+          )}
         </View>
-      ) : (
-        // ── Click-to-open variant — original behaviour. Used by Batch,
-        // All Groups filter, and similar short fixed lists.
-        <Pressable
-          onPress={onClickFieldToggle}
-          style={fieldStyle}
-          accessibilityRole="button"
-          testID={testID}
-        >
-          <Text style={[styles.fieldText, !value && styles.placeholder]} numberOfLines={1}>
-            {value || effectivePlaceholder}
-          </Text>
-          <Text style={[styles.caret, open && styles.caretOpen]}>⌄</Text>
-        </Pressable>
-      )}
+        {onCreatePressed && (
+          <Pressable
+            onPress={onCreatePressed}
+            style={({ pressed }: any) => [
+              {
+                width: 34,
+                height: 34,
+                borderRadius: radius.md,
+                borderWidth: 1,
+                borderColor: colors.primary,
+                alignItems: 'center',
+                justifyContent: 'center',
+                backgroundColor: pressed ? '#EEF2F7' : '#FFFFFF',
+              }
+            ]}
+          >
+            <Text style={{ color: colors.primary, fontSize: 18, fontWeight: '700' }}>+</Text>
+          </Pressable>
+        )}
+      </View>
 
       {error ? <Text style={styles.errText}>{error}</Text> : null}
 

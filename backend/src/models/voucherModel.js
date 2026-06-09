@@ -354,13 +354,15 @@ async function remove(id) {
 async function findById(id) {
   const [headerRows] = await pool.execute(
     `SELECT v.*, pl.name AS party_name,
-            COALESCE(p.name, vt.name) AS vch_type_name,
+            vt.name AS vch_type_name,
             vt.name AS vch_subtype_name,
-            COALESCE(p.deemed_positive, vt.deemed_positive) AS deemed_positive
+            COALESCE(p.deemed_positive, vt.deemed_positive) AS deemed_positive,
+            pv.vch_no AS parent_bilty_no
      FROM vch_details v
      LEFT JOIN ledger_master pl ON v.ledger_master_id = pl.id
      LEFT JOIN vchtype vt ON v.vch_type_id = vt.id
      LEFT JOIN vchtype p ON vt.parent_id = p.id AND vt.parent_id != vt.id
+     LEFT JOIN vch_details pv ON pv.id = v.parent_vch_id
      WHERE v.id = :id LIMIT 1`,
     { id }
   );
@@ -420,7 +422,7 @@ async function findAll({ page, limit, vchType, search, dateFrom, dateTo } = {}) 
     `SELECT COUNT(*) AS total FROM vch_details v
      LEFT JOIN ledger_master pl ON v.ledger_master_id = pl.id
      LEFT JOIN vchtype vt ON v.vch_type_id = vt.id
-     LEFT JOIN vchtype par ON vt.parent_id = par.id AND vt.parent_id != vt.id
+
      ${where}`,
     params
   );
@@ -429,12 +431,12 @@ async function findAll({ page, limit, vchType, search, dateFrom, dateTo } = {}) 
   const [rows] = await pool.execute(
     `SELECT v.id, v.vch_no, v.vch_date, v.amount, v.remark, v.created_at,
             pl.name AS party_name,
-            COALESCE(par.name, vt.name) AS vch_type_name,
+            vt.name AS vch_type_name,
             vt.name AS vch_subtype_name
      FROM vch_details v
      LEFT JOIN ledger_master pl ON v.ledger_master_id = pl.id
      LEFT JOIN vchtype vt ON v.vch_type_id = vt.id
-     LEFT JOIN vchtype par ON vt.parent_id = par.id AND vt.parent_id != vt.id
+
      ${where}
      ORDER BY v.created_at DESC
      LIMIT ${lim} OFFSET ${offset}`,
@@ -460,7 +462,7 @@ async function getDaybook(fromDate, toDate) {
   const [rows] = await pool.execute(
     `SELECT v.id, v.vch_no, v.vch_date, v.remark, v.amount, v.parent_vch_id,
             pl.name AS party_name,
-            COALESCE(par.name, vt.name) AS vch_type_name,
+            vt.name AS vch_type_name,
             vt.name AS vch_subtype_name,
             CASE WHEN ple.amount > 0 THEN ABS(ple.amount) ELSE 0 END AS dr_amount,
             CASE WHEN ple.amount < 0 THEN ABS(ple.amount) ELSE 0 END AS cr_amount,
@@ -468,7 +470,6 @@ async function getDaybook(fromDate, toDate) {
      FROM vch_details v
      LEFT JOIN ledger_master pl ON v.ledger_master_id = pl.id
      LEFT JOIN vchtype vt ON v.vch_type_id = vt.id
-     LEFT JOIN vchtype par ON vt.parent_id = par.id AND vt.parent_id != vt.id
      LEFT JOIN (
        SELECT vch_id, ledger_id, SUM(amount) AS amount
        FROM ledger_entries

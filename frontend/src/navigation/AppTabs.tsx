@@ -1,11 +1,11 @@
-import React from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { View } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { DashboardScreen } from '../screens/DashboardScreen';
 import { UsersScreen } from '../screens/UsersScreen';
 import { BiltyStack } from './BiltyStack';
-import { FreightStack } from './FreightStack';
 import { BillingStack } from './BillingStack';
+import { ReportsStack } from './ReportsStack';
 import { LedgerMasterScreen } from '../screens/LedgerMasterScreen';
 import { CustomersMasterScreen } from '../screens/CustomersMasterScreen';
 import { OtherLedgersScreen } from '../screens/OtherLedgersScreen';
@@ -19,6 +19,7 @@ import { BranchMasterScreen } from '../screens/BranchMasterScreen';
 import { LedgerGroupsScreen } from '../screens/LedgerGroupsScreen';
 import { VoucherTypeScreen } from '../screens/VoucherTypeScreen';
 import { useAuth } from '../context/AuthContext';
+import { ledgerGroupService } from '../services/ledgerGroupService';
 import { canAccessTab, pickInitialTab } from './guards';
 import { colors } from '../constants/theme';
 import { TopNavBar, TOP_NAV_HEIGHT, TOP_NAV_HEIGHT_MOBILE } from '../components/TopNavBar';
@@ -48,8 +49,8 @@ function withPad(Screen: React.ComponentType<any>): React.ComponentType<any> {
 
 const PaddedDashboard = withPad(DashboardScreen);
 const PaddedBiltyStack = withPad(BiltyStack);
-const PaddedFreightStack = withPad(FreightStack);
 const PaddedBillingStack = withPad(BillingStack);
+const PaddedReportsStack = withPad(ReportsStack);
 const PaddedLedgerMaster = withPad(LedgerMasterScreen);
 const PaddedCustomers = withPad(CustomersMasterScreen);
 const PaddedOtherLedgers = withPad(OtherLedgersScreen);
@@ -66,11 +67,38 @@ const PaddedUsers = withPad(UsersScreen);
 
 export function AppTabs() {
   const { user } = useAuth();
+  const [groupsLoaded, setGroupsLoaded] = useState(false);
+  const [hasConsignorGroup, setHasConsignorGroup] = useState(false);
+  const [hasConsigneeGroup, setHasConsigneeGroup] = useState(false);
   // Land the user on the first tab they can actually use, following the
   // nav-bar order. Without this, RN-Navigation defaults to the first
   // registered Tab.Screen — which can leave a voucher-only user staring
   // at the Bilty tab (which then redirects, causing a flash + loader).
   const initialTab = pickInitialTab(user);
+
+  useEffect(() => {
+    let cancelled = false;
+    ledgerGroupService.list()
+      .then((groups) => {
+        if (cancelled) return;
+        const names = new Set(groups.map((g) => g.group_name.toLowerCase()));
+        setHasConsignorGroup(names.has('consignor'));
+        setHasConsigneeGroup(names.has('consignee'));
+        setGroupsLoaded(true);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setHasConsignorGroup(false);
+        setHasConsigneeGroup(false);
+        setGroupsLoaded(true);
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  const showCustomerTab = useMemo(
+    () => groupsLoaded && hasConsignorGroup && hasConsigneeGroup,
+    [groupsLoaded, hasConsignorGroup, hasConsigneeGroup]
+  );
 
   return (
     <Tab.Navigator
@@ -87,16 +115,16 @@ export function AppTabs() {
       {canAccessTab('Bilty', user) && (
         <Tab.Screen name="Bilty" component={PaddedBiltyStack} />
       )}
-      {canAccessTab('Freight', user) && (
-        <Tab.Screen name="Freight" component={PaddedFreightStack} />
-      )}
       {canAccessTab('Billing', user) && (
         <Tab.Screen name="Billing" component={PaddedBillingStack} />
+      )}
+      {canAccessTab('Reports', user) && (
+        <Tab.Screen name="Reports" component={PaddedReportsStack} />
       )}
       {canAccessTab('LedgerMaster', user) && (
         <Tab.Screen name="LedgerMaster" component={PaddedLedgerMaster} />
       )}
-      {canAccessTab('Customers', user) && (
+      {showCustomerTab && canAccessTab('Customers', user) && (
         <Tab.Screen name="Customers" component={PaddedCustomers} />
       )}
       {canAccessTab('OtherLedgers', user) && (
