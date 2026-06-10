@@ -12,6 +12,7 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   View,
@@ -42,9 +43,10 @@ const EMPTY_FORM = {
   unit: '',
   item_group_id: 0,      // 0 = none selected
   item_category_id: 0,
-  batch: 'No',           // not persisted yet
-  opening_qty: '',       // not persisted yet
-  opening_rate: '',      // not persisted yet
+  batch: 'No',
+  affects_ledger: true,
+  opening_qty: '',
+  opening_rate: '',
 };
 type FormState = typeof EMPTY_FORM;
 type FormErrors = Partial<Record<keyof FormState, string>>;
@@ -122,6 +124,7 @@ export function ItemMasterScreen() {
       gst_rate: row.gst_rate != null ? String(row.gst_rate) : '',
       unit: (row as any).unit ?? '',
       batch: (row as any).batch === 'Yes' ? 'Yes' : 'No',
+      affects_ledger: (row as any).affects_ledger !== 0,
       opening_qty: (row as any).opening_qty != null ? String((row as any).opening_qty) : '',
       opening_rate: (row as any).opening_rate != null ? String((row as any).opening_rate) : '',
       item_group_id: row.item_group_id ?? 0,
@@ -182,6 +185,7 @@ export function ItemMasterScreen() {
         gst_rate: form.gst_rate.trim() === '' ? null : Number(form.gst_rate),
         unit: form.unit.trim() || null,
         batch: form.batch === 'Yes' ? 'Yes' : 'No',
+        affects_ledger: form.affects_ledger,
         opening_qty: Number(displayOpeningQty) || 0,
         opening_rate: Number(displayOpeningRate) || 0,
         opening_value: Number(openingValue) || 0,
@@ -304,6 +308,17 @@ export function ItemMasterScreen() {
       render: (r) => (r.gst_rate != null ? `${r.gst_rate}%` : '—'),
     },
     { key: 'hsn_code', label: 'HSN', width: 120, render: (r) => r.hsn_code || '—' },
+    {
+      key: 'affects_ledger', label: 'Ledger', width: 80, align: 'center',
+      render: (r) => {
+        const yes = (r as any).affects_ledger !== 0;
+        return (
+          <View style={[styles.badge, yes ? styles.badgeYes : styles.badgeNo]}>
+            <Text style={yes ? styles.badgeYesText : styles.badgeNoText}>{yes ? 'Yes' : 'No'}</Text>
+          </View>
+        );
+      },
+    },
     {
       key: 'op_qty',
       label: 'Op. Qty',
@@ -515,6 +530,23 @@ export function ItemMasterScreen() {
                 testID="item-unit-input"
               />
             </View>
+          </View>
+
+          {/* Affects Ledger toggle */}
+          <View style={styles.toggleRow}>
+            <View style={styles.toggleLabelWrap}>
+              <Text style={styles.toggleLabel}>Affects Ledger</Text>
+              <Text style={styles.toggleHint}>
+                {form.affects_ledger
+                  ? 'Amount of this item contributes to ledger accounts (P&L).'
+                  : 'Stock-only — quantity is tracked but no financial ledger impact.'}
+              </Text>
+            </View>
+            <Switch
+              value={form.affects_ledger}
+              onValueChange={(v) => setForm((f) => ({ ...f, affects_ledger: v }))}
+              testID="item-affects-ledger-toggle"
+            />
           </View>
 
           {/* Opening balance section */}
@@ -841,6 +873,13 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
     marginBottom: 6,
   },
+  toggleRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingVertical: spacing.sm,
+  },
+  toggleLabelWrap: { flex: 1, paddingRight: spacing.md },
+  toggleLabel: { fontSize: 13, color: colors.textLabel, fontFamily: typography.uiBold, marginBottom: 2 },
+  toggleHint: { fontSize: 12, color: colors.textMuted, fontFamily: typography.ui },
 
   actions: {
     flexDirection: 'row', alignItems: 'center',

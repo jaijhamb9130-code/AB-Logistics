@@ -28,6 +28,10 @@ const COLUMNS = [
   // Bilty owner is now a TEXT SNAPSHOT captured from the vehicle's current owner
   // at save time (owner_master removed). Backfilled by ensureVehicleMaster below.
   { table: 'vch_details', column: 'owner_name', ddl: '`owner_name` VARCHAR(255) NULL DEFAULT NULL' },
+  // Whether vouchers of this type post to ledger accounts. 0 = memo/non-posting, 1 = posts (default).
+  { table: 'vchtype', column: 'affects_ledger', ddl: '`affects_ledger` TINYINT(1) NOT NULL DEFAULT 1 AFTER `branch`' },
+  // Whether this item contributes to the financial (ledger) amounts in a voucher. 0 = stock-only.
+  { table: 'item_master', column: 'affects_ledger', ddl: '`affects_ledger` TINYINT(1) NOT NULL DEFAULT 1 AFTER `batch`' },
 ];
 
 // The 15 Tally primary groups — always top-level (parent_id = NULL).

@@ -18,6 +18,7 @@ export interface ItemMasterItem {
   updated_at: string;
   unit: string | null;
   batch: 'Yes' | 'No';
+  affects_ledger: 0 | 1;
   opening_qty: number;
   opening_rate: number;
   opening_value: number;
@@ -39,6 +40,7 @@ export interface CreateItemMasterRequest {
   item_category_id?: number | null;
   unit?: string | null;
   batch?: 'Yes' | 'No' | null;
+  affects_ledger?: boolean | 0 | 1;
   opening_qty?: number | null;
   opening_rate?: number | null;
   opening_value?: number | null;

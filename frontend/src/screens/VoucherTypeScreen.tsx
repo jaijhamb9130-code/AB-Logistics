@@ -16,6 +16,7 @@ import {
   Alert,
   Pressable,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   View,
@@ -35,7 +36,7 @@ import type { VchType } from '../../../shared/types/voucher';
 import { useAuth } from '../context/AuthContext';
 import { canDoAction } from '../navigation/guards';
 
-const EMPTY_FORM = { name: '', parent_name: '', prefix: '', branch: '' };
+const EMPTY_FORM = { name: '', parent_name: '', prefix: '', branch: '', affects_ledger: true };
 type FormState = typeof EMPTY_FORM;
 type FormErrors = Partial<Record<keyof FormState, string>>;
 
@@ -125,7 +126,7 @@ export function VoucherTypeScreen() {
     setEditTarget(row);
     // A primary's "parent" is itself (parent_name is null from the API), so
     // show it blank in the edit form — blank means "primary".
-    setForm({ name: row.name, parent_name: row.parent_name ?? '', prefix: row.prefix ?? '', branch: row.branch ?? '' });
+    setForm({ name: row.name, parent_name: row.parent_name ?? '', prefix: row.prefix ?? '', branch: row.branch ?? '', affects_ledger: row.affects_ledger !== 0 });
     setErrs({});
     setFormError(null);
     setModalOpen(true);
@@ -170,9 +171,9 @@ export function VoucherTypeScreen() {
       const prefix = form.prefix.trim();
       const branch = form.branch.trim();
       if (editTarget) {
-        await vchTypeService.update(editTarget.id, { name: form.name.trim(), parent_id, prefix, branch });
+        await vchTypeService.update(editTarget.id, { name: form.name.trim(), parent_id, prefix, branch, affects_ledger: form.affects_ledger });
       } else {
-        await vchTypeService.create({ name: form.name.trim(), parent_id, prefix, branch });
+        await vchTypeService.create({ name: form.name.trim(), parent_id, prefix, branch, affects_ledger: form.affects_ledger });
       }
       await load();
       closeModal();
@@ -273,6 +274,14 @@ export function VoucherTypeScreen() {
           </Text>
         );
       },
+    },
+    {
+      key: 'affects_ledger', label: 'Affects Ledger', width: 130, align: 'center',
+      render: (r) => (
+        <Text style={[styles.parentCell, { textAlign: 'center' }]}>
+          {r.affects_ledger !== 0 ? 'Yes' : 'No'}
+        </Text>
+      ),
     },
     {
       key: 'actions', label: 'Actions', width: 130, align: 'right',
@@ -417,6 +426,23 @@ export function VoucherTypeScreen() {
             </View>
           </View>
 
+          {/* Row 3 — Affects Ledger toggle */}
+          <View style={styles.toggleRow}>
+            <View style={styles.toggleLabelWrap}>
+              <Text style={styles.toggleLabel}>Affects Ledger</Text>
+              <Text style={styles.toggleHint}>
+                {form.affects_ledger
+                  ? 'Vouchers of this type post to account ledgers.'
+                  : 'Memo / non-posting — voucher is saved but does not affect any ledger balance.'}
+              </Text>
+            </View>
+            <Switch
+              value={form.affects_ledger}
+              onValueChange={(v) => setForm((f) => ({ ...f, affects_ledger: v }))}
+              testID="vchtype-affects-ledger-toggle"
+            />
+          </View>
+
           <View style={styles.actions}>
             <Pressable onPress={closeModal} style={styles.cancelBtn} testID="vchtype-cancel-btn">
               <Text style={styles.cancelBtnText}>Cancel</Text>
@@ -556,4 +582,11 @@ const styles = StyleSheet.create({
   cancelBtn: { paddingVertical: spacing.sm, paddingHorizontal: spacing.md },
   cancelBtnText: { ...text.action, color: colors.textMuted, fontSize: 14 },
   submitWrap: { minWidth: 150 },
+  toggleRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingVertical: spacing.sm, marginTop: spacing.xs,
+  },
+  toggleLabelWrap: { flex: 1, paddingRight: spacing.md },
+  toggleLabel: { ...text.label, color: colors.textLabel, marginBottom: 2 },
+  toggleHint: { fontSize: 12, color: colors.textMuted, fontFamily: typography.ui },
 });

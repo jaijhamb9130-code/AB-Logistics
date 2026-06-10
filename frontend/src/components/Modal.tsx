@@ -38,6 +38,8 @@ interface Props {
   testID?: string;
   /** Force a centered fade-in card (vs the default mobile bottom-sheet). */
   centered?: boolean;
+  /** When false, backdrop tap and × button are disabled — user must use the in-modal action. Default true. */
+  dismissable?: boolean;
 }
 
 export function Modal({
@@ -48,6 +50,7 @@ export function Modal({
   maxWidth = 520,
   testID,
   centered = false,
+  dismissable = true,
 }: Props) {
   const { width, height } = useWindowDimensions();
   const isMobile = width < 768;
@@ -66,7 +69,7 @@ export function Modal({
     >
       <Pressable
         style={[styles.backdrop, useBottomSheet && styles.backdropMobile]}
-        onPress={onClose}
+        onPress={dismissable ? onClose : undefined}
         testID={testID ? `${testID}-backdrop` : undefined}
       >
         {/* stopPropagation via inner Pressable so taps inside the card don't close it */}
@@ -91,14 +94,16 @@ export function Modal({
         >
           <View style={styles.header}>
             <Text style={styles.title}>{title}</Text>
-            <Pressable
-              onPress={onClose}
-              hitSlop={8}
-              accessibilityLabel="Close"
-              testID={testID ? `${testID}-close` : undefined}
-            >
-              <Text style={styles.close}>×</Text>
-            </Pressable>
+            {dismissable && (
+              <Pressable
+                onPress={onClose}
+                hitSlop={8}
+                accessibilityLabel="Close"
+                testID={testID ? `${testID}-close` : undefined}
+              >
+                <Text style={styles.close}>×</Text>
+              </Pressable>
+            )}
           </View>
           <ScrollView
             style={

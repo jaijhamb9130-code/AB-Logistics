@@ -77,9 +77,9 @@ async function _lookupLedgerIdByName(conn, name) {
 }
 
 async function _getVchTypeMeta(conn, vchTypeId) {
-  if (!vchTypeId) return { deemedPositive: null, parentName: '' };
+  if (!vchTypeId) return { deemedPositive: null, parentName: '', affectsLedger: true };
   const [rows] = await conn.execute(
-    `SELECT v.name, v.deemed_positive,
+    `SELECT v.name, v.deemed_positive, v.affects_ledger,
             p.name AS parent_name, p.deemed_positive AS parent_deemed
      FROM vchtype v
      LEFT JOIN vchtype p ON v.parent_id = p.id AND v.parent_id != v.id
@@ -87,11 +87,12 @@ async function _getVchTypeMeta(conn, vchTypeId) {
     { id: vchTypeId }
   );
   const r = rows[0];
-  if (!r) return { deemedPositive: null, parentName: '' };
+  if (!r) return { deemedPositive: null, parentName: '', affectsLedger: true };
   const dp = r.deemed_positive || r.parent_deemed;
   return {
     deemedPositive: dp === 'YES' ? true : dp === 'NO' ? false : null,
     parentName: String(r.parent_name || r.name || '').toLowerCase(),
+    affectsLedger: r.affects_ledger !== 0,
   };
 }
 
@@ -131,13 +132,20 @@ async function _insertChildEntries(conn, vchId, data) {
 
   // ===== JOURNAL MODE — no items, user supplies signed amounts =====
   if (items.length === 0) {
+    // Check whether this voucher type posts to ledger accounts.
+    const jMeta = await _getVchTypeMeta(conn, vchTypeId);
+    if (!jMeta.affectsLedger) return; // memo/non-posting: save header only
+
     let partyLedEntryId = null;
+    // ledger_id → ledentry_id so each bill_allocation links to the right row
+    const ledEntryMap = new Map();
     for (const led of ledgers) {
       if (!led.ledger_id || !Number(led.amount)) continue;
       const [r] = await conn.execute(
         'INSERT INTO ledger_entries (vch_id, ledger_id, amount) VALUES (:vchId, :ledgerId, :amount)',
         { vchId, ledgerId: led.ledger_id, amount: Number(led.amount) }
       );
+      ledEntryMap.set(Number(led.ledger_id), r.insertId);
       if (Number(led.ledger_id) === Number(partyId) && partyLedEntryId === null) {
         partyLedEntryId = r.insertId;
       }
@@ -148,28 +156,48 @@ async function _insertChildEntries(conn, vchId, data) {
                       : ba.direction === 'Dr' ? +Math.abs(Number(ba.amount))
                       : ba.type === 'Agr.'    ? -Math.abs(Number(ba.amount))
                       :                          +Math.abs(Number(ba.amount));
+      // Use the per-ref ledger when provided; fall back to the anchor party ledger.
+      const baLedgerId = ba.ledger_id ? Number(ba.ledger_id) : Number(partyId);
+      const baLedEntryId = ledEntryMap.get(baLedgerId) ?? partyLedEntryId;
       await conn.execute(
         `INSERT INTO bill_allocation (vchid, ledentry_id, ledger, billname, amount)
          VALUES (:vchId, :ledEntryId, :ledger, :billname, :amount)`,
-        { vchId, ledEntryId: partyLedEntryId, ledger: partyId, billname: ba.refno || null, amount: signedAmt }
+        { vchId, ledEntryId: baLedEntryId, ledger: baLedgerId, billname: ba.refno || null, amount: signedAmt }
       );
     }
     return;
   }
 
   // ===== INVENTORY MODE — Sales / Purchase / Debit Note / Credit Note =====
-  const subtotal = +items.reduce((s, i) => s + Number(i.amount || 0), 0).toFixed(2);
-  const grandTotal = _computeGrandTotal(items, ledgers);
-
   const meta = await _getVchTypeMeta(conn, vchTypeId);
   const effectivePositive = meta.deemedPositive === null ? true : meta.deemedPositive;
   const goodsLedgerName = meta.parentName.includes('purchase') || meta.parentName.includes('debit')
     ? 'Purchase' : 'Sales';
   const goodsLedgerId = await _lookupLedgerIdByName(conn, goodsLedgerName);
 
+  // Look up item-level affects_ledger flags to separate financial from stock-only items.
+  const itemIds = [...new Set(items.map(i => i.item_id).filter(Boolean))];
+  const itemAffectsLedger = {};
+  if (itemIds.length > 0) {
+    const placeholders = itemIds.map(() => '?').join(',');
+    const [iRows] = await conn.execute(
+      `SELECT id, affects_ledger FROM item_master WHERE id IN (${placeholders})`,
+      itemIds
+    );
+    iRows.forEach(r => { itemAffectsLedger[r.id] = r.affects_ledger !== 0; });
+  }
+  const ledgerItems = items.filter(i => itemAffectsLedger[i.item_id] !== false);
+
+  // Financial subtotal uses ONLY ledger-affecting items; stock subtotal uses all items.
+  const subtotal = +ledgerItems.reduce((s, i) => s + Number(i.amount || 0), 0).toFixed(2);
+  const grandTotal = _computeGrandTotal(ledgerItems, ledgers);
+
   // Party row + Goods row (always exactly 2 system entries, opposite signs)
-  let partyLedEntryId, goodsLedId;
-  if (effectivePositive) {
+  // Skipped entirely when the voucher type is non-posting.
+  let partyLedEntryId = null, goodsLedId = null;
+  if (!meta.affectsLedger) {
+    // Non-posting: insert inventory + batch only, no ledger entries.
+  } else if (effectivePositive) {
     const [pr] = await conn.execute(
       'INSERT INTO ledger_entries (vch_id, ledger_id, amount) VALUES (:vchId, :ledgerId, :amount)',
       { vchId, ledgerId: partyId, amount: +grandTotal }
@@ -237,29 +265,31 @@ async function _insertChildEntries(conn, vchId, data) {
     }
   }
 
-  // Tax/charge ledger rows — frontend sends positive amounts, we apply sign
-  for (const led of ledgers) {
-    if (!led.ledger_id || !Number(led.amount)) continue;
-    await conn.execute(
-      'INSERT INTO ledger_entries (vch_id, ledger_id, amount) VALUES (:vchId, :ledgerId, :amount)',
-      { vchId, ledgerId: led.ledger_id, amount: Number(led.amount) * sign }
-    );
-  }
+  if (meta.affectsLedger) {
+    // Tax/charge ledger rows — frontend sends positive amounts, we apply sign
+    for (const led of ledgers) {
+      if (!led.ledger_id || !Number(led.amount)) continue;
+      await conn.execute(
+        'INSERT INTO ledger_entries (vch_id, ledger_id, amount) VALUES (:vchId, :ledgerId, :amount)',
+        { vchId, ledgerId: led.ledger_id, amount: Number(led.amount) * sign }
+      );
+    }
 
-  // Bill allocation hangs off party row. baseSign mirrors party Dr/Cr sign.
-  const baseSign = effectivePositive ? 1 : -1;
-  for (const ba of billAlloc) {
-    if (!Number(ba.amount)) continue;
-    let signedAmt;
-    if (ba.direction === 'Cr')      signedAmt = -Math.abs(Number(ba.amount));
-    else if (ba.direction === 'Dr') signedAmt = +Math.abs(Number(ba.amount));
-    else if (ba.type === 'Agr.')    signedAmt = -Math.abs(Number(ba.amount)) * baseSign;
-    else                            signedAmt = +Math.abs(Number(ba.amount)) * baseSign;
-    await conn.execute(
-      `INSERT INTO bill_allocation (vchid, ledentry_id, ledger, billname, amount)
-       VALUES (:vchId, :ledEntryId, :ledger, :billname, :amount)`,
-      { vchId, ledEntryId: partyLedEntryId, ledger: partyId, billname: ba.refno || null, amount: signedAmt }
-    );
+    // Bill allocation hangs off party row. baseSign mirrors party Dr/Cr sign.
+    const baseSign = effectivePositive ? 1 : -1;
+    for (const ba of billAlloc) {
+      if (!Number(ba.amount)) continue;
+      let signedAmt;
+      if (ba.direction === 'Cr')      signedAmt = -Math.abs(Number(ba.amount));
+      else if (ba.direction === 'Dr') signedAmt = +Math.abs(Number(ba.amount));
+      else if (ba.type === 'Agr.')    signedAmt = -Math.abs(Number(ba.amount)) * baseSign;
+      else                            signedAmt = +Math.abs(Number(ba.amount)) * baseSign;
+      await conn.execute(
+        `INSERT INTO bill_allocation (vchid, ledentry_id, ledger, billname, amount)
+         VALUES (:vchId, :ledEntryId, :ledger, :billname, :amount)`,
+        { vchId, ledEntryId: partyLedEntryId, ledger: partyId, billname: ba.refno || null, amount: signedAmt }
+      );
+    }
   }
 }
 
@@ -398,7 +428,11 @@ async function findById(id) {
   }
 
   const [billAllocations] = await pool.execute(
-    'SELECT id, billname, amount, ledger FROM bill_allocation WHERE vchid = :id ORDER BY id',
+    `SELECT ba.id, ba.billname, ba.amount, ba.ledger,
+            lm.name AS ledger_name, lm.billbybill
+       FROM bill_allocation ba
+       LEFT JOIN ledger_master lm ON lm.id = ba.ledger
+      WHERE ba.vchid = :id ORDER BY ba.id`,
     { id }
   );
 
@@ -461,7 +495,7 @@ async function findAll({ page, limit, vchType, search, dateFrom, dateTo } = {}) 
 async function getDaybook(fromDate, toDate) {
   const [rows] = await pool.execute(
     `SELECT v.id, v.vch_no, v.vch_date, v.remark, v.amount, v.parent_vch_id,
-            pl.name AS party_name,
+            COALESCE(fle_lm.name, pl.name) AS party_name,
             vt.name AS vch_type_name,
             vt.name AS vch_subtype_name,
             CASE WHEN ple.amount > 0 THEN ABS(ple.amount) ELSE 0 END AS dr_amount,
@@ -475,6 +509,10 @@ async function getDaybook(fromDate, toDate) {
        FROM ledger_entries
        GROUP BY vch_id, ledger_id
      ) ple ON ple.vch_id = v.id AND ple.ledger_id = v.ledger_master_id
+     LEFT JOIN ledger_entries fle ON fle.id = (
+       SELECT MIN(id) FROM ledger_entries WHERE vch_id = v.id
+     )
+     LEFT JOIN ledger_master fle_lm ON fle_lm.id = fle.ledger_id
      WHERE DATE(v.vch_date) >= :fromDate AND DATE(v.vch_date) <= :toDate
      ORDER BY v.vch_date DESC, GREATEST(v.created_at, v.updated_at) DESC, v.id DESC`,
     { fromDate, toDate }
@@ -581,7 +619,8 @@ async function searchAllLedgers(q, group) {
 // no vehicle), or null when the bilty id doesn't exist.
 async function resolveBiltyVehicleLedger(biltyId) {
   const [rows] = await pool.execute(
-    `SELECT v.vehicle_id AS ledger_id, veh.name AS ledger_name
+    `SELECT v.vehicle_id AS ledger_id, veh.name AS ledger_name,
+            veh.ledger_group_id, veh.billbybill
        FROM vch_details v
        LEFT JOIN ledger_master veh ON veh.id = v.vehicle_id
       WHERE v.id = :id LIMIT 1`,
@@ -589,7 +628,13 @@ async function resolveBiltyVehicleLedger(biltyId) {
   );
   const r = rows[0];
   if (!r) return null;
-  return { ledger_id: r.ledger_id || null, ledger_name: r.ledger_name || null, truck_no: r.ledger_name || null };
+  return {
+    ledger_id: r.ledger_id || null,
+    ledger_name: r.ledger_name || null,
+    truck_no: r.ledger_name || null,
+    ledger_group_id: r.ledger_group_id || null,
+    billbybill: r.billbybill || 'No',
+  };
 }
 
 // Public read-only budget lookup for the Advance/Fuel form. Returns

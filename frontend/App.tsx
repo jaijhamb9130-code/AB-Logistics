@@ -23,6 +23,7 @@ const linking: LinkingOptions<ReactNavigation.RootParamList> = {
   prefixes: [],
   config: {
     screens: {
+      Dashboard: 'dashboard',
       Bilty: {
         path: 'bilty',
         screens: {
@@ -31,6 +32,38 @@ const linking: LinkingOptions<ReactNavigation.RootParamList> = {
           BiltyForm: 'edit/:id',
         },
       },
+      Billing: {
+        path: 'billing',
+        screens: {
+          Daybook: '',
+          VoucherForm: 'voucher',
+          VouchersList: 'list',
+        },
+      },
+      Reports: {
+        path: 'reports',
+        screens: {
+          ReportsHub: '',
+          BiltyRegister: 'bilty-register',
+          VoucherRegister: 'voucher-register',
+          LedgerStatement: 'ledger-statement',
+          GroupSummary: 'group-summary',
+          GroupLedgers: 'group-ledgers',
+        },
+      },
+      LedgerMaster: 'ledger-master',
+      Customers: 'customers',
+      OtherLedgers: 'other-ledgers',
+      AgentMaster: 'agents',
+      ItemMaster: 'items',
+      ItemGroup: 'item-groups',
+      ItemCategory: 'item-categories',
+      VehicleMaster: 'vehicles',
+      DestinationMaster: 'destinations',
+      BranchMaster: 'branches',
+      LedgerGroups: 'ledger-groups',
+      VoucherType: 'voucher-types',
+      Users: 'users',
     },
   },
 };

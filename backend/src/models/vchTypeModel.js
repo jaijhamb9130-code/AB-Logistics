@@ -4,7 +4,7 @@ const pool = require('../db/pool');
 
 async function findAll() {
   const [rows] = await pool.execute(
-    `SELECT v.id, v.name, v.parent_id, v.deemed_positive, v.is_system, v.prefix, v.branch,
+    `SELECT v.id, v.name, v.parent_id, v.deemed_positive, v.is_system, v.prefix, v.branch, v.affects_ledger,
             p.name AS parent_name
      FROM vchtype v
      LEFT JOIN vchtype p ON v.parent_id = p.id AND v.parent_id != v.id
@@ -15,7 +15,7 @@ async function findAll() {
 
 async function findById(id) {
   const [rows] = await pool.execute(
-    `SELECT id, name, parent_id, deemed_positive, is_system, prefix, branch FROM vchtype WHERE id = :id LIMIT 1`,
+    `SELECT id, name, parent_id, deemed_positive, is_system, prefix, branch, affects_ledger FROM vchtype WHERE id = :id LIMIT 1`,
     { id }
   );
   return rows[0] || null;
@@ -48,7 +48,7 @@ function cleanBranch(branch) {
     : String(branch).trim().slice(0, 128);
 }
 
-async function create({ name, parent_id, prefix, branch }) {
+async function create({ name, parent_id, prefix, branch, affects_ledger }) {
   const pid = parent_id || null;
   let deemedPositive = null;
   if (pid) {
@@ -56,10 +56,11 @@ async function create({ name, parent_id, prefix, branch }) {
     if (!parent) { const e = new Error('parent_not_found'); e.code = 'parent_not_found'; throw e; }
     deemedPositive = parent.deemed_positive; // inherit parent's behaviour
   }
+  const al = affects_ledger === false || affects_ledger === 0 || affects_ledger === '0' ? 0 : 1;
   const [r] = await pool.execute(
-    `INSERT INTO vchtype (name, parent_id, deemed_positive, is_system, prefix, branch)
-     VALUES (:name, :parentId, :dp, 0, :prefix, :branch)`,
-    { name: String(name).trim(), parentId: pid, dp: deemedPositive, prefix: cleanPrefix(prefix), branch: cleanBranch(branch) }
+    `INSERT INTO vchtype (name, parent_id, deemed_positive, is_system, prefix, branch, affects_ledger)
+     VALUES (:name, :parentId, :dp, 0, :prefix, :branch, :al)`,
+    { name: String(name).trim(), parentId: pid, dp: deemedPositive, prefix: cleanPrefix(prefix), branch: cleanBranch(branch), al }
   );
   const id = r.insertId;
   if (!pid) {
@@ -68,12 +69,16 @@ async function create({ name, parent_id, prefix, branch }) {
   return { id };
 }
 
-async function update(id, { name, parent_id, prefix, branch }) {
+async function update(id, { name, parent_id, prefix, branch, affects_ledger }) {
   const fields = [];
   const params = { id };
   if (name !== undefined) { fields.push('name = :name'); params.name = String(name).trim(); }
   if (prefix !== undefined) { fields.push('prefix = :prefix'); params.prefix = cleanPrefix(prefix); }
   if (branch !== undefined) { fields.push('branch = :branch'); params.branch = cleanBranch(branch); }
+  if (affects_ledger !== undefined) {
+    fields.push('affects_ledger = :al');
+    params.al = affects_ledger === false || affects_ledger === 0 || affects_ledger === '0' ? 0 : 1;
+  }
   if (parent_id !== undefined) {
     if (parent_id) {
       const parent = await findById(parent_id);

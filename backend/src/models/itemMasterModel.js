@@ -5,7 +5,7 @@ const pool = require('../db/pool');
 // Joined SELECT — pulls group_name + category_name from the linked masters
 // so the frontend table can show both without N+1 lookups.
 const SELECT_WITH_LINKS = `
-  SELECT im.id, im.name, im.hsn_code, im.gst_rate, im.batch, im.unit,
+  SELECT im.id, im.name, im.hsn_code, im.gst_rate, im.batch, im.affects_ledger, im.unit,
          im.opening_qty, im.opening_rate, im.opening_value,
          im.item_group_id, ig.group_name AS item_group_name,
          im.item_category_id, ic.category_name AS item_category_name,
@@ -141,9 +141,14 @@ async function findByName(name) {
   return rows[0] || null;
 }
 
+function normalizeAffectsLedger(v) {
+  if (v === false || v === 0 || v === '0' || v === 'No' || v === 'no') return 0;
+  return 1;
+}
+
 async function create(payload) {
   const {
-    name, hsn_code, gst_rate, batch, unit,
+    name, hsn_code, gst_rate, batch, affects_ledger, unit,
     opening_qty, opening_rate, opening_value,
     item_group_id, item_category_id, tally_master_id, userId,
     batches,
@@ -160,10 +165,10 @@ async function create(payload) {
 
     const [r] = await conn.execute(
       `INSERT INTO item_master
-         (name, hsn_code, gst_rate, batch, unit,
+         (name, hsn_code, gst_rate, batch, affects_ledger, unit,
           opening_qty, opening_rate, opening_value,
           item_group_id, item_category_id, tally_master_id, created_by)
-       VALUES (:name, :hsn_code, :gst_rate, :batch, :unit,
+       VALUES (:name, :hsn_code, :gst_rate, :batch, :affects_ledger, :unit,
                :opening_qty, :opening_rate, :opening_value,
                :item_group_id, :item_category_id, :tally_master_id, :userId)`,
       {
@@ -171,6 +176,7 @@ async function create(payload) {
         hsn_code: hsn_code ? String(hsn_code).trim().toUpperCase() : null,
         gst_rate: gst_rate == null || gst_rate === '' ? null : Number(gst_rate),
         batch: batchFlag,
+        affects_ledger: normalizeAffectsLedger(affects_ledger),
         unit: unit ? String(unit).trim() : null,
         opening_qty: oqty,
         opening_rate: orate,
@@ -203,7 +209,7 @@ async function create(payload) {
 
 async function update(id, payload) {
   const {
-    name, hsn_code, gst_rate, batch, unit,
+    name, hsn_code, gst_rate, batch, affects_ledger, unit,
     opening_qty, opening_rate, opening_value,
     item_group_id, item_category_id,
     batches,
@@ -224,6 +230,7 @@ async function update(id, payload) {
               hsn_code = :hsn_code,
               gst_rate = :gst_rate,
               batch = :batch,
+              affects_ledger = :affects_ledger,
               unit = :unit,
               opening_qty = :opening_qty,
               opening_rate = :opening_rate,
@@ -237,6 +244,7 @@ async function update(id, payload) {
         hsn_code: hsn_code ? String(hsn_code).trim().toUpperCase() : null,
         gst_rate: gst_rate == null || gst_rate === '' ? null : Number(gst_rate),
         batch: batchFlag,
+        affects_ledger: normalizeAffectsLedger(affects_ledger),
         unit: unit ? String(unit).trim() : null,
         opening_qty: oqty,
         opening_rate: orate,

@@ -93,6 +93,9 @@ interface LedgerRow {
 
 interface BillRefRow {
   id: string;
+  ledger_id?: number | null;   // which journal ledger this ref belongs to
+  ledger_name?: string;
+  billbybill?: 'Yes' | 'No';  // ledger's billbybill setting (restricts Type options)
   type: 'New' | 'Agr.' | 'On Account';
   refno: string;
   amount: number;
@@ -103,6 +106,8 @@ interface JournalRow {
   id: string;
   drOrCr: 'Dr' | 'Cr';
   ledger_id: number | null;
+  ledger_group_id?: number;
+  billbybill?: 'Yes' | 'No';
   ledger_name: string;
   amount: number;
   search: string;
@@ -256,6 +261,8 @@ export function VoucherFormScreen() {
   const [billRefs, setBillRefs] = useState<BillRefRow[]>([]);
   const [billOpen, setBillOpen] = useState(false);
   const [pendingRefs, setPendingRefs] = useState<PendingRef[]>([]);
+  // Which ledger's bill allocation modal is currently open
+  const [activeBillLedger, setActiveBillLedger] = useState<{ id: number; name: string; drOrCr: 'Dr' | 'Cr'; amount: number; billbybill: 'Yes' | 'No' } | null>(null);
 
   // ── Batch picker modal
   const [batchLineIdx, setBatchLineIdx] = useState<number | null>(null);
@@ -509,10 +516,12 @@ export function VoucherFormScreen() {
             const base = n[0] ?? emptyJournalRow();
             n[0] = {
               ...base,
-              drOrCr: 'Cr',
+              drOrCr: 'Dr',
               ledger_id: res.ledger_id!,
               ledger_name: res.ledger_name ?? '',
               search: res.ledger_name ?? '',
+              ledger_group_id: res.ledger_group_id ?? undefined,
+              billbybill: res.billbybill ?? undefined,
             };
             return n;
           });
@@ -652,7 +661,7 @@ export function VoucherFormScreen() {
           search: le.ledger_name || '',
         }));
         if (mode !== 0 && v.bilty_id && hydratedRows.length > 0) {
-          hydratedRows[0] = { ...hydratedRows[0], drOrCr: 'Cr' };
+          hydratedRows[0] = { ...hydratedRows[0], drOrCr: 'Dr' };
           setBiltyLocked(true);
           biltyLockedRef.current = true;
         }
@@ -694,13 +703,17 @@ export function VoucherFormScreen() {
       }
 
       if (v.billAllocations.length > 0) {
+        setBillByBill(true);
         setBillRefs(
-          v.billAllocations.map((ba) => ({
+          v.billAllocations.map((ba: any) => ({
             id: uid(),
-            type: 'Agr.',
+            ledger_id: ba.ledger ?? null,
+            ledger_name: ba.ledger_name ?? '',
+            billbybill: (ba.billbybill ?? 'No') as 'Yes' | 'No',
+            type: (ba.billname ? 'Agr.' : 'On Account') as BillRefRow['type'],
             refno: ba.billname || '',
             amount: Math.abs(Number(ba.amount)),
-            direction: Number(ba.amount) >= 0 ? 'Dr' : 'Cr',
+            direction: (Number(ba.amount) >= 0 ? 'Dr' : 'Cr') as 'Dr' | 'Cr',
           }))
         );
       }
@@ -927,7 +940,10 @@ export function VoucherFormScreen() {
       setPartyState(st);
       setIsIgst(st ? st.toLowerCase() !== HOME_STATE.toLowerCase() : false);
       const bbb = (full as any).billbybill;
-      setBillByBill(bbb === 'Yes' || (bbb == null && p.ledger_group_id === 1));
+      // Sundry Debtors (10), Sundry Creditors (14), and all their child groups
+      const PARTY_GROUPS = [10, 14, 30, 31, 32, 33, 34, 35, 36];
+      const isPartyGroup = PARTY_GROUPS.includes(p.ledger_group_id ?? 0);
+      setBillByBill(bbb === 'Yes' || (bbb !== 'No' && isPartyGroup));
     } catch {
       setPartyState('');
       setIsIgst(false);
@@ -975,6 +991,25 @@ export function VoucherFormScreen() {
   const journalBalanced = Math.abs(journalDr - journalCr) < 0.01;
   const effectiveTotal = isJournalType ? journalDr : grandTotal;
 
+  // Enable bill allocation whenever any journal row is a party-group ledger.
+  // Uses ledger_group_id from dropdown selection (new rows) or falls back to
+  // otherLedgers cache (locked/auto-populated rows like the advance truck row).
+  const PARTY_GROUPS = [10, 14, 30, 31, 32, 33, 34, 35, 36];
+  useEffect(() => {
+    if (!isJournalType) return;
+    // Advance/Fuel with a locked bilty always needs bill allocation — that's
+    // the whole purpose of the mode, regardless of the ledger's billbybill flag.
+    if (biltyMode !== 0 && biltyLockedRef.current) { setBillByBill(true); return; }
+    const hasParty = journalRows.some((r) => {
+      if (!r.ledger_id) return false;
+      if (r.billbybill === 'Yes') return true;
+      if (r.ledger_group_id != null && PARTY_GROUPS.includes(r.ledger_group_id)) return true;
+      const cached = otherLedgers.find((ol) => ol.id === r.ledger_id);
+      return cached != null && (cached.billbybill === 'Yes' || PARTY_GROUPS.includes(cached.ledger_group_id));
+    });
+    if (hasParty) setBillByBill(true);
+  }, [journalRows, isJournalType, otherLedgers, biltyMode]);
+
   // Advance/Fuel cap: the journal's Dr total may not exceed the bilty's
   // remaining transport budget. Only meaningful once a bilty + budget are loaded.
   const biltyBudgetActive =
@@ -999,12 +1034,42 @@ export function VoucherFormScreen() {
   const billAllocSigned = +billRefs.reduce(
     (s, r) => s + (r.direction === 'Cr' ? -r.amount : r.amount), 0
   ).toFixed(2);
+
+  // In journal/advance mode, partyId is never set via selectParty — find the
+  // party from journal rows instead.
+  // In Advance/Fuel mode the truck row is always the party (whole point is to
+  // allocate against the bilty), so pick row 0 if a bilty is locked.
+  // Otherwise fall back to any row with billbybill=Yes or a party group.
+  const journalPartyRow = isJournalType
+    ? (biltyMode !== 0 && biltyLockedRef.current && journalRows[0]?.ledger_id
+        ? journalRows[0]
+        : journalRows.find((r) => {
+            if (!r.ledger_id) return false;
+            if (r.billbybill === 'Yes') return true;
+            if (r.ledger_group_id != null && PARTY_GROUPS.includes(r.ledger_group_id)) return true;
+            const cached = otherLedgers.find((ol) => ol.id === r.ledger_id);
+            return cached != null && (cached.billbybill === 'Yes' || PARTY_GROUPS.includes(cached.ledger_group_id));
+          }))
+    : undefined;
+  const effectivePartyId = isJournalType ? (journalPartyRow?.ledger_id ?? partyId) : partyId;
+
   const partyDirection: 'Dr' | 'Cr' = isJournalType
-    ? (journalRows.find((r) => r.ledger_id === partyId)?.drOrCr || 'Cr')
+    ? (journalPartyRow?.drOrCr || 'Dr')
     : (isPurchaseMode ? 'Cr' : 'Dr');
   const signedTotal = partyDirection === 'Dr' ? effectiveTotal : -effectiveTotal;
   const billBalance = +(signedTotal - billAllocSigned).toFixed(2);
-  const billBalanced = !billByBill || Math.abs(billBalance) < 0.01;
+  // billBalanced is true when every journal row that has bill refs allocated sums correctly.
+  const billBalanced = !billByBill || (() => {
+    if (!isJournalType) return Math.abs(billBalance) < 0.01;
+    // Check per-ledger: each row's alloc total must equal that row's amount.
+    const rowsWithAlloc = journalRows.filter((r) => r.ledger_id && billRefs.some((b) => b.ledger_id === r.ledger_id));
+    return rowsWithAlloc.every((r) => {
+      const rowSigned = r.drOrCr === 'Dr' ? r.amount : -r.amount;
+      const allocSigned = +billRefs.filter((b) => b.ledger_id === r.ledger_id)
+        .reduce((s, b) => s + (b.direction === 'Cr' ? -b.amount : b.amount), 0).toFixed(2);
+      return Math.abs(rowSigned - allocSigned) < 0.01;
+    });
+  })();
 
   const updateLine = (idx: number, patch: Partial<LineItem>) => {
     setLines((prev) => {
@@ -1065,18 +1130,46 @@ export function VoucherFormScreen() {
   const addLedgerRow = () => setLedgerRows((p) => [...p, { id: uid(), ledger_id: null, ledger_name: '', amount: 0, auto: false, search: '' }]);
   const removeLedgerRow = (id: string) => setLedgerRows((p) => p.filter((r) => r.id !== id));
 
-  const openBillAlloc = useCallback(async () => {
-    if (billRefs.length === 0) {
-      setBillRefs([{ id: uid(), type: 'New', refno: vchNo || '', amount: effectiveTotal, direction: partyDirection }]);
+  // Open bill allocation modal for a specific ledger row.
+  // In journal mode: called when amount field loses focus on a billbybill=Yes row.
+  // In sales/purchase mode: called from the party "· allocate" button.
+  const openBillAlloc = useCallback(async (ledger?: { id: number; name: string; drOrCr: 'Dr' | 'Cr'; amount: number; billbybill: 'Yes' | 'No' }) => {
+    const target = ledger ?? (effectivePartyId ? {
+      id: effectivePartyId,
+      name: partyName,
+      drOrCr: partyDirection,
+      amount: effectiveTotal,
+      billbybill: 'Yes' as const,
+    } : null);
+    if (!target) return;
+    setActiveBillLedger(target);
+
+    // Seed a default row for this ledger if none exist yet.
+    const existing = billRefs.filter((r) => r.ledger_id === target.id);
+    if (existing.length === 0) {
+      // In Advance/Fuel mode the user must pick from pending bilty refs → default Agr. with blank refno.
+      // In normal mode a New bill is being created → default New with the voucher number.
+      const isAdvanceFuel = biltyMode !== 0 && biltyLockedRef.current;
+      const defaultType: BillRefRow['type'] = target.billbybill !== 'Yes' ? 'On Account'
+                                             : isAdvanceFuel               ? 'Agr.'
+                                             :                               'New';
+      setBillRefs((prev) => [...prev.filter((r) => r.ledger_id !== target.id), {
+        id: uid(),
+        ledger_id: target.id,
+        ledger_name: target.name,
+        billbybill: target.billbybill,
+        type: defaultType,
+        refno: defaultType === 'New' ? (vchNo || '') : '',
+        amount: target.amount,
+        direction: target.drOrCr,
+      }]);
     }
     setBillOpen(true);
-    if (partyId) {
-      try {
-        const refs = await voucherService.pendingRefs(partyId);
-        setPendingRefs(refs);
-      } catch { setPendingRefs([]); }
-    }
-  }, [billRefs.length, vchNo, effectiveTotal, partyDirection, partyId]);
+    try {
+      const refs = await voucherService.pendingRefs(target.id);
+      setPendingRefs(refs);
+    } catch { setPendingRefs([]); }
+  }, [billRefs, vchNo, effectiveTotal, partyDirection, partyName, effectivePartyId]);
 
   // ─── Submit ────────────────────────────────────────────────────────────────
   const handleSubmit = async () => {
@@ -1106,7 +1199,7 @@ export function VoucherFormScreen() {
           ledger_id: r.ledger_id!,
           amount: r.drOrCr === 'Dr' ? r.amount : -r.amount,
         })),
-        bill_allocation: billByBill ? billRefs.map((r) => ({ type: r.type, refno: r.refno, amount: r.amount, direction: r.direction })) : undefined,
+        bill_allocation: billByBill ? billRefs.map((r) => ({ ledger_id: r.ledger_id, type: r.type, refno: r.refno, amount: r.amount, direction: r.direction })) : undefined,
         bilty_mode: biltyEligible && biltyMode !== 0 ? biltyMode : null,
         // Persist the picked bilty so the Bilty No can be restored on edit.
         bilty_id: biltyEligible && biltyMode !== 0 ? selectedBiltyId : null,
@@ -1132,7 +1225,7 @@ export function VoucherFormScreen() {
           batch_rows: l.batch_rows && l.batch_rows.length > 0 ? l.batch_rows : null,
         })),
         ledgers: validLedgers,
-        bill_allocation: billByBill ? billRefs.map((r) => ({ type: r.type, refno: r.refno, amount: r.amount, direction: r.direction })) : undefined,
+        bill_allocation: billByBill ? billRefs.map((r) => ({ ledger_id: r.ledger_id, type: r.type, refno: r.refno, amount: r.amount, direction: r.direction })) : undefined,
       };
     }
 
@@ -1576,8 +1669,22 @@ export function VoucherFormScreen() {
                 row={row}
                 idx={idx}
                 isMobile={isMobile}
+                billRefs={row.ledger_id ? billRefs.filter((b) => b.ledger_id === row.ledger_id) : undefined}
                 onChange={(patch) => setJournalRows((p) => p.map((r) => r.id === row.id ? { ...r, ...patch } : r))}
                 onRemove={() => setJournalRows((p) => p.length > 2 ? p.filter((r) => r.id !== row.id) : p)}
+                onAmountBlur={() => {
+                  if (!row.ledger_id || !row.amount) return;
+                  const bbb = row.billbybill ?? (otherLedgers.find((ol) => ol.id === row.ledger_id)?.billbybill) ?? 'No';
+                  // Only pop up for bill-by-bill ledgers — No means "On Account" auto-handled on save.
+                  if (bbb !== 'Yes') return;
+                  openBillAlloc({
+                    id: row.ledger_id,
+                    name: row.ledger_name,
+                    drOrCr: row.drOrCr,
+                    amount: row.amount,
+                    billbybill: 'Yes',
+                  });
+                }}
                 editable={canSave}
                 locked={biltyLocked && idx === 0}
                 groupFilter={biltyEligible && biltyMode === 2 && selectedBiltyId !== null && idx === 1 ? 'Pump' : undefined}
@@ -1588,22 +1695,6 @@ export function VoucherFormScreen() {
                 <Text style={styles.addLinkText}>+ Add Row</Text>
               </Pressable>
             )}
-            {biltyBudgetActive ? (
-              <View style={styles.budgetBox}>
-                <View style={styles.budgetRow}>
-                  <Text style={styles.budgetLabel}>Freight Expense</Text>
-                  <Text style={styles.budgetValue}>{fmt(biltyBudget!.transport_total)}</Text>
-                </View>
-                <View style={styles.budgetRow}>
-                  <Text style={styles.budgetLabel}>Used</Text>
-                  <Text style={styles.budgetValue}>{fmt(biltyBudget!.used)}</Text>
-                </View>
-                <View style={styles.budgetRow}>
-                  <Text style={styles.budgetLabel}>Remaining</Text>
-                  <Text style={[styles.budgetValue, biltyOverBudget && styles.budgetTextOver]}>{fmt(biltyRemainingLive)}</Text>
-                </View>
-              </View>
-            ) : null}
             <View style={styles.grandTotalRow}>
               <Text style={styles.grandTotalLabel}>Grand Total</Text>
               {isMobile ? (
@@ -1705,8 +1796,8 @@ export function VoucherFormScreen() {
 
             <View style={styles.grandTotalRow}>
               <Text style={styles.grandTotalLabel}>Grand Total</Text>
-              {billByBill ? (
-                <Pressable onPress={openBillAlloc}>
+              {billByBill && partyId ? (
+                <Pressable onPress={() => openBillAlloc({ id: partyId, name: partyName, drOrCr: partyDirection, amount: grandTotal, billbybill: 'Yes' })}>
                   <Text style={[styles.grandTotalValue, { color: billBalanced ? colors.success : colors.warning, textDecorationLine: 'underline' }]}>
                     {fmt(grandTotal)} {billBalanced ? '✓' : '· allocate'}
                   </Text>
@@ -1789,74 +1880,83 @@ export function VoucherFormScreen() {
         </View>
       ) : null}
 
-      {/* BILL ALLOCATION MODAL */}
-      <Modal visible={billOpen} onClose={() => setBillOpen(false)} title={`Bill Allocation — ${partyName}`} maxWidth={680}>
-        <View style={{ padding: spacing.lg, gap: spacing.md }}>
-          {/* Table card — header + rows wrapped in a single bordered surface */}
-          <View style={styles.billCard}>
-            <View style={styles.billHeaderRow}>
-              <Text style={[styles.billTh, { width: 32, flexShrink: 0 }]}>#</Text>
-              <Text style={[styles.billTh, { width: 130, flexShrink: 0 }]}>Type</Text>
-              <Text style={[styles.billTh, { flex: 1 }]}>Ref / Bill No.</Text>
-              <Text style={[styles.billTh, styles.thRight, { width: 130, flexShrink: 0 }]}>Amount</Text>
-              <Text style={[styles.billTh, { width: 64, textAlign: 'center', flexShrink: 0 }]}>Dr/Cr</Text>
-              <View style={{ width: 32, flexShrink: 0 }} />
-            </View>
-            {billRefs.map((row, idx) => (
-              <BillRefRowEditor
-                key={row.id}
-                row={row}
-                idx={idx}
-                pending={pendingRefs}
-                onChange={(patch) => setBillRefs((p) => p.map((r) => r.id === row.id ? { ...r, ...patch } : r))}
-                onRemove={() => setBillRefs((p) => p.length > 1 ? p.filter((r) => r.id !== row.id) : p)}
-                editable={canSave}
+      {/* BILL ALLOCATION MODAL — per-ledger */}
+      {activeBillLedger && (() => {
+        const al = activeBillLedger;
+        const activeRefs = billRefs.filter((r) => r.ledger_id === al.id);
+        const allocSigned = +activeRefs.reduce((s, r) => s + (r.direction === 'Cr' ? -r.amount : r.amount), 0).toFixed(2);
+        const ledgerSigned = al.drOrCr === 'Dr' ? al.amount : -al.amount;
+        const balance = +(ledgerSigned - allocSigned).toFixed(2);
+        const balanced = Math.abs(balance) < 0.01;
+        const typeOptions: BillRefRow['type'][] = al.billbybill === 'Yes' ? ['New', 'Agr.', 'On Account'] : ['On Account'];
+        return (
+          <Modal visible={billOpen} onClose={() => {}} title={`Bill Allocation — ${al.name}`} maxWidth={680} dismissable={false}>
+            <View style={{ padding: spacing.lg, gap: spacing.md }}>
+              <View style={styles.billCard}>
+                <View style={styles.billHeaderRow}>
+                  <Text style={[styles.billTh, { width: 32, flexShrink: 0 }]}>#</Text>
+                  <Text style={[styles.billTh, { width: 130, flexShrink: 0 }]}>Type</Text>
+                  <Text style={[styles.billTh, { flex: 1 }]}>Ref / Bill No.</Text>
+                  <Text style={[styles.billTh, styles.thRight, { width: 130, flexShrink: 0 }]}>Amount</Text>
+                  <Text style={[styles.billTh, { width: 64, textAlign: 'center', flexShrink: 0 }]}>Dr/Cr</Text>
+                  <View style={{ width: 32, flexShrink: 0 }} />
+                </View>
+                {activeRefs.map((row, idx) => (
+                  <BillRefRowEditor
+                    key={row.id}
+                    row={row}
+                    idx={idx}
+                    pending={pendingRefs}
+                    typeOptions={typeOptions}
+                    onChange={(patch) => setBillRefs((p) => p.map((r) => r.id === row.id ? { ...r, ...patch } : r))}
+                    onRemove={() => setBillRefs((p) => activeRefs.length > 1 ? p.filter((r) => r.id !== row.id) : p)}
+                    editable={canSave}
+                  />
+                ))}
+                {canSave && al.billbybill === 'Yes' && (
+                  <Pressable
+                    onPress={() => {
+                      const remaining = +(ledgerSigned - allocSigned).toFixed(2);
+                      const dir: 'Dr' | 'Cr' = remaining >= 0 ? 'Dr' : 'Cr';
+                      setBillRefs((p) => [...p, {
+                        id: uid(), ledger_id: al.id, ledger_name: al.name,
+                        billbybill: al.billbybill, type: 'New', refno: '',
+                        amount: Math.abs(remaining), direction: dir,
+                      }]);
+                    }}
+                    style={styles.billAddBtn}
+                  >
+                    <Text style={styles.billAddText}>+ Add Reference</Text>
+                  </Pressable>
+                )}
+              </View>
+
+              <View style={styles.billTotalsCard}>
+                <View style={styles.billTotalCell}>
+                  <Text style={styles.billTotalLabel}>Total</Text>
+                  <Text style={styles.billTotalValue}>₹{fmt(al.amount)} <Text style={styles.billTotalDir}>({al.drOrCr})</Text></Text>
+                </View>
+                <View style={styles.billTotalDivider} />
+                <View style={styles.billTotalCell}>
+                  <Text style={styles.billTotalLabel}>Allocated</Text>
+                  <Text style={[styles.billTotalValue, { color: balanced ? colors.success : colors.warning }]}>₹{fmt(Math.abs(allocSigned))}</Text>
+                </View>
+                <View style={styles.billTotalDivider} />
+                <View style={styles.billTotalCell}>
+                  <Text style={styles.billTotalLabel}>Balance</Text>
+                  <Text style={[styles.billTotalValue, { color: balanced ? colors.success : colors.warning }]}>₹{fmt(Math.abs(balance))} {balanced ? '✓' : ''}</Text>
+                </View>
+              </View>
+
+              <ButtonPrimary
+                title={balanced ? 'Done' : `Done — Balance ₹${fmt(Math.abs(balance))} remaining`}
+                onPress={() => { if (balanced) setBillOpen(false); }}
+                disabled={!balanced}
               />
-            ))}
-            {canSave && (
-              <Pressable
-                onPress={() => {
-                  const used = billRefs.reduce((s, r) => s + (r.direction === 'Cr' ? -r.amount : r.amount), 0);
-                  const remaining = +(signedTotal - used).toFixed(2);
-                  const dir: 'Dr' | 'Cr' = remaining >= 0 ? 'Dr' : 'Cr';
-                  setBillRefs((p) => [...p, { id: uid(), type: 'New', refno: '', amount: Math.abs(remaining), direction: dir }]);
-                }}
-                style={styles.billAddBtn}
-              >
-                <Text style={styles.billAddText}>+ Add Reference</Text>
-              </Pressable>
-            )}
-          </View>
-
-          {/* Totals strip — three labelled chunks */}
-          <View style={styles.billTotalsCard}>
-            <View style={styles.billTotalCell}>
-              <Text style={styles.billTotalLabel}>Total</Text>
-              <Text style={styles.billTotalValue}>
-                ₹{fmt(effectiveTotal)} <Text style={styles.billTotalDir}>({partyDirection})</Text>
-              </Text>
             </View>
-            <View style={styles.billTotalDivider} />
-            <View style={styles.billTotalCell}>
-              <Text style={styles.billTotalLabel}>Allocated</Text>
-              <Text style={[styles.billTotalValue, { color: billBalanced ? colors.success : colors.warning }]}>
-                ₹{fmt(Math.abs(billAllocSigned))}
-              </Text>
-            </View>
-            <View style={styles.billTotalDivider} />
-            <View style={styles.billTotalCell}>
-              <Text style={styles.billTotalLabel}>Balance</Text>
-              <Text style={[styles.billTotalValue, { color: billBalanced ? colors.success : colors.warning }]}>
-                ₹{fmt(Math.abs(billBalance))} {billBalanced ? '✓' : ''}
-              </Text>
-            </View>
-          </View>
-
-          <View>
-            <ButtonPrimary title="Done" onPress={() => setBillOpen(false)} />
-          </View>
-        </View>
-      </Modal>
+          </Modal>
+        );
+      })()}
 
       {/* QUICK-ADD PARTY MODAL */}
       {/* Confirm before switching voucher type while editing (discards data). */}
@@ -2189,7 +2289,7 @@ function LedgerPickerInline({ row, ledgers, onChange, editable }: {
         e.preventDefault();
         const pick = filtered[highlight];
         if (pick) {
-          onChange({ ledger_id: pick.id, ledger_name: pick.name, search: pick.name });
+          onChange({ ledger_id: pick.id, ledger_name: pick.name, search: pick.name, ledger_group_id: pick.ledger_group_id });
           setSuppressDrop(true);
         }
       } else if (e.key === 'Escape') {
@@ -2236,18 +2336,16 @@ function LedgerPickerInline({ row, ledgers, onChange, editable }: {
   );
 }
 
-function JournalRowEditor({ row, idx, onChange, onRemove, editable, isMobile, locked, groupFilter }: {
+function JournalRowEditor({ row, idx, onChange, onRemove, onAmountBlur, billRefs, editable, isMobile, locked, groupFilter }: {
   row: JournalRow;
   idx: number;
   onChange: (patch: Partial<JournalRow>) => void;
   onRemove: () => void;
+  onAmountBlur?: () => void;
+  billRefs?: BillRefRow[];
   editable: boolean;
   isMobile: boolean;
-  // Advance flow: row 1's ledger is the bilty truck — name is fixed and not
-  // searchable until the Bilty No changes/clears. Dr/Cr + amount stay open.
   locked?: boolean;
-  // Fuel flow: when set, the ledger search is restricted to this ledger group
-  // (e.g. 'Fuel') and the full list opens on focus (no typing required).
   groupFilter?: string;
 }) {
   const [typeOpen, setTypeOpen] = useState(false);
@@ -2299,7 +2397,7 @@ function JournalRowEditor({ row, idx, onChange, onRemove, editable, isMobile, lo
         e.preventDefault();
         const pick = results[highlight];
         if (pick) {
-          onChange({ ledger_id: pick.id, ledger_name: pick.name, search: pick.name });
+          onChange({ ledger_id: pick.id, ledger_name: pick.name, search: pick.name, ledger_group_id: pick.ledger_group_id });
           setSuppressDrop(true);
         }
       } else if (e.key === 'Escape') {
@@ -2392,7 +2490,7 @@ function JournalRowEditor({ row, idx, onChange, onRemove, editable, isMobile, lo
                   key={l.id}
                   {...(Platform.OS === 'web' ? ({ onMouseEnter: () => setHighlight(i) } as any) : {})}
                   onPressIn={() => {
-                    onChange({ ledger_id: l.id, ledger_name: l.name, search: l.name });
+                    onChange({ ledger_id: l.id, ledger_name: l.name, search: l.name, ledger_group_id: l.ledger_group_id, billbybill: l.billbybill });
                     setSuppressDrop(true);
                   }}
                   style={[styles.dropdownRow, i === highlight && styles.dropdownRowHi]}
@@ -2432,6 +2530,19 @@ function JournalRowEditor({ row, idx, onChange, onRemove, editable, isMobile, lo
           style={[styles.input, (row.ledger_id !== null || locked) && styles.inputBound, (!editable || locked) && styles.inputDisabled]}
           editable={editable && !locked}
         />
+        {/* Bill allocation sub-lines shown under the ledger name once saved */}
+        {billRefs && billRefs.length > 0 && (
+          <View style={{ paddingTop: 2, gap: 1 }}>
+            {billRefs.map((b) => (
+              <View key={b.id} style={{ flexDirection: 'row', gap: 8, paddingLeft: 4, alignItems: 'center' }}>
+                <Text style={{ fontSize: 10, color: colors.textMuted, fontFamily: typography.uiBold }}>{b.type}</Text>
+                {b.refno ? <Text style={{ fontSize: 10, color: colors.text }} numberOfLines={1}>{b.refno}</Text> : null}
+                <Text style={{ fontSize: 10, color: colors.text }}>₹{fmt(b.amount)}</Text>
+                <Text style={{ fontSize: 10, color: b.direction === 'Dr' ? colors.success : colors.brandRed, fontFamily: typography.uiBold }}>{b.direction}</Text>
+              </View>
+            ))}
+          </View>
+        )}
         {open ? (
           <View style={styles.dropdown}>
             {results.slice(0, 12).map((l, i) => (
@@ -2439,7 +2550,7 @@ function JournalRowEditor({ row, idx, onChange, onRemove, editable, isMobile, lo
                 key={l.id}
                 {...(Platform.OS === 'web' ? ({ onMouseEnter: () => setHighlight(i) } as any) : {})}
                 onPressIn={() => {
-                  onChange({ ledger_id: l.id, ledger_name: l.name, search: l.name });
+                  onChange({ ledger_id: l.id, ledger_name: l.name, search: l.name, ledger_group_id: l.ledger_group_id, billbybill: l.billbybill });
                   setSuppressDrop(true);
                 }}
                 style={[styles.dropdownRow, i === highlight && styles.dropdownRowHi]}
@@ -2455,6 +2566,7 @@ function JournalRowEditor({ row, idx, onChange, onRemove, editable, isMobile, lo
         <TextInput
           value={row.amount ? String(row.amount) : ''}
           onChangeText={(v) => onChange({ amount: Number(v) || 0 })}
+          onBlur={() => { if (row.amount > 0 && row.ledger_id) onAmountBlur?.(); }}
           keyboardType="decimal-pad"
           style={[styles.input, { width: 130, textAlign: 'right' }, !editable && styles.inputDisabled]}
           editable={editable}
@@ -2468,6 +2580,7 @@ function JournalRowEditor({ row, idx, onChange, onRemove, editable, isMobile, lo
         <TextInput
           value={row.amount ? String(row.amount) : ''}
           onChangeText={(v) => onChange({ amount: Number(v) || 0 })}
+          onBlur={() => { if (row.amount > 0 && row.ledger_id) onAmountBlur?.(); }}
           keyboardType="decimal-pad"
           style={[styles.input, { width: 130, textAlign: 'right' }, !editable && styles.inputDisabled]}
           editable={editable}
@@ -2487,16 +2600,17 @@ function JournalRowEditor({ row, idx, onChange, onRemove, editable, isMobile, lo
   );
 }
 
-function BillRefRowEditor({ row, idx, pending, onChange, onRemove, editable }: {
+function BillRefRowEditor({ row, idx, pending, typeOptions, onChange, onRemove, editable }: {
   row: BillRefRow;
   idx: number;
   pending: PendingRef[];
+  typeOptions?: BillRefRow['type'][];
   onChange: (patch: Partial<BillRefRow>) => void;
   onRemove: () => void;
   editable: boolean;
 }) {
-  // Same UX as JournalRowEditor: list opens only when typing, never on focus.
   const [suppressDrop, setSuppressDrop] = useState(false);
+  const [focused, setFocused] = useState(false);
   const [highlight, setHighlight] = useState(0);
 
   const filtered = pending
@@ -2505,7 +2619,7 @@ function BillRefRowEditor({ row, idx, pending, onChange, onRemove, editable }: {
   const open =
     row.type === 'Agr.' &&
     !suppressDrop &&
-    row.refno.length >= 1 &&
+    focused &&
     filtered.length > 0;
 
   useEffect(() => { setHighlight(0); }, [filtered.length, row.refno]);
@@ -2524,7 +2638,7 @@ function BillRefRowEditor({ row, idx, pending, onChange, onRemove, editable }: {
         const p = filtered[highlight];
         if (p) {
           const settle: 'Dr' | 'Cr' = p.direction === 'Dr' ? 'Cr' : 'Dr';
-          onChange({ refno: p.billname, amount: Number(p.amount), direction: settle });
+          onChange({ refno: p.billname, direction: settle });
           setSuppressDrop(true);
         }
       } else if (e.key === 'Escape') {
@@ -2543,7 +2657,7 @@ function BillRefRowEditor({ row, idx, pending, onChange, onRemove, editable }: {
         <SelectDropdown
           label=""
           value={row.type}
-          options={['New', 'Agr.', 'On Account']}
+          options={typeOptions ?? ['New', 'Agr.', 'On Account']}
           onSelect={(v) => editable && onChange({ type: v as BillRefRow['type'] })}
           placeholder="Select…"
           compact
@@ -2562,6 +2676,8 @@ function BillRefRowEditor({ row, idx, pending, onChange, onRemove, editable }: {
               onChange({ refno: v });
               setSuppressDrop(false);
             }}
+            onFocus={() => { setFocused(true); setSuppressDrop(false); }}
+            onBlur={() => setFocused(false)}
             placeholder="Pick pending bill…"
             placeholderTextColor={colors.textMuted}
             style={[styles.input, { flex: 1 }, !editable && styles.inputDisabled]}
@@ -2575,7 +2691,7 @@ function BillRefRowEditor({ row, idx, pending, onChange, onRemove, editable }: {
                   {...(Platform.OS === 'web' ? ({ onMouseEnter: () => setHighlight(i) } as any) : {})}
                   onPressIn={() => {
                     const settle: 'Dr' | 'Cr' = p.direction === 'Dr' ? 'Cr' : 'Dr';
-                    onChange({ refno: p.billname, amount: Number(p.amount), direction: settle });
+                    onChange({ refno: p.billname, direction: settle });
                     setSuppressDrop(true);
                   }}
                   style={[styles.dropdownRow, i === highlight && styles.dropdownRowHi]}
@@ -2588,14 +2704,16 @@ function BillRefRowEditor({ row, idx, pending, onChange, onRemove, editable }: {
           ) : null}
         </View>
       ) : (
-        <TextInput
-          value={row.refno}
-          onChangeText={(v) => onChange({ refno: v })}
-          placeholder="Reference / Bill No."
-          placeholderTextColor={colors.textMuted}
-          style={[styles.input, { flex: 1 }, !editable && styles.inputDisabled]}
-          editable={editable}
-        />
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <TextInput
+            value={row.refno}
+            onChangeText={(v) => onChange({ refno: v })}
+            placeholder="Reference / Bill No."
+            placeholderTextColor={colors.textMuted}
+            style={[styles.input, { width: '100%' }, !editable && styles.inputDisabled]}
+            editable={editable}
+          />
+        </View>
       )}
       <TextInput
         value={row.amount ? String(row.amount) : ''}
@@ -3435,7 +3553,7 @@ const styles = StyleSheet.create({
     borderColor: '#E2E8F0',
     borderRadius: radius.md,
     backgroundColor: colors.card,
-    overflow: 'hidden',
+    overflow: 'visible',
   },
   billHeaderRow: {
     flexDirection: 'row',

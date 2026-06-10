@@ -22,6 +22,8 @@ export interface VchType {
   prefix: string | null;
   /** Optional branch (name). When set, the bilty form auto-fills + locks Branch. */
   branch?: string | null;
+  /** 1 = posts to ledger accounts (default); 0 = memo/non-posting voucher. */
+  affects_ledger?: 0 | 1;
 }
 
 export interface OtherLedger {
@@ -86,6 +88,8 @@ export interface BiltyVehicleLedger {
   ledger_id: number | null;
   ledger_name: string | null;
   truck_no: string | null;
+  ledger_group_id: number | null;
+  billbybill: 'Yes' | 'No';
 }
 
 /**

@@ -98,7 +98,7 @@ async function getFreightJournalTypeId(conn = pool) {
 //   Dr Vehicle (the truck's ledger account)   +amount
 //   Cr Freight Expense (system expense ledger) -amount
 // Linked via parent_vch_id → deleting the bilty cascades to the journal.
-async function createFreightJournal(conn, parentVchId, vehicleLedgerId, amount, vchDate, userId) {
+async function createFreightJournal(conn, parentVchId, vehicleLedgerId, amount, vchDate, userId, biltyNo) {
   if (!vehicleLedgerId || amount <= 0) return;
   const fjTypeId = await getFreightJournalTypeId(conn);
   const freightExpenseId = await getFreightExpenseLedgerId(conn);
@@ -122,15 +122,25 @@ async function createFreightJournal(conn, parentVchId, vehicleLedgerId, amount, 
   );
   const journalId = h.insertId;
 
-  // Dr Vehicle (positive) / Cr Freight Expense (negative)
+  // Dr Freight Expense (positive) / Cr Vehicle (negative — we owe the vehicle owner)
   await conn.execute(
     'INSERT INTO ledger_entries (vch_id, ledger_id, amount) VALUES (:vch_id, :ledger_id, :amount)',
-    { vch_id: journalId, ledger_id: vehicleLedgerId, amount: a }
+    { vch_id: journalId, ledger_id: freightExpenseId, amount: a }
   );
-  await conn.execute(
+  const [vRow] = await conn.execute(
     'INSERT INTO ledger_entries (vch_id, ledger_id, amount) VALUES (:vch_id, :ledger_id, :amount)',
-    { vch_id: journalId, ledger_id: freightExpenseId, amount: -a }
+    { vch_id: journalId, ledger_id: vehicleLedgerId, amount: -a }
   );
+  const vehicleLedEntryId = vRow.insertId;
+
+  // Bill allocation against vehicle owner — reference the bilty number so
+  // advances/payments to this vehicle can be matched to the specific bilty.
+  await conn.execute(
+    `INSERT INTO bill_allocation (vchid, ledentry_id, ledger, billname, amount)
+     VALUES (:vchId, :ledEntryId, :ledger, :billname, :amount)`,
+    { vchId: journalId, ledEntryId: vehicleLedEntryId, ledger: vehicleLedgerId, billname: biltyNo || fjVchNo, amount: -a }
+  );
+
   return journalId;
 }
 
@@ -525,7 +535,18 @@ async function createWithChildren({ header, items, userId }, externalConn) {
     await insertLineItems(conn, vchId, goodsTypeId, resolvedItems, null);
 
     // Companion Freight Journal: Dr Vehicle / Cr Freight Expense  (expense — l_rate × qty)
-    await createFreightJournal(conn, vchId, vehicleId, freightSubtotal, toDateOrNull(header.bilty_date), userId);
+    await createFreightJournal(conn, vchId, vehicleId, freightSubtotal, toDateOrNull(header.bilty_date), userId, bilty_no);
+
+    // Bill allocation: records what bill_to owes against this bilty number
+    const billingPartyId = billToId || consignorId;
+    const billingTotal = round2(resolvedItems.reduce((s, i) => s + i._amount, 0));
+    if (billingPartyId && billingTotal > 0) {
+      await conn.execute(
+        `INSERT INTO bill_allocation (vchid, ledentry_id, ledger, billname, amount)
+         VALUES (:vchId, NULL, :ledger, :billname, :amount)`,
+        { vchId, ledger: billingPartyId, billname: bilty_no, amount: billingTotal }
+      );
+    }
 
     if (ownConn) await conn.commit();
     return { id: vchId, bilty_no };
@@ -719,13 +740,32 @@ async function updateWithChildren(id, { header, items, userId = null }) {
       { id }
     ).catch(() => { /* batch already deleted; rollup may already be orphaned */ });
 
+    // Drop old bill allocations: bilty's own + all child vouchers (e.g. freight journal).
+    await conn.execute(
+      `DELETE FROM bill_allocation
+        WHERE vchid = :id
+           OR vchid IN (SELECT id FROM vch_details WHERE parent_vch_id = :id)`,
+      { id }
+    );
+
     // Drop the old companion Freight Journal (cascade removes its ledger_entries).
     await conn.execute('DELETE FROM vch_details WHERE parent_vch_id = :id', { id });
 
     await insertLineItems(conn, id, goodsTypeId, resolvedItems, null);
 
     // Re-post the companion Freight Journal (expense — l_rate × qty).
-    await createFreightJournal(conn, id, vehicleId, freightSubtotal, toDateOrNull(header.bilty_date), userId);
+    await createFreightJournal(conn, id, vehicleId, freightSubtotal, toDateOrNull(header.bilty_date), userId, nextBiltyNo);
+
+    // Re-create bill allocation with updated amounts.
+    const billingPartyId = billToId || consignorId;
+    const billingTotal = round2(resolvedItems.reduce((s, i) => s + i._amount, 0));
+    if (billingPartyId && billingTotal > 0) {
+      await conn.execute(
+        `INSERT INTO bill_allocation (vchid, ledentry_id, ledger, billname, amount)
+         VALUES (:vchId, NULL, :ledger, :billname, :amount)`,
+        { vchId: id, ledger: billingPartyId, billname: header.bilty_no, amount: billingTotal }
+      );
+    }
 
     await conn.commit();
     return true;
@@ -759,14 +799,31 @@ async function deleteById(id) {
       return { affected: 0 };
     }
 
-    // Delete companion auto-posted vouchers (Freight Journal + Freight Invoice)
-    // before deleting the parent bilty — parent_vch_id FK is ON DELETE SET NULL
-    // so they would become orphans otherwise. Their ledger_entries cascade-delete.
+    // Drop bill allocations: bilty's own + all child vouchers (e.g. freight journal).
+    await conn.execute(
+      `DELETE FROM bill_allocation
+        WHERE vchid = :id
+           OR vchid IN (SELECT id FROM vch_details WHERE parent_vch_id = :id)`,
+      { id }
+    );
+
+    // Bilty line items live in batch (vch_id) → inventory_entries (led_id = NULL).
+    // led_id IS NULL so deleting ledger_entries won't cascade to them — must be
+    // cleaned up explicitly before the parent vch_details row is removed.
+    await conn.execute('DELETE FROM batch WHERE vch_id = :id', { id });
+    await conn.execute(
+      `DELETE ie FROM inventory_entries ie
+        WHERE ie.led_id IS NULL
+          AND NOT EXISTS (SELECT 1 FROM batch b WHERE b.inventory_id = ie.id)`,
+      {}
+    );
+
+    // Delete companion auto-posted vouchers (Freight Journal) before deleting
+    // the parent bilty. Their ledger_entries cascade-delete their own children.
     await conn.execute('DELETE FROM vch_details WHERE parent_vch_id = :id', { id });
 
-    // Manual cleanup of the bilty's own children. ledger_entries cascades
-    // into inventory_entries → batch via existing FKs.
-    await conn.execute('DELETE FROM ledger_entries  WHERE vch_id = :id', { id });
+    // Delete any remaining ledger_entries (there are none on a bilty, but safe to include).
+    await conn.execute('DELETE FROM ledger_entries WHERE vch_id = :id', { id });
 
     try {
       const [r] = await conn.execute(
